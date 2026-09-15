@@ -49,3 +49,24 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 appstore/play-assets/
+
+# Credentials — this repo is PUBLIC. Belt and braces: each of these is also
+# ignored by a subdirectory .gitignore, but a moved or newly added file must
+# never depend on that. Real values live in ~/.doqto/ or terraform.tfvars.
+*.jks
+*.keystore
+*.p8
+*.p12
+*.mobileprovision
+key.properties
+terraform.tfvars
+*.tfvars
+!*.tfvars.example
+.env
+.env.*
+!.env.example
+*service-account*.json
+*-credentials.json
+secrets.json
+# Chrome's download directory points here; downloaded config lands in it.
+credentials/

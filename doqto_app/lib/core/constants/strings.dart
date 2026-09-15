@@ -29,6 +29,7 @@ class Strings {
   static const String loginDividerOr = 'or continue with';
   static const String loginGoogle = 'Continue with Google';
   static const String loginFacebook = 'Continue with Facebook';
+  static const String loginApple = 'Continue with Apple';
   static const String loginComingSoon =
       'This sign-in method is coming soon. Use your phone number for now.';
 

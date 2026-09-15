@@ -33,6 +33,7 @@ variable "fcm_service_account_json" {
   default   = ""
 }
 
+
 data "aws_caller_identity" "me" {}
 data "aws_vpc" "default" {
   default = true
@@ -392,9 +393,10 @@ resource "aws_ecs_task_definition" "api" {
       { name = "NETWORK_DM_ENABLED", value = "true" },
       { name = "PUSH_PROVIDER", value = var.fcm_service_account_json == "" ? "log" : "fcm" },
       { name = "FCM_PROJECT_ID", value = "doqto-90684" },
-      # TEMPORARY sign-in backdoor (777777) while SNS SMS sandbox exit is
-      # pending — remove this line once real SMS delivery is approved.
-      { name = "MASTER_OTP_ENABLED", value = "true" },
+      # Firebase brokers every sign-in (phone, Google, Facebook, Apple). Only
+      # the project id is needed: ID tokens are verified against Google's
+      # public certs, so there is no secret here. Same project as FCM.
+      { name = "FIREBASE_PROJECT_ID", value = "doqto-90684" },
     ]
     secrets = [for k, p in aws_ssm_parameter.secret : { name = k, valueFrom = p.arn }]
     logConfiguration = {

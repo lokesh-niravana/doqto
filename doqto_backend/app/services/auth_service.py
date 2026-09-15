@@ -4,26 +4,18 @@ import secrets
 import uuid
 from datetime import datetime, timezone
 
+from fastapi.concurrency import run_in_threadpool
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.constants import (
     ACCESS_TOKEN_TTL_SECONDS,
-    DEV_MASTER_OTP,
-    OTP_LENGTH,
-    OTP_MAX_ATTEMPTS,
-    OTP_RESEND_COOLDOWN_SECONDS,
-    OTP_TTL_SECONDS,
-    RATE_LIMIT_OTP_PER_HOUR,
+    RATE_LIMIT_SIGNIN_PER_HOUR,
     REFRESH_TOKEN_TTL_SECONDS,
 )
 from app.core.enums import AuditAction, JwtTokenType, UserRole
 from app.core.redis_keys import (
-    otp_attempts_key,
-    otp_key,
-    otp_resend_key,
     rate_limit_key,
     refresh_session_key,
     session_key,
@@ -31,130 +23,134 @@ from app.core.redis_keys import (
 from app.core.security import TokenError, create_token, decode_token
 from app.models import User
 from app.schemas.auth import TokenPair
+from app.services import firebase_auth
 from app.services.audit_service import AuditService
-from app.services.fakes import FakeSNSClient
 
 
 class AuthError(Exception):
     pass
 
 
-def _generate_otp() -> str:
-    return "".join(str(secrets.randbelow(10)) for _ in range(OTP_LENGTH))
+class RateLimited(AuthError):
+    """Caller should surface 429, not 401."""
 
 
-def _sns():
-    # Local: logging fake (OTP appears in dev logs only). Elsewhere: real SNS.
-    if settings.is_local:
-        return FakeSNSClient()
-    from app.services.sns_client import RealSNSClient
+class WrongAccount(AuthError):
+    """Caller should surface 403."""
 
-    return RealSNSClient()
+
+class PhoneTaken(AuthError):
+    """Caller should surface 409."""
+
+
+
+
 
 
 class AuthService:
     @staticmethod
-    async def request_otp(
+    async def sign_in_with_firebase(
         *,
-        phone: str,
-        redis: Redis,
-        db: AsyncSession,
-        ip_address: str | None = None,
-        user_agent: str | None = None,
-    ) -> None:
-        # Resend cooldown: prevents overwriting an OTP the user is actively
-        # typing (e.g. accidental double-tap on "Send code").
-        cooldown_key = otp_resend_key(phone)
-        if await redis.exists(cooldown_key):
-            raise AuthError("otp_resend_cooldown")
-
-        # Hourly rate limit per phone. Guards SMS budget and basic DoS.
-        rl_key = rate_limit_key(phone, "request_otp")
-        count = int(await redis.get(rl_key) or 0)
-        if count >= RATE_LIMIT_OTP_PER_HOUR:
-            raise AuthError("otp_too_many_requests")
-
-        code = _generate_otp()
-        await redis.setex(otp_key(phone), OTP_TTL_SECONDS, code)
-        await redis.delete(otp_attempts_key(phone))
-        await redis.setex(cooldown_key, OTP_RESEND_COOLDOWN_SECONDS, "1")
-        if count == 0:
-            await redis.setex(rl_key, 3600, 1)
-        else:
-            await redis.incr(rl_key)
-        await _sns().send_otp(phone, code)
-        await AuditService.log(
-            db,
-            user_id=None,
-            action=AuditAction.OTP_REQUESTED,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            # Minimum necessary: last-4 only — audit rows outlive the OTP.
-            metadata={"phone": "****" + phone[-4:]},
-        )
-
-    @staticmethod
-    async def verify_otp(
-        *,
-        phone: str,
-        code: str,
+        id_token: str,
         redis: Redis,
         db: AsyncSession,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> TokenPair:
-        # Dev master OTP — bypass Redis lookup when ENVIRONMENT=local.
-        # Lets simulator/emulator testing skip the Redis-code step and the
-        # attempt counter. Never honoured in staging/prod.
-        if (settings.is_local or settings.MASTER_OTP_ENABLED) and code == DEV_MASTER_OTP:
-            await redis.delete(otp_key(phone))
-            await redis.delete(otp_attempts_key(phone))
-        else:
-            stored = await redis.get(otp_key(phone))
-            attempts = int(await redis.get(otp_attempts_key(phone)) or 0)
-            if attempts >= OTP_MAX_ATTEMPTS:
-                raise AuthError("otp_too_many_attempts")
-            if stored is None:
-                raise AuthError("otp_expired")
-            if stored != code:
-                await redis.incr(otp_attempts_key(phone))
-                await redis.expire(otp_attempts_key(phone), OTP_TTL_SECONDS)
-                raise AuthError("otp_invalid")
+        """Exchange a Firebase ID token for a Doqto token pair.
 
-            await redis.delete(otp_key(phone))
-            await redis.delete(otp_attempts_key(phone))
+        Every sign-in method arrives here. Firebase asserts the identity; this
+        resolves it to a user row and mints our own tokens, so sessions, roles
+        and the audit trail are unchanged by which button was tapped.
+        """
+        # Per-IP hourly cap. Guards the DB, not an SMS budget — Google pays for
+        # the messages now.
+        if ip_address:
+            rl_key = rate_limit_key(f"ip:{ip_address}", "signin")
+            count = int(await redis.get(rl_key) or 0)
+            if count >= RATE_LIMIT_SIGNIN_PER_HOUR:
+                raise RateLimited("signin_too_many_requests")
+            if count == 0:
+                await redis.setex(rl_key, 3600, 1)
+            else:
+                await redis.incr(rl_key)
 
-        user = await db.scalar(select(User).where(User.phone == phone))
+        # google-auth is blocking (it fetches and caches Google's certs), so it
+        # must not run on the event loop.
+        try:
+            identity = await run_in_threadpool(firebase_auth.verify_id_token, id_token)
+        except firebase_auth.FirebaseAuthError as e:
+            raise AuthError(str(e)) from e
+
+        user = await db.scalar(select(User).where(User.firebase_uid == identity.uid))
         if user is None:
-            # Pre-register: create minimal user row. Registration endpoint fills the rest.
+            user = await AuthService._adopt_or_create(identity=identity, db=db)
+
+        # A deleted account is a scrubbed tombstone kept for HIPAA retention. It
+        # must never come back to life, even if the provider account still exists.
+        if user.deleted_at is not None:
+            raise AuthError("account_deleted")
+
+        is_registered = bool(user.full_name and not user.npi_number.startswith("PENDING"))
+        user.last_seen_at = datetime.now(tz=timezone.utc)
+        await AuditService.log(
+            db,
+            user_id=user.id,
+            action=AuditAction.OTP_VERIFIED if identity.phone else AuditAction.SOCIAL_VERIFIED,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return await AuthService._issue_tokens(
+            user=user,
+            is_registered=is_registered,
+            redis=redis,
+            db=db,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    @staticmethod
+    async def _adopt_or_create(*, identity: firebase_auth.FirebaseIdentity, db: AsyncSession) -> User:
+        """Find the row this identity belongs to, or start a new one.
+
+        Adoption by phone/email is what makes brokering invisible to anyone who
+        signed up before Firebase existed: their row simply gains a firebase_uid
+        on next sign-in.
+        """
+        user = None
+        if identity.phone:
+            user = await db.scalar(select(User).where(User.phone == identity.phone))
+        if user is None and identity.email:
+            user = await db.scalar(select(User).where(User.email == identity.email))
+        if user is None:
             user = User(
-                phone=phone,
+                phone=identity.phone,
+                email=identity.email,
                 full_name="",
                 npi_number=f"PENDING{secrets.randbelow(100):02d}",
                 role=UserRole.DOCTOR,
             )
             db.add(user)
-            await db.flush()
-            is_registered = False
-        else:
-            is_registered = bool(user.full_name and not user.npi_number.startswith("PENDING"))
+        user.firebase_uid = identity.uid
+        await db.flush()
+        return user
 
-        user.last_seen_at = datetime.now(tz=timezone.utc)
-        await AuditService.log(
-            db,
-            user_id=user.id,
-            action=AuditAction.OTP_VERIFIED,
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
-
+    @staticmethod
+    async def _issue_tokens(
+        *,
+        user: User,
+        is_registered: bool,
+        redis: Redis,
+        db: AsyncSession,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> TokenPair:
         access, jti = create_token(user.id, JwtTokenType.ACCESS)
         refresh, _ = create_token(user.id, JwtTokenType.REFRESH, jti=jti)
         # Each token gets its own session TTL (§164.312(a)(2)(iii)): a revoked
         # access token dies after 1h even though the refresh half lives 7d.
         await redis.setex(session_key(jti), ACCESS_TOKEN_TTL_SECONDS, str(user.id))
         await redis.setex(refresh_session_key(jti), REFRESH_TOKEN_TTL_SECONDS, str(user.id))
-
         if is_registered:
             await AuditService.log(
                 db,
@@ -163,8 +159,38 @@ class AuthService:
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
-
         return TokenPair(access_token=access, refresh_token=refresh, is_registered=is_registered)
+
+    @staticmethod
+    async def link_phone(*, user: User, id_token: str, db: AsyncSession) -> User:
+        """Attach a phone number the client proved through Firebase.
+
+        Deliberately not a sign-in: signing in with a phone signs you in *as*
+        whoever owns it, which mid-registration would swap accounts. The client
+        links the number to its existing Firebase user instead, and the
+        refreshed token carries the proof.
+        """
+        try:
+            identity = await run_in_threadpool(firebase_auth.verify_id_token, id_token)
+        except firebase_auth.FirebaseAuthError as e:
+            raise AuthError(str(e)) from e
+
+        # The token must belong to this account, or a borrowed one could move
+        # someone else's number onto it.
+        if not user.firebase_uid or identity.uid != user.firebase_uid:
+            raise WrongAccount("firebase_uid_mismatch")
+        # No phone claim means the link never happened.
+        if not identity.phone:
+            raise AuthError("phone_not_verified")
+
+        dup = await db.scalar(
+            select(User).where(User.phone == identity.phone, User.id != user.id)
+        )
+        if dup is not None:
+            raise PhoneTaken("phone_already_registered")
+
+        user.phone = identity.phone
+        return user
 
     @staticmethod
     async def refresh(*, refresh_token: str, redis: Redis) -> TokenPair:

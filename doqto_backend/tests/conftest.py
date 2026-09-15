@@ -126,3 +126,28 @@ async def chat(db):
         alice_headers=await helpers.auth_headers(alice.id),
         bob_headers=await helpers.auth_headers(bob.id),
     )
+
+
+@pytest.fixture
+def firebase(monkeypatch):
+    """Stub the Firebase ID-token verifier.
+
+    Every sign-in path goes through /auth/firebase now, so any test that needs
+    a signed-in session starts here. Returns an installer so each test picks
+    the claims it wants.
+    """
+    from app.core.config import settings as _settings
+    from app.services import firebase_auth
+
+    monkeypatch.setattr(_settings, "FIREBASE_PROJECT_ID", "doqto-test")
+
+    def _install(*, uid: str = "firebase-uid-abc123", phone: str | None = None,
+                 email: str | None = None, raises: Exception | None = None):
+        def _verify(id_token: str) -> firebase_auth.FirebaseIdentity:
+            if raises is not None:
+                raise raises
+            return firebase_auth.FirebaseIdentity(uid=uid, phone=phone, email=email)
+
+        monkeypatch.setattr(firebase_auth, "verify_id_token", _verify)
+
+    return _install

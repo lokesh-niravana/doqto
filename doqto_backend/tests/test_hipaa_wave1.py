@@ -9,16 +9,13 @@ from __future__ import annotations
 
 import base64
 import json
-import logging
 import os
-import re
 
 import pytest
 from sqlalchemy import select
 
 from app.api.ws_manager import decode_envelope, encode_envelope
 from app.core.config import Settings, settings
-from app.core.constants import OTP_LENGTH
 from app.core.enums import AuditAction
 from app.models import AuditLog
 from main import verify_boot_secrets
@@ -60,35 +57,9 @@ async def test_mark_conversation_read_is_audited(chat, client, db):
     assert row.user_id == chat.bob.id
 
 
-# ------------------------------------------------------------ C2: OTP logs
-
-async def test_request_otp_non_local_does_not_log_code_or_phone(
-    client, monkeypatch, caplog
-):
-    import app.services.sns_client as sns_client
-
-    sent: dict[str, str] = {}
-
-    class _StubBoto:
-        def publish(self, *, PhoneNumber: str, Message: str) -> None:
-            sent["phone"] = PhoneNumber
-            sent["message"] = Message
-
-    monkeypatch.setattr(sns_client, "_client", _StubBoto())
-    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
-
-    phone = "+15559876543"
-    with caplog.at_level(logging.DEBUG):
-        r = await client.post("/api/v1/auth/request-otp", json={"phone": phone})
-    assert r.status_code == 200
-
-    # The real SNS path was taken and got the code…
-    assert sent["phone"] == phone
-    code = re.search(rf"\d{{{OTP_LENGTH}}}", sent["message"]).group()
-
-    # …but neither the code nor the full phone number hit any log line.
-    assert code not in caplog.text
-    assert phone not in caplog.text
+# --------------------------------------------- C2: sign-in logs
+# Firebase brokers sign-in now; the no-code-no-phone-in-logs guarantee is
+# asserted in test_firebase_auth.test_never_logs_the_token_or_full_number.
 
 
 async def test_transcribe_stub_refuses_non_local(monkeypatch):

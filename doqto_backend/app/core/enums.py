@@ -218,6 +218,9 @@ class AuditAction(StrEnum):
     ACCOUNT_DELETED = "account_deleted"
     OTP_REQUESTED = "otp_requested"
     OTP_VERIFIED = "otp_verified"
+    # Sign-in through a social provider (Google/Facebook/Apple) brokered by
+    # Firebase. Phone sign-in keeps logging OTP_VERIFIED.
+    SOCIAL_VERIFIED = "social_verified"
     ORG_CREATED = "org_created"
     ORG_JOINED = "org_joined"
     ORG_VERIFIED = "org_verified"

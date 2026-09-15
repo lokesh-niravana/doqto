@@ -15,13 +15,12 @@ class AuthRepository {
   final TokenStorage _tokens;
   AuthRepository(this._api, this._tokens);
 
-  Future<void> requestOtp(String phone) async {
-    await _api.post(ApiRoutes.authRequestOtp, body: {'phone': phone});
-  }
-
-  Future<TokenPair> verifyOtp({required String phone, required String code}) async {
-    final j = await _api.post(ApiRoutes.authVerifyOtp, body: {'phone': phone, 'code': code});
-    final pair = TokenPair(j['access_token'] as String, j['refresh_token'] as String, j['is_registered'] as bool);
+  /// Exchange a Firebase ID token for a Doqto session. Every sign-in method
+  /// ends here — the backend does not know or care which provider issued it.
+  Future<TokenPair> signInWithFirebase(String idToken) async {
+    final j = await _api.post(ApiRoutes.authFirebase, body: {'id_token': idToken});
+    final pair = TokenPair(j['access_token'] as String, j['refresh_token'] as String,
+        j['is_registered'] as bool);
     await _tokens.saveTokens(access: pair.accessToken, refresh: pair.refreshToken);
     return pair;
   }

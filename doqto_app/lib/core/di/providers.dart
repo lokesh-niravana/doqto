@@ -4,6 +4,8 @@ import '../../data/api/api_client.dart';
 import '../../data/api/token_storage.dart';
 import '../../data/api/websocket_client.dart';
 import '../../data/repositories/auth_repository.dart';
+import '../../data/services/auth_broker.dart';
+import '../../data/services/firebase_auth_broker.dart';
 import '../../data/repositories/chat_repository.dart';
 import '../../data/repositories/groups_repository.dart';
 import '../../data/repositories/network_repository.dart';
@@ -21,6 +23,10 @@ final tokenStorageProvider = Provider<TokenStorage>((ref) => TokenStorage());
 final apiClientProvider = Provider<ApiClient>(
   (ref) => ApiClient(tokens: ref.watch(tokenStorageProvider)),
 );
+
+/// Firebase sign-in, behind an interface so tests never need a Firebase
+/// binding. Overridden with [FakeAuthBroker] in widget tests.
+final authBrokerProvider = Provider<AuthBroker>((ref) => FirebaseAuthBroker());
 
 final authRepositoryProvider = Provider<AuthRepository>(
   (ref) => AuthRepository(ref.watch(apiClientProvider), ref.watch(tokenStorageProvider)),

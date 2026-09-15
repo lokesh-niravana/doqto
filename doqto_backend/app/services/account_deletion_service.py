@@ -58,7 +58,11 @@ class AccountDeletionService:
             action=AuditAction.ACCOUNT_DELETED,
             ip_address=ip_address,
             user_agent=user_agent,
-            metadata={"phone": "****" + user.phone[-4:], "npi": user.npi_number},
+            # phone is NULL for social-only accounts — minimum necessary either way.
+            metadata={
+                "phone": "****" + user.phone[-4:] if user.phone else "****none",
+                "npi": user.npi_number,
+            },
         )
 
         # 1. PHI in authored content. Messages are kept as tombstones so the
@@ -115,6 +119,9 @@ class AccountDeletionService:
         user.phone = f"d{stub[:19]}"
         user.npi_number = stub[:10]
         user.email = None
+        # Must be cleared, or the provider account still resolves to this
+        # tombstone and signing in again would adopt a deleted user.
+        user.firebase_uid = None
         user.full_name = "Deleted user"
         user.handle = None
         user.headline = None

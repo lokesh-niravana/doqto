@@ -84,8 +84,7 @@ class ApiClient {
   }
 
   bool _isAuthEndpoint(String path) =>
-      path.contains(ApiRoutes.authRequestOtp) ||
-      path.contains(ApiRoutes.authVerifyOtp) ||
+      path.contains(ApiRoutes.authFirebase) ||
       path.contains(ApiRoutes.authRefresh);
 
   /// Ensures at most one refresh round-trip is in flight. Concurrent 401s

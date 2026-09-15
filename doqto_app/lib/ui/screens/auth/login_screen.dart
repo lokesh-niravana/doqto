@@ -12,6 +12,7 @@ import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../core/utils/validators.dart';
+import '../../../data/services/auth_broker.dart';
 import '../../../state/auth_state.dart';
 import '../../widgets/app_segmented.dart';
 import '../../widgets/app_text_field.dart';
@@ -22,13 +23,13 @@ import '../../widgets/phone_field.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/social_button.dart';
 
-/// Sign-in. Four ways in, one screen: phone OTP (live), email + password,
-/// Google and Facebook.
+/// Sign-in. One screen, several ways in: phone, Google, Facebook, Apple, and
+/// email + password.
 ///
-/// Only the phone tab talks to the backend today — `/api/v1/auth` exposes
-/// request-otp and verify-otp and nothing else. The other three are laid out
-/// and reachable, and say so when tapped, so the screen is ready to wire up
-/// the moment those endpoints land.
+/// Every route except email/password is brokered by Firebase and ends in the
+/// same place — one ID token, exchanged for a Doqto session. There is no
+/// separate sign-up: the identity decides. Email + password is still frontend
+/// only.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -68,13 +69,40 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
-  /// Everything except phone OTP is frontend-only for now.
+  /// Email + password is still frontend-only.
   void _notYetAvailable() {
     FocusScope.of(context).unfocus();
     setState(() {
       _submitError = null;
       _notice = Strings.loginComingSoon;
     });
+  }
+
+  Future<void> _social(SocialProvider provider) async {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _loading = true;
+      _submitError = null;
+      _notice = null;
+    });
+    try {
+      await ref.read(authProvider.notifier).signInWith(provider);
+      if (!mounted) return;
+      // A dismissed provider sheet leaves the stage untouched — stay put.
+      final stage = ref.read(authProvider).stage;
+      if (stage == AuthStage.unknown || stage == AuthStage.signedOut) return;
+      context.go(switch (stage) {
+        AuthStage.needsRegistration => AppRoutes.registration,
+        AuthStage.needsPayment => AppRoutes.payments,
+        AuthStage.needsOrg => AppRoutes.orgSelection,
+        AuthStage.pendingVerification => AppRoutes.pending,
+        _ => AppRoutes.chats,
+      });
+    } catch (e) {
+      setState(() => _submitError = ErrorMessages.forApi(e));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   Future<void> _sendCode() async {
@@ -85,9 +113,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _notice = null;
     });
     try {
-      await ref.read(authProvider.notifier).requestOtp(_e164);
+      // Firebase sends the SMS and hands back a challenge; the code screen
+      // gives it straight back when the user types the code.
+      final challenge =
+          await ref.read(authProvider.notifier).startPhoneSignIn(_e164);
       if (!mounted) return;
-      context.push(AppRoutes.otp, extra: _e164);
+      context.push(AppRoutes.otp, extra: challenge);
     } catch (e) {
       setState(() => _submitError = ErrorMessages.forApi(e));
     } finally {
@@ -188,7 +219,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     4,
                     SocialButton.google(
                       label: Strings.loginGoogle,
-                      onPressed: _notYetAvailable,
+                      onPressed:
+                          _loading ? null : () => _social(SocialProvider.google),
                     ),
                   ),
                   const SizedBox(height: AppSpacing.md),
@@ -196,7 +228,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     5,
                     SocialButton.facebook(
                       label: Strings.loginFacebook,
-                      onPressed: _notYetAvailable,
+                      onPressed: _loading
+                          ? null
+                          : () => _social(SocialProvider.facebook),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  FadeSlideIn.staggered(
+                    6,
+                    SocialButton.apple(
+                      label: Strings.loginApple,
+                      onPressed:
+                          _loading ? null : () => _social(SocialProvider.apple),
                     ),
                   ),
                 ],

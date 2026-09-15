@@ -5,13 +5,14 @@
 There is no separate "Create an account". The phone number decides:
 
 ```
-Login → phone → OTP ─┬─ number known   → signed in
-                     └─ number unknown → Your details → Choose your plan → app
+Login → phone / Google / Facebook / Apple ─┬─ known   → signed in
+                                           └─ unknown → Your details → Choose your plan → app
 ```
 
-`POST /auth/verify-otp` already returns `is_registered`; the app routes on it.
-Social sign-in (not built yet) joins at the same point: once the provider has
-verified the person, a new account lands on **Your details**.
+Every route is brokered by Firebase and ends at `POST /auth/firebase`, which
+returns `is_registered`; the app routes on it. Social sign-in joins at exactly
+the same point — there is one entry to the stage machine regardless of provider.
+See [auth.md](auth.md).
 
 Your details is unreachable without that verified session — the router sends a
 signed-out user back to Login.
@@ -29,46 +30,41 @@ is optional, so it carries no `*`. Rules:
 |---|---|
 | Empty | allowed |
 | Typed, not verified | blocked — "Verify this number, or clear it to skip." |
-| Verified by OTP | allowed |
+| Verified | allowed |
 
 Editing the number (or its country) after verifying starts verification over.
 Clearing it makes it optional again.
 
-Today every account is created by phone, so nobody sees this field until social
-sign-in ships. It is built and tested against the contract below.
+## Backend contract
 
-## Backend contract — NOT YET IMPLEMENTED
+The sign-in flow cannot be reused: signing in with a phone signs you in **as**
+whoever owns it, which would swap the social account for a different (possibly
+new) one mid-registration.
 
-The sign-in OTP cannot be reused: `verify-otp` signs you in **as** that number,
-which would swap the social account for a different (possibly new) one. Adding
-a phone to the signed-in account needs two authenticated endpoints:
+Instead the client links the phone to its **existing** Firebase user
+(`linkWithCredential`) and sends the refreshed ID token. Firebase sends and
+checks the SMS code, so there is one authenticated endpoint and no code of ours
+anywhere:
 
 ### `POST /api/v1/users/me/phone`
 
 ```json
-{ "phone": "+12015550123" }
+{ "id_token": "<Firebase ID token, refreshed after linking>" }
 ```
 
-Texts a 6-digit code to `phone`. `204` on success.
-
-- `409` if the number already belongs to another account — say so *before*
-  sending an SMS.
-- Same rate limits as `request-otp`.
-
-### `POST /api/v1/users/me/phone/verify`
-
-```json
-{ "phone": "+12015550123", "code": "123456" }
-```
-
+The token's `phone_number` claim is Google's word that the SMS was answered.
 On success, sets `phone` on the current user and returns the full `User` (same
-shape as `GET /users/me`). `400` for a wrong or expired code. Must not issue new
-tokens or change which account is signed in.
+shape as `GET /users/me`). It never issues tokens or changes which account is
+signed in.
 
-### Also needed for social accounts
+| Response | When |
+|---|---|
+| `400 phone_not_verified` | the token carries no phone claim — the link never happened |
+| `403 firebase_uid_mismatch` | the token belongs to a different Firebase user; a borrowed token must not move a number onto this account |
+| `409 phone_already_registered` | the number is already on another account |
 
-`User.phone` must be allowed to be null or absent. The app already reads a
-missing phone as empty.
+`users.phone` is nullable (migration `0022_firebase_identity`), so a social
+account that skips the field is valid. Covered by `tests/test_phone_link.py`.
 
 ## Practice location
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CHAR, DateTime, SmallInteger, String, func
+from sqlalchemy import CHAR, CheckConstraint, DateTime, SmallInteger, String, func
 from sqlalchemy.dialects.postgresql import ARRAY, UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,13 +14,26 @@ from app.db.tables import Tables
 
 class User(Base):
     __tablename__ = Tables.USERS
+    __table_args__ = (
+        CheckConstraint(
+            "phone IS NOT NULL OR email IS NOT NULL", name="ck_users_phone_or_email"
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
-    phone: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
+    # Nullable since Firebase became the identity broker: a user who signs in
+    # with Google/Facebook/Apple and skips the optional phone field has none.
+    # A CHECK constraint keeps phone-or-email always present.
+    phone: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True, index=True)
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True, index=True)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Firebase uid — the identity every sign-in method resolves to. Cleared on
+    # account deletion so a tombstone can never be adopted by a new sign-in.
+    firebase_uid: Mapped[str | None] = mapped_column(
+        String(128), unique=True, nullable=True, index=True
+    )
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     # Public handle (nullable, generated lazily on first profile edit) + headline.
     handle: Mapped[str | None] = mapped_column(String(30), unique=True, nullable=True)

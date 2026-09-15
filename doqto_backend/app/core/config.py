@@ -1,7 +1,6 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,11 +11,6 @@ class Settings(BaseSettings):
     # (master OTP, weak-key fallback, fake AWS clients). Local dev sets
     # ENVIRONMENT=local explicitly (.env / scripts/dev.sh / tests/conftest.py).
     ENVIRONMENT: Literal["local", "staging", "production"] = "production"
-
-    # TEMPORARY: honour DEV_MASTER_OTP outside local while SNS is stuck in the
-    # SMS sandbox (exit case pending). MUST be flipped back to false once real
-    # SMS delivery works — this is a sign-in backdoor.
-    MASTER_OTP_ENABLED: bool = False
 
     DATABASE_URL: str
     REDIS_URL: str
@@ -31,6 +25,11 @@ class Settings(BaseSettings):
     PUSH_PROVIDER: Literal["log", "fcm"] = "log"
     FCM_PROJECT_ID: str = ""
     FCM_SERVICE_ACCOUNT_JSON: str = ""
+
+    # Firebase is the identity broker for every sign-in method. Verification
+    # needs only the project id — the ID token is checked against Google's
+    # public certs, so there is no secret to hold here.
+    FIREBASE_PROJECT_ID: str = ""
 
     JWT_SECRET: str
     MESSAGE_ENCRYPTION_KEY: str

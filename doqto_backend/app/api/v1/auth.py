@@ -9,54 +9,40 @@ from app.core.routes import ApiRoutes
 from app.db.postgres import get_db
 from app.db.redis import get_redis
 from app.models import User
-from app.schemas.auth import RefreshIn, RegisterIn, RequestOtpIn, TokenPair, VerifyOtpIn
+from app.schemas.auth import (
+    FirebaseSignInIn,
+    RefreshIn,
+    RegisterIn,
+    TokenPair,
+)
 from app.schemas.common import OkResponse
 from app.schemas.user import UserOut, build_user_out
 from app.services.audit_service import request_meta
-from app.services.auth_service import AuthError, AuthService
+from app.services.auth_service import AuthError, AuthService, RateLimited
 
 router = APIRouter()
 
 
-@router.post(ApiRoutes.AUTH_REQUEST_OTP, response_model=OkResponse)
-async def request_otp(
-    body: RequestOtpIn,
-    request: Request,
-    redis: Redis = Depends(get_redis),
-    db: AsyncSession = Depends(get_db),
-) -> OkResponse:
-    ip, user_agent = request_meta(request)
-    try:
-        await AuthService.request_otp(
-            phone=body.phone, redis=redis, db=db, ip_address=ip, user_agent=user_agent
-        )
-    except AuthError as e:
-        # 429 for rate-limit/cooldown errors so the client can surface a wait
-        # message cleanly; other AuthErrors bubble as 400.
-        detail = str(e)
-        if detail in {"otp_resend_cooldown", "otp_too_many_requests"}:
-            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail=detail) from e
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=detail) from e
-    return OkResponse()
-
-
-@router.post(ApiRoutes.AUTH_VERIFY_OTP, response_model=TokenPair)
-async def verify_otp(
-    body: VerifyOtpIn,
+@router.post(ApiRoutes.AUTH_FIREBASE, response_model=TokenPair)
+async def sign_in_with_firebase(
+    body: FirebaseSignInIn,
     request: Request,
     redis: Redis = Depends(get_redis),
     db: AsyncSession = Depends(get_db),
 ) -> TokenPair:
+    """Every sign-in method lands here — phone, Google, Facebook and Apple all
+    arrive as one Firebase ID token."""
     ip, user_agent = request_meta(request)
     try:
-        return await AuthService.verify_otp(
-            phone=body.phone,
-            code=body.code,
+        return await AuthService.sign_in_with_firebase(
+            id_token=body.id_token,
             redis=redis,
             db=db,
             ip_address=ip,
             user_agent=user_agent,
         )
+    except RateLimited as e:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e)) from e
     except AuthError as e:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
 

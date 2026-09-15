@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from app.core.enums import AuditAction
 from app.models import AuditLog, Connection, Message, User
+from app.services.account_deletion_service import AccountDeletionService
 from tests.helpers import (
     add_org_member,
     auth_headers,
@@ -112,3 +113,31 @@ async def test_deleted_user_absent_from_directory(client, db, deleted_setup):
     assert r.status_code == 200, r.text
     names = [c["full_name"] for c in r.json()["data"]]
     assert not any("Alice" in n or "Deleted" in n for n in names)
+
+
+async def test_deleting_a_social_only_account_without_a_phone(db):
+    """Social sign-in produces users with phone NULL. The audit metadata used
+    to slice user.phone[-4:], which raises on None and aborts the deletion."""
+    user = await create_user(db)
+    user.phone = None
+    user.email = "social@example.com"
+    user.firebase_uid = "uid-social"
+    await db.commit()
+
+    await AccountDeletionService.delete_account(user=user, db=db)
+    await db.commit()
+
+    assert user.deleted_at is not None
+
+
+async def test_deletion_clears_the_firebase_uid(db):
+    """Otherwise the provider account still maps to the tombstone, and signing
+    in with the same Google account would adopt a deleted user."""
+    user = await create_user(db)
+    user.firebase_uid = "uid-to-scrub"
+    await db.commit()
+
+    await AccountDeletionService.delete_account(user=user, db=db)
+    await db.commit()
+
+    assert user.firebase_uid is None

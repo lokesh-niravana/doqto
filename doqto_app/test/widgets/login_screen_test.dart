@@ -5,14 +5,51 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:doqto_app/core/constants/strings.dart';
 import 'package:doqto_app/ui/screens/auth/login_screen.dart';
 import 'package:doqto_app/ui/widgets/phone_field.dart';
+import 'package:doqto_app/core/di/providers.dart';
+import 'package:doqto_app/data/api/api_client.dart';
+import 'package:doqto_app/data/api/token_storage.dart';
+import 'package:doqto_app/data/models/user.dart';
+import 'package:doqto_app/data/repositories/auth_repository.dart';
+import 'package:doqto_app/data/services/auth_broker.dart';
+import 'package:doqto_app/ui/widgets/inline_error.dart';
 import 'package:doqto_app/ui/widgets/social_button.dart';
 
 // The login screen offers four ways in. Phone OTP is the only one wired to the
 // backend; the rest must still be visible and must say so when tapped.
+class _Auth extends AuthRepository {
+  _Auth() : super(ApiClient(), TokenStorage());
+  final List<String> exchanged = [];
+
+  @override
+  Future<TokenPair> signInWithFirebase(String idToken) async {
+    exchanged.add(idToken);
+    return TokenPair('access', 'refresh', false);
+  }
+
+  @override
+  Future<User> me() async => User.fromJson({
+        'id': 'u1',
+        'phone': '+15555550100',
+        'full_name': '',
+        'npi_number': 'PENDING01',
+        'role': 'doctor',
+        'created_at': DateTime.now().toIso8601String(),
+      });
+}
+
 void main() {
-  Future<void> pump(WidgetTester tester) => tester.pumpWidget(
-        const ProviderScope(child: MaterialApp(home: LoginScreen())),
-      );
+  Future<void> pump(
+    WidgetTester tester, {
+    AuthRepository? auth,
+    AuthBroker? broker,
+  }) =>
+      tester.pumpWidget(ProviderScope(
+        overrides: [
+          if (auth != null) authRepositoryProvider.overrideWithValue(auth),
+          if (broker != null) authBrokerProvider.overrideWithValue(broker),
+        ],
+        child: const MaterialApp(home: LoginScreen()),
+      ));
 
   // The screen scrolls; error text can push a button below the test viewport.
   Future<void> tap(WidgetTester tester, Finder finder) async {
@@ -34,8 +71,8 @@ void main() {
     expect(find.text('New to Doqto?'), findsNothing);
     expect(find.text(Strings.authSendOtp), findsWidgets);
 
-    // Both providers are offered regardless of the selected tab.
-    expect(find.byType(SocialButton), findsNWidgets(2));
+    // All three providers are offered regardless of the selected tab.
+    expect(find.byType(SocialButton), findsNWidgets(3));
     expect(find.text(Strings.loginGoogle), findsOneWidget);
     expect(find.text(Strings.loginFacebook), findsOneWidget);
 
@@ -48,7 +85,7 @@ void main() {
     expect(find.text(Strings.loginPassword), findsOneWidget);
     expect(find.text(Strings.loginForgotPassword), findsOneWidget);
     expect(find.text(Strings.loginSignIn), findsWidgets);
-    expect(find.byType(SocialButton), findsNWidgets(2));
+    expect(find.byType(SocialButton), findsNWidgets(3));
   });
 
   testWidgets('password sign-in takes a username or an email', (tester) async {
@@ -95,11 +132,38 @@ void main() {
     expect(find.text(Strings.loginComingSoon), findsOneWidget);
   });
 
-  testWidgets('a provider button reports being unavailable', (tester) async {
-    await pump(tester);
+  testWidgets('tapping a provider signs in through the broker', (tester) async {
+    final auth = _Auth();
+    final broker = FakeAuthBroker(idToken: 'google-tok');
+    await pump(tester, auth: auth, broker: broker);
 
     await tap(tester, find.text(Strings.loginGoogle));
 
-    expect(find.text(Strings.loginComingSoon), findsOneWidget);
+    // It reaches the backend rather than apologising.
+    expect(auth.exchanged, ['google-tok']);
+    expect(find.text(Strings.loginComingSoon), findsNothing);
+  });
+
+  testWidgets('dismissing the provider sheet leaves the screen alone',
+      (tester) async {
+    final auth = _Auth();
+    // A null token is Firebase reporting a cancelled sheet.
+    await pump(tester, auth: auth, broker: FakeAuthBroker(idToken: null));
+
+    await tap(tester, find.text(Strings.loginGoogle));
+
+    expect(auth.exchanged, isEmpty);
+    // No error banner: cancelling is a normal thing to do.
+    expect(find.byType(InlineError), findsOneWidget);
+    expect(find.text(Strings.loginComingSoon), findsNothing);
+  });
+
+  testWidgets('Apple is offered alongside Google and Facebook', (tester) async {
+    // App Store guideline 4.8 requires it wherever a social login is offered.
+    await pump(tester);
+    await tester.pumpAndSettle();
+
+    expect(find.text(Strings.loginApple), findsOneWidget);
+    expect(find.byType(SocialButton), findsNWidgets(3));
   });
 }

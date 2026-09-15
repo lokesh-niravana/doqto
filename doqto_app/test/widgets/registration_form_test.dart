@@ -10,6 +10,7 @@ import 'package:doqto_app/data/api/token_storage.dart';
 import 'package:doqto_app/data/models/user.dart';
 import 'package:doqto_app/data/repositories/auth_repository.dart';
 import 'package:doqto_app/data/repositories/user_repository.dart';
+import 'package:doqto_app/data/services/auth_broker.dart';
 import 'package:doqto_app/data/services/npi_lookup.dart';
 import 'package:doqto_app/state/auth_state.dart';
 import 'package:doqto_app/ui/screens/auth/registration_screen.dart';
@@ -51,27 +52,46 @@ class _FakeAuthRepository extends AuthRepository {
 
 class _FakeUserRepository extends UserRepository {
   _FakeUserRepository() : super(ApiClient());
-  final List<String> codesSentTo = [];
   final List<String> verified = [];
 
   @override
-  Future<void> requestPhoneCode(String phone) async => codesSentTo.add(phone);
+  Future<User> linkPhone(String idToken) async {
+    // The broker only mints a token once Firebase accepted the code, so
+    // reaching here at all means the number is proved.
+    verified.add(idToken);
+    return _user(phone: idToken.replaceFirst('token-for-', ''));
+  }
+}
+
+/// Firebase sends the SMS and checks the code. A wrong code never produces a
+/// token, so the backend is never called — the same shape as production.
+class _PhoneBroker extends FakeAuthBroker {
+  final List<String> codesSentTo = [];
 
   @override
-  Future<User> verifyPhone({required String phone, required String code}) async {
-    if (code != _goodCode) throw ApiException('That code is not right.', status: 400);
-    verified.add(phone);
-    return _user(phone: phone);
+  Future<PhoneChallenge> startPhoneSignIn(String phone) async {
+    codesSentTo.add(phone);
+    return PhoneChallenge('vid', phone);
+  }
+
+  @override
+  Future<String> linkPhone(PhoneChallenge challenge, String code) async {
+    if (code != _goodCode) {
+      throw ApiException('That code is not right.', status: 400);
+    }
+    return 'token-for-${challenge.phone}';
   }
 }
 
 void main() {
   late _FakeAuthRepository auth;
   late _FakeUserRepository users;
+  late _PhoneBroker broker;
 
   setUp(() {
     auth = _FakeAuthRepository();
     users = _FakeUserRepository();
+    broker = _PhoneBroker();
   });
 
   /// [phone] is the phone on the signed-in account: set for phone sign-up,
@@ -83,6 +103,7 @@ void main() {
       authRepositoryProvider.overrideWithValue(auth),
       userRepositoryProvider.overrideWithValue(users),
       npiLookupProvider.overrideWithValue(_NoLookup()),
+      authBrokerProvider.overrideWithValue(broker),
     ]);
     addTearDown(container.dispose);
     container.read(authProvider.notifier).setUser(_user(phone: phone));
@@ -177,7 +198,7 @@ void main() {
       await tapContinue(tester);
 
       expect(auth.registered, ['Vimal Nanavati|Cardiology|1851408082']);
-      expect(users.codesSentTo, isEmpty);
+      expect(broker.codesSentTo, isEmpty);
     });
 
     testWidgets('a typed but unverified number blocks Continue', (tester) async {
@@ -208,12 +229,12 @@ void main() {
 
       await tester.tap(find.widgetWithText(AppButton, Strings.regPhoneSendCode).first);
       await tester.pumpAndSettle();
-      expect(users.codesSentTo, ['+1$_number']);
+      expect(broker.codesSentTo, ['+1$_number']);
       expect(find.text(Strings.regPhoneCode), findsOneWidget);
 
       await tester.enterText(code, _goodCode);
       await tester.pumpAndSettle();
-      expect(users.verified, ['+1$_number']);
+      expect(users.verified, ['token-for-+1$_number']);
       expect(find.text(Strings.regPhoneVerified), findsOneWidget);
 
       await tapContinue(tester);

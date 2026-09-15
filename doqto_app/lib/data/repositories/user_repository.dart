@@ -51,19 +51,11 @@ class UserRepository {
     await _api.delete(ApiRoutes.usersMe);
   }
 
-  /// Texts a code to [phone] so the signed-in user can attach it. Not the
-  /// sign-in OTP: that one signs you in *as* the number, which would swap
-  /// accounts. Contract: docs/phone-verification.md.
-  Future<void> requestPhoneCode(String phone) async {
-    await _api.post(ApiRoutes.usersMePhone, body: {'phone': phone});
-  }
-
-  /// Confirms the code and returns the account with [phone] now on it.
-  Future<User> verifyPhone({required String phone, required String code}) async {
-    final j = await _api.post(
-      ApiRoutes.usersMePhoneVerify,
-      body: {'phone': phone, 'code': code},
-    );
+  /// Attach a phone the client already proved through Firebase. [idToken] is
+  /// the token refreshed after linking; its phone_number claim is the proof.
+  /// Contract: docs/auth.md.
+  Future<User> linkPhone(String idToken) async {
+    final j = await _api.post(ApiRoutes.usersMePhone, body: {'id_token': idToken});
     return User.fromJson(j);
   }
 

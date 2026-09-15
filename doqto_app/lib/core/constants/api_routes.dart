@@ -5,8 +5,7 @@ class ApiRoutes {
   static const String apiV1 = '/api/v1';
 
   // Auth
-  static const String authRequestOtp = '$apiV1/auth/request-otp';
-  static const String authVerifyOtp = '$apiV1/auth/verify-otp';
+  static const String authFirebase = '$apiV1/auth/firebase';
   static const String authRefresh = '$apiV1/auth/refresh';
   static const String authLogout = '$apiV1/auth/logout';
   static const String authRegister = '$apiV1/auth/register';
@@ -18,7 +17,6 @@ class ApiRoutes {
   // Attach a phone to the signed-in account. NOT YET ON THE BACKEND — see
   // docs/phone-verification.md for the contract.
   static const String usersMePhone = '$apiV1/users/me/phone';
-  static const String usersMePhoneVerify = '$apiV1/users/me/phone/verify';
 
   // Orgs
   static const String orgs = '$apiV1/orgs';

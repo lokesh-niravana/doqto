@@ -19,8 +19,7 @@ class ApiPrefix:
 
 class ApiRoutes:
     # Auth
-    AUTH_REQUEST_OTP = "/request-otp"
-    AUTH_VERIFY_OTP = "/verify-otp"
+    AUTH_FIREBASE = "/firebase"
     AUTH_REFRESH = "/refresh"
     AUTH_LOGOUT = "/logout"
     AUTH_REGISTER = "/register"
@@ -36,6 +35,7 @@ class ApiRoutes:
     ORGS_NETWORKING_SETTINGS = "/{org_id}/settings/networking"
 
     # Users
+    USERS_ME_PHONE = "/me/phone"
     USERS_PUSH_TOKENS = "/me/push-tokens"
     USERS_PRIVACY = "/me/privacy"
     USERS_PROFILE = "/{user_id}/profile"  # public profile (M2) — no PHI

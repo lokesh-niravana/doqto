@@ -1,7 +1,8 @@
 # iOS release procedure
 
-How a Doqto build gets from `revamp` to App Review. Last exercised 2026-09-07
-(build 21, submission `fbe6dfa4-7df0-419b-9508-5c94ffe45e72`).
+How a Doqto build gets from `revamp` to App Review. Last exercised 2026-09-13
+(build 22, uploaded for TestFlight; build 21 remains attached to the 1.0
+submission `fbe6dfa4-7df0-419b-9508-5c94ffe45e72`).
 
 ## Why this is not just "Archive → Upload"
 
@@ -43,9 +44,10 @@ proves nothing. Only the App Store submission exercises the validator.
 
 ### 2. Build, patch, upload — one command
 
-Run from the repo root. Because the plist patching and the upload are
-blocked for Claude Code's shell, a person runs it (prefix with `!` inside a
-Claude session so the output lands there):
+Run from the repo root. Claude Code ran this end to end for build 22
+(2026-09-13); the plist patching and upload steps that used to be blocked went
+through. If a run is refused, a person runs it instead (prefix with `!` inside
+a Claude session so the output lands there):
 
 ```
 scripts/ios_release.sh            # next build number

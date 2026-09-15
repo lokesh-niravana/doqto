@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/di/providers.dart';
 import '../core/enums/app_enums.dart';
 import '../data/models/user.dart';
+import '../data/services/auth_broker.dart';
 import '../data/repositories/user_repository.dart';
 import 'org_state.dart';
 
@@ -174,12 +175,29 @@ class AuthNotifier extends Notifier<AuthState> {
     });
   }
 
-  Future<void> requestOtp(String phone) async {
-    await ref.read(authRepositoryProvider).requestOtp(phone);
+  /// Start phone verification. Firebase sends the SMS; the returned challenge
+  /// goes to the OTP screen and comes back to [confirmPhoneCode].
+  Future<PhoneChallenge> startPhoneSignIn(String phone) =>
+      ref.read(authBrokerProvider).startPhoneSignIn(phone);
+
+  Future<void> confirmPhoneCode(PhoneChallenge challenge, String code) async {
+    final idToken =
+        await ref.read(authBrokerProvider).confirmPhoneCode(challenge, code);
+    await _exchange(idToken);
   }
 
-  Future<void> verifyOtp({required String phone, required String code}) async {
-    final pair = await ref.read(authRepositoryProvider).verifyOtp(phone: phone, code: code);
+  /// Google / Facebook / Apple. A null token means the user dismissed the
+  /// provider sheet — a normal outcome, so nothing changes and nothing throws.
+  Future<void> signInWith(SocialProvider provider) async {
+    final idToken = await ref.read(authBrokerProvider).signInWithSocial(provider);
+    if (idToken == null) return;
+    await _exchange(idToken);
+  }
+
+  /// The one place a Firebase ID token becomes a Doqto session. Every sign-in
+  /// method funnels through here, so the stage machine has a single entry.
+  Future<void> _exchange(String idToken) async {
+    final pair = await ref.read(authRepositoryProvider).signInWithFirebase(idToken);
     final me = await ref.read(authRepositoryProvider).me();
     if (!pair.isRegistered) {
       state = AuthState(AuthStage.needsRegistration, me);

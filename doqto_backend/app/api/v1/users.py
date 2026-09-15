@@ -17,12 +17,14 @@ from app.core.permissions import can_message, can_view_profile
 from app.core.routes import ApiRoutes
 from app.db.postgres import get_db
 from app.models import ConnectionInvitation, User, UserPrivacySettings
+from app.schemas.auth import LinkPhoneIn
 from app.schemas.common import OkResponse
 from app.schemas.people import PublicProfileOut, location_label
 from app.schemas.privacy import PrivacyOut, PrivacyPatch
 from app.schemas.push import PushTokenDeleteIn, PushTokenIn
 from app.schemas.user import UserOut, UserPatch, build_user_out
 from app.services.account_deletion_service import AccountDeletionService
+from app.services.auth_service import AuthError, AuthService, PhoneTaken, WrongAccount
 from app.services.file_service import FileService
 from app.services.push_service import PushService
 from app.services.relationship_service import RelationshipService
@@ -233,6 +235,24 @@ async def upload_avatar(
     await db.flush()
     await db.refresh(user)
     return await build_user_out(user)
+
+
+@router.post(ApiRoutes.USERS_ME_PHONE, response_model=UserOut)
+async def link_phone(
+    body: LinkPhoneIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserOut:
+    """Attach an optional phone number to an account that signed in another way."""
+    try:
+        updated = await AuthService.link_phone(user=user, id_token=body.id_token, db=db)
+    except WrongAccount as e:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except PhoneTaken as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(e)) from e
+    except AuthError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return await build_user_out(updated)
 
 
 @router.post(ApiRoutes.USERS_PUSH_TOKENS, response_model=OkResponse)

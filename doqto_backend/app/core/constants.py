@@ -4,14 +4,6 @@
 ACCESS_TOKEN_TTL_SECONDS = 60 * 60  # 1 hour
 REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
 
-# OTP
-OTP_TTL_SECONDS = 60 * 10  # 10 minutes
-OTP_LENGTH = 6
-OTP_MAX_ATTEMPTS = 5
-
-# Dev-only master OTP — works for any phone when ENVIRONMENT=local.
-# Never accepted in staging/prod. Safe for simulator + emulator testing.
-DEV_MASTER_OTP = "777777"
 
 # Presence
 PRESENCE_ONLINE_TTL_SECONDS = 60 * 5  # 5 minutes
@@ -59,16 +51,15 @@ INVITE_CODE_DIGITS_LEN = 4
 
 # Rate limiting (requests per minute per user per endpoint)
 RATE_LIMIT_DEFAULT_PER_MINUTE = 60
-RATE_LIMIT_OTP_PER_HOUR = 5
+# Sign-in attempts per IP per hour. /auth/firebase is the only
+# unauthenticated endpoint, and a valid token still costs a DB write.
+RATE_LIMIT_SIGNIN_PER_HOUR = 20
 # Read endpoints (message history, file URLs, member list) — generous.
 RATE_LIMIT_READS_PER_MINUTE = 120
 # Admin login lockout: attempts per email per window.
 ADMIN_LOGIN_MAX_ATTEMPTS = 5
 ADMIN_LOGIN_WINDOW_SECONDS = 15 * 60
 
-# OTP request cooldown — mirror of mobile-side Resend button timer. Must match
-# AppConstants.otpResendCooldown (30s) on the Flutter side.
-OTP_RESEND_COOLDOWN_SECONDS = 30
 
 # Push notifications — PHI-free by policy: these strings are sent verbatim to
 # Apple/Google. NEVER interpolate user data (names, message content, phone

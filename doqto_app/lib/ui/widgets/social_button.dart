@@ -46,6 +46,18 @@ class SocialButton extends StatelessWidget {
         onPressed: onPressed,
       );
 
+  /// Apple: required by App Store guideline 4.8 wherever a third-party social
+  /// login is offered.
+  factory SocialButton.apple({
+    required String label,
+    required VoidCallback? onPressed,
+  }) =>
+      SocialButton(
+        label: label,
+        mark: const _AppleMark(),
+        onPressed: onPressed,
+      );
+
   @override
   Widget build(BuildContext context) {
     return AppPressable(
@@ -162,4 +174,18 @@ class _FacebookMark extends StatelessWidget {
       ),
     );
   }
+}
+
+
+/// The Apple logo, drawn rather than shipped as an asset so it inherits the
+/// text colour and needs no licence-bearing image file.
+class _AppleMark extends StatelessWidget {
+  const _AppleMark();
+
+  @override
+  Widget build(BuildContext context) => Icon(
+        Icons.apple,
+        size: 22,
+        color: AppColors.textPrimary,
+      );
 }

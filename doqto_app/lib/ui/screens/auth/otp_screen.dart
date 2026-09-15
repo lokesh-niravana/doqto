@@ -17,19 +17,23 @@ import '../../../core/utils/error_messages.dart';
 import '../../../core/utils/validators.dart';
 import '../../../state/auth_state.dart';
 import '../../widgets/app_text_field.dart';
+import '../../../data/services/auth_broker.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/inline_error.dart';
 import '../../widgets/primary_button.dart';
 
 class OtpScreen extends ConsumerStatefulWidget {
-  final String phone;
-  const OtpScreen({super.key, required this.phone});
+  /// The verification Firebase started. Resending replaces it, so the screen
+  /// keeps its own copy rather than reading the widget's.
+  final PhoneChallenge challenge;
+  const OtpScreen({super.key, required this.challenge});
 
   @override
   ConsumerState<OtpScreen> createState() => _OtpScreenState();
 }
 
 class _OtpScreenState extends ConsumerState<OtpScreen> {
+  late PhoneChallenge _challenge = widget.challenge;
   final _controller = TextEditingController();
   final _otpKey = GlobalKey<AppTextFieldState>();
   bool _loading = false;
@@ -73,7 +77,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     try {
       await ref
           .read(authProvider.notifier)
-          .verifyOtp(phone: widget.phone, code: _controller.text);
+          .confirmPhoneCode(_challenge, _controller.text);
       if (!mounted) return;
       final stage = ref.read(authProvider).stage;
       // After OTP verify, route by what AuthStage actually resolved to. A
@@ -104,7 +108,10 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
       _error = null;
     });
     try {
-      await ref.read(authProvider.notifier).requestOtp(widget.phone);
+      // A resend is a fresh verification — the old id stops working.
+      _challenge = await ref
+          .read(authProvider.notifier)
+          .startPhoneSignIn(_challenge.phone);
       if (!mounted) return;
       _startCooldown();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -135,7 +142,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
             const SizedBox(height: AppSpacing.xs),
             FadeSlideIn.staggered(
               1,
-              Text('Sent to ${widget.phone}', style: AppText.caption),
+              Text('Sent to ${_challenge.phone}', style: AppText.caption),
             ),
             const SizedBox(height: AppSpacing.lg),
             FadeSlideIn.staggered(

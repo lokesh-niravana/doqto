@@ -12,7 +12,6 @@
 """
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -129,10 +128,9 @@ async def test_purge_content_shreds_old_deleted_and_expired(chat, db):
 
 # ------------------------------------------------- H5b/M5: session TTLs
 
-async def test_login_sets_split_session_ttls_and_refresh_works(client):
-    r = await client.post(
-        "/api/v1/auth/verify-otp", json={"phone": "+15551230001", "code": "777777"}
-    )
+async def test_login_sets_split_session_ttls_and_refresh_works(client, firebase):
+    firebase(phone="+15551230001")
+    r = await client.post("/api/v1/auth/firebase", json={"id_token": "stub"})
     assert r.status_code == 200
     pair = r.json()
     jti = decode_token(pair["access_token"], JwtTokenType.ACCESS)["jti"]
@@ -191,18 +189,22 @@ async def test_ws_query_token_is_ignored_and_rejected(db):
         redis_mod._redis = None
 
 
-# ------------------------------------------------- M2: masked OTP audit
+# ------------------------------------------------- M2: sign-in audit carries no phone
 
-async def test_otp_audit_metadata_masks_phone(client, db):
+async def test_signin_audit_row_holds_no_phone_number(client, db, firebase):
+    """Firebase owns the phone number now, so the audit row has no reason to
+    repeat it — minimum necessary. (Account deletion still records a masked
+    last-4; see test_account_deletion.)"""
     phone = "+15559990001"
-    r = await client.post("/api/v1/auth/request-otp", json={"phone": phone})
+    firebase(phone=phone)
+    r = await client.post("/api/v1/auth/firebase", json={"id_token": "stub"})
     assert r.status_code == 200
     row = await db.scalar(
-        select(AuditLog).where(AuditLog.action == AuditAction.OTP_REQUESTED.value)
+        select(AuditLog).where(AuditLog.action == AuditAction.OTP_VERIFIED.value)
     )
     assert row is not None
-    assert row.meta["phone"] == "****0001"
     assert phone not in str(row.meta)
+    assert phone[-4:] not in str(row.meta)
 
 
 # ------------------------------------- M3: member management authz

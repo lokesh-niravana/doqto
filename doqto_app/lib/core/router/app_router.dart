@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../data/models/organization.dart';
 import '../../state/auth_state.dart';
+import '../../data/services/auth_broker.dart';
 import '../../ui/screens/auth/otp_screen.dart';
 import '../../ui/screens/auth/login_screen.dart';
 import '../../ui/screens/auth/registration_screen.dart';
@@ -115,7 +116,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.otp,
         parentNavigatorKey: rootNavigatorKey,
-        builder: (_, state) => OtpScreen(phone: state.extra as String),
+        builder: (_, state) => OtpScreen(challenge: state.extra as PhoneChallenge),
       ),
       GoRoute(
         path: AppRoutes.registration,

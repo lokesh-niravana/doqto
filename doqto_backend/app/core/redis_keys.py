@@ -7,17 +7,7 @@ def presence_key(user_id: UUID | str) -> str:
     return f"presence:{user_id}"
 
 
-def otp_key(phone: str) -> str:
-    return f"otp:{phone}"
 
-
-def otp_attempts_key(phone: str) -> str:
-    return f"otp_attempts:{phone}"
-
-
-def otp_resend_key(phone: str) -> str:
-    """Short-lived guard against OTP request spam (resend cooldown)."""
-    return f"otp_resend:{phone}"
 
 
 def session_key(jti: str) -> str:

@@ -13,6 +13,7 @@ import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../core/utils/validators.dart';
 import '../../../data/services/npi_lookup.dart';
+import '../../../data/services/auth_broker.dart';
 import '../../../state/auth_state.dart';
 import '../../widgets/app_text_field.dart';
 import '../../widgets/fade_slide_in.dart';
@@ -444,12 +445,15 @@ class _OptionalPhoneState extends ConsumerState<_OptionalPhone> {
     super.dispose();
   }
 
+  PhoneChallenge? _challenge;
+
   /// Any edit — number or country — starts verification over.
   void _onPhone(String e164) {
     if (e164 == _phone) return;
     setState(() {
       _phone = e164;
       _codeSent = false;
+      _challenge = null;
       _verified = false;
       _error = null;
       _code.clear();
@@ -464,7 +468,9 @@ class _OptionalPhoneState extends ConsumerState<_OptionalPhone> {
       _code.clear();
     });
     try {
-      await ref.read(userRepositoryProvider).requestPhoneCode(_phone);
+      // Firebase sends the SMS; the challenge comes back to _verify.
+      _challenge =
+          await ref.read(authProvider.notifier).startPhoneSignIn(_phone);
       if (mounted) setState(() => _codeSent = true);
     } catch (e) {
       if (mounted) setState(() => _error = ErrorMessages.forApi(e));
@@ -479,9 +485,11 @@ class _OptionalPhoneState extends ConsumerState<_OptionalPhone> {
       _error = null;
     });
     try {
-      final user = await ref
-          .read(userRepositoryProvider)
-          .verifyPhone(phone: _phone, code: code);
+      final challenge = _challenge;
+      if (challenge == null) throw StateError('no verification in flight');
+      final idToken =
+          await ref.read(authBrokerProvider).linkPhone(challenge, code);
+      final user = await ref.read(userRepositoryProvider).linkPhone(idToken);
       ref.read(authProvider.notifier).setUser(user);
       if (!mounted) return;
       setState(() => _verified = true);

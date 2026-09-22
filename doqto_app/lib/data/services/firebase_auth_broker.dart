@@ -78,6 +78,16 @@ class FirebaseAuthBroker implements AuthBroker {
   }
 
   @override
+  Future<void> unlinkPhone() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    if (!user.providerData.any((p) => p.providerId == PhoneAuthProvider.PROVIDER_ID)) {
+      return;
+    }
+    await user.unlink(PhoneAuthProvider.PROVIDER_ID);
+  }
+
+  @override
   Future<String?> signInWithSocial(SocialProvider provider) async {
     // Apple is the odd one out: Firebase drives that flow end to end, so it
     // signs in directly rather than handing back a credential.

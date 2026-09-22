@@ -12,6 +12,7 @@ import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../core/utils/validators.dart';
+import '../../../data/models/user.dart';
 import '../../../data/services/npi_lookup.dart';
 import '../../../data/services/auth_broker.dart';
 import '../../../state/auth_state.dart';
@@ -567,9 +568,19 @@ class _OptionalPhoneState extends ConsumerState<_OptionalPhone> {
     try {
       final challenge = _challenge;
       if (challenge == null) throw StateError('no verification in flight');
-      final idToken =
-          await ref.read(authBrokerProvider).linkPhone(challenge, code);
-      final user = await ref.read(userRepositoryProvider).linkPhone(idToken);
+      final broker = ref.read(authBrokerProvider);
+      final idToken = await broker.linkPhone(challenge, code);
+      final User user;
+      try {
+        user = await ref.read(userRepositoryProvider).linkPhone(idToken);
+      } catch (_) {
+        // Firebase took the number but Doqto refused it (e.g. another account
+        // owns it). Roll Firebase back or every retry fails differently.
+        try {
+          await broker.unlinkPhone();
+        } catch (_) {}
+        rethrow;
+      }
       ref.read(authProvider.notifier).setUser(user);
       if (!mounted) return;
       setState(() => _verified = true);
@@ -629,9 +640,20 @@ class _OptionalPhoneState extends ConsumerState<_OptionalPhone> {
             dismissOnValid: true,
             errorText: _error ?? widget.errorText,
             onChanged: (v) {
-              if (_error != null) setState(() => _error = null);
+              // Rebuild so Verify enables at six digits; the last digit also
+              // submits on its own, and Verify shows the spinner meanwhile.
+              setState(() => _error = null);
               if (v.length == _codeLength && !_busy) _verify(v);
             },
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          AppButton(
+            label: Strings.regPhoneVerify,
+            loading: _busy,
+            expand: true,
+            onPressed: _code.text.length == _codeLength && !_busy
+                ? () => _verify(_code.text)
+                : null,
           ),
           Align(
             alignment: Alignment.centerLeft,

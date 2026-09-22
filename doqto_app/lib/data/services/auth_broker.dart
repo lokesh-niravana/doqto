@@ -54,6 +54,10 @@ abstract class AuthBroker {
   /// which mid-registration would swap accounts.
   Future<String> linkPhone(PhoneChallenge challenge, String code);
 
+  /// Undo [linkPhone] when Doqto refuses the number, so Firebase and Doqto
+  /// agree and a retry (or another number) starts clean.
+  Future<void> unlinkPhone();
+
   /// Returns the ID token, or null when the user dismissed the provider sheet.
   /// Cancellation is a normal outcome, not an error.
   Future<String?> signInWithSocial(SocialProvider provider);
@@ -94,6 +98,11 @@ class FakeAuthBroker implements AuthBroker {
     if (t == null) throw StateError('no token');
     return t;
   }
+
+  int unlinked = 0;
+
+  @override
+  Future<void> unlinkPhone() async => unlinked++;
 
   @override
   Future<String?> signInWithSocial(SocialProvider provider) async => idToken;

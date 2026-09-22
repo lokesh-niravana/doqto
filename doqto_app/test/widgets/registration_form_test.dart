@@ -57,9 +57,11 @@ class _FakeAuthRepository extends AuthRepository {
 class _FakeUserRepository extends UserRepository {
   _FakeUserRepository() : super(ApiClient());
   final List<String> verified = [];
+  ApiException? linkError;
 
   @override
   Future<User> linkPhone(String idToken) async {
+    if (linkError != null) throw linkError!;
     // The broker only mints a token once Firebase accepted the code, so
     // reaching here at all means the number is proved.
     verified.add(idToken);
@@ -302,6 +304,45 @@ void main() {
       await tapContinue(tester);
       expect(auth.registered, hasLength(1));
       expect(find.text(Strings.regPhoneUnverified), findsNothing);
+    });
+
+    testWidgets('a Verify button shows once the code is sent, and submits it',
+        (tester) async {
+      await pump(tester, phone: '');
+      await tester.enterText(phone, _number);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(AppButton, Strings.regPhoneSendCode).first);
+      await tester.pumpAndSettle();
+
+      final verify = find.widgetWithText(AppButton, Strings.regPhoneVerify).first;
+      expect(tester.widget<AppButton>(verify).onPressed, isNull,
+          reason: 'disabled until six digits');
+      expect(find.widgetWithText(AppButton, Strings.regPhoneVerify), findsWidgets);
+
+      await tester.enterText(code, _goodCode);
+      await tester.pumpAndSettle();
+      expect(find.text(Strings.regPhoneVerified), findsOneWidget);
+    });
+
+    testWidgets('a number owned by another account says so and rolls Firebase back',
+        (tester) async {
+      users.linkError =
+          ApiException('phone_already_registered', status: 409);
+      await pump(tester, phone: '');
+      await fillRequired(tester);
+      await tester.enterText(phone, _number);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(AppButton, Strings.regPhoneSendCode).first);
+      await tester.pumpAndSettle();
+
+      await tester.enterText(code, _goodCode);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('already on another Doqto account'), findsOneWidget);
+      expect(find.text(Strings.regPhoneVerified), findsNothing);
+      expect(broker.unlinked, 1);
+      // Still unverified, so Continue stays off.
+      expect(tester.widget<AppButton>(continueButton).onPressed, isNull);
     });
 
     testWidgets('a wrong code shows the error and stays unverified',

@@ -46,6 +46,7 @@ class Strings {
   static const String regPhone = 'Phone number';
   static const String regPhoneSendCode = 'Send code';
   static const String regPhoneCode = 'Verification code';
+  static const String regPhoneVerify = 'Verify';
   static const String regPhoneVerified = 'Phone number verified';
   static const String regPhoneUnverified =
       'Verify this number, or clear it to skip.';

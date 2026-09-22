@@ -51,6 +51,10 @@ class ErrorMessages {
     'npi_already_registered':
         'This NPI is already on Doqto. Sign in from the previous screen, or contact your admin.',
     'npi_invalid': 'NPI must be exactly 10 digits.',
+    'phone_already_registered':
+        'This number is already on another Doqto account. Use a different number, or sign out and sign in with this one.',
+    'phone_not_verified': 'That number wasn\'t verified. Please send a new code.',
+    'firebase_uid_mismatch': 'Your session changed. Please sign in again.',
 
     // Organizations
     'invalid_invite_code':

@@ -1,7 +1,7 @@
 name: doqto_app
 description: "Doqto — secure doctor-to-doctor communication."
 publish_to: 'none'
-version: 1.0.0+26
+version: 1.0.0+27
 
 environment:
   sdk: ^3.10.4

@@ -93,6 +93,14 @@ async def test_social_only_user_has_no_phone(client, db, firebase):
     assert user.phone is None
     assert user.email == "new@example.com"
 
+    # The very next call the app makes; this 500'd in prod on 2026-09-22.
+    me = await client.get(
+        "/api/v1/users/me",
+        headers={"Authorization": f"Bearer {r.json()['access_token']}"},
+    )
+    assert me.status_code == 200
+    assert me.json()["phone"] is None
+
 
 async def test_rejected_token_is_401(client, db, firebase):
     firebase(raises=firebase_auth.FirebaseAuthError("firebase_token_invalid"))

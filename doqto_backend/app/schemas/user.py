@@ -23,7 +23,7 @@ from app.schemas.common import ORMModel
 
 class UserOut(ORMModel):
     id: uuid.UUID
-    phone: str
+    phone: str | None
     email: str | None
     full_name: str
     specialty: str | None

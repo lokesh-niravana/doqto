@@ -7,29 +7,21 @@ import 'package:go_router/go_router.dart';
 import '../../../core/constants/strings.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
-import '../../../core/tokens/motion.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
-import '../../../core/utils/validators.dart';
 import '../../../data/services/auth_broker.dart';
 import '../../../state/auth_state.dart';
-import '../../widgets/app_segmented.dart';
-import '../../widgets/app_text_field.dart';
 import '../../widgets/fade_slide_in.dart';
-import '../../widgets/inline_banner.dart';
 import '../../widgets/inline_error.dart';
 import '../../widgets/phone_field.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/social_button.dart';
 
-/// Sign-in. One screen, several ways in: phone, Google, Facebook, Apple, and
-/// email + password.
-///
-/// Every route except email/password is brokered by Firebase and ends in the
-/// same place — one ID token, exchanged for a Doqto session. There is no
-/// separate sign-up: the identity decides. Email + password is still frontend
-/// only.
+/// Sign-in. One screen, three ways in: phone, Google, Apple (Facebook once
+/// the Meta app exists). All brokered by Firebase and all ending in the same
+/// place — one ID token, exchanged for a Doqto session. There is no separate
+/// sign-up: the identity decides.
 /// ponytail: off until the Meta app (and its App ID) exists. With no App ID
 /// in Info.plist the Facebook SDK throws a native exception on login, so a
 /// visible button is a crash in a tester's hands. Flip to true once
@@ -43,45 +35,15 @@ class LoginScreen extends ConsumerStatefulWidget {
   ConsumerState<LoginScreen> createState() => _LoginScreenState();
 }
 
-enum _Method { phone, email }
-
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _phoneKey = GlobalKey<PhoneFieldState>();
-  final _identifierKey = GlobalKey<AppTextFieldState>();
-  final _passwordKey = GlobalKey<AppTextFieldState>();
-  final _identifier = TextEditingController();
-  final _password = TextEditingController();
 
-  _Method _method = _Method.phone;
   String _e164 = '';
   bool _loading = false;
-  bool _obscure = true;
   String? _submitError;
-  String? _notice;
 
-  @override
-  void dispose() {
-    _identifier.dispose();
-    _password.dispose();
-    super.dispose();
-  }
-
-  void _clearMessages() {
-    if (_submitError != null || _notice != null) {
-      setState(() {
-        _submitError = null;
-        _notice = null;
-      });
-    }
-  }
-
-  /// Email + password is still frontend-only.
-  void _notYetAvailable() {
-    FocusScope.of(context).unfocus();
-    setState(() {
-      _submitError = null;
-      _notice = Strings.loginComingSoon;
-    });
+  void _clearError() {
+    if (_submitError != null) setState(() => _submitError = null);
   }
 
   Future<void> _social(SocialProvider provider) async {
@@ -89,7 +51,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() {
       _loading = true;
       _submitError = null;
-      _notice = null;
     });
     try {
       await ref.read(authProvider.notifier).signInWith(provider);
@@ -116,7 +77,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() {
       _loading = true;
       _submitError = null;
-      _notice = null;
     });
     try {
       // Firebase sends the SMS and hands back a challenge; the code screen
@@ -131,15 +91,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  void _signInWithPassword() {
-    // Validate first so the form behaves exactly as it will once the endpoint
-    // exists — the user sees field errors, not a blanket notice.
-    final identifierOk = _identifierKey.currentState?.validate() ?? false;
-    final passwordOk = _passwordKey.currentState?.validate() ?? false;
-    if (!identifierOk || !passwordOk) return;
-    _notYetAvailable();
   }
 
   @override
@@ -178,47 +129,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: AppSpacing.xl),
-                  FadeSlideIn.staggered(
-                    1,
-                    AppSegmented(
-                      tabs: const [
-                        Strings.loginTabPhone,
-                        Strings.loginTabEmail,
-                      ],
-                      index: _method.index,
-                      onChanged: (i) {
-                        FocusScope.of(context).unfocus();
-                        setState(() {
-                          _method = _Method.values[i];
-                          _submitError = null;
-                          _notice = null;
-                        });
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.lg),
-                  // Height differs between the two forms — animate so the buttons
-                  // below slide rather than jump.
-                  FadeSlideIn.staggered(
-                    2,
-                    AnimatedSize(
-                      duration: AppMotion.maybe(context, AppMotion.enter),
-                      curve: AppMotion.curveEnter,
-                      alignment: Alignment.topCenter,
-                      child: _method == _Method.phone
-                          ? _phoneForm()
-                          : _emailForm(),
-                    ),
-                  ),
+                  FadeSlideIn.staggered(2, _phoneForm()),
                   InlineError(_submitError),
-                  if (_notice != null) ...[
-                    const SizedBox(height: AppSpacing.sm),
-                    InlineBanner(
-                      tone: BannerTone.info,
-                      icon: Icons.info_outline,
-                      text: _notice!,
-                    ),
-                  ],
                   const SizedBox(height: AppSpacing.lg),
                   FadeSlideIn.staggered(3, _divider()),
                   const SizedBox(height: AppSpacing.lg),
@@ -264,7 +176,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Widget _phoneForm() {
     return Column(
-      key: const ValueKey(_Method.phone),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         PhoneField(
@@ -272,7 +183,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           helperText: Strings.loginPhoneHelper,
           onChanged: (full) {
             _e164 = full;
-            _clearMessages();
+            _clearError();
           },
         ),
         const SizedBox(height: AppSpacing.lg),
@@ -280,64 +191,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           label: Strings.authSendOtp,
           onPressed: _sendCode,
           loading: _loading,
-          expand: true,
-        ),
-      ],
-    );
-  }
-
-  Widget _emailForm() {
-    return Column(
-      key: const ValueKey(_Method.email),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        AppTextField(
-          key: _identifierKey,
-          controller: _identifier,
-          label: Strings.loginIdentifier,
-          hint: Strings.loginIdentifierHint,
-          keyboardType: TextInputType.emailAddress,
-          validator: Validators.usernameOrEmail(),
-          onChanged: (_) => _clearMessages(),
-        ),
-        const SizedBox(height: AppSpacing.md),
-        AppTextField(
-          key: _passwordKey,
-          controller: _password,
-          label: Strings.loginPassword,
-          hint: Strings.loginPasswordHint,
-          obscure: _obscure,
-          validator: Validators.password(),
-          onChanged: (_) => _clearMessages(),
-          suffix: IconButton(
-            onPressed: () => setState(() => _obscure = !_obscure),
-            icon: Icon(
-              _obscure
-                  ? Icons.visibility_outlined
-                  : Icons.visibility_off_outlined,
-              size: 20,
-              color: AppColors.textMuted,
-            ),
-            tooltip: _obscure ? 'Show password' : 'Hide password',
-          ),
-        ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton(
-            onPressed: _notYetAvailable,
-            child: Text(
-              Strings.loginForgotPassword,
-              style: AppText.caption.copyWith(
-                color: AppColors.primary,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        AppButton(
-          label: Strings.loginSignIn,
-          onPressed: _signInWithPassword,
           expand: true,
         ),
       ],

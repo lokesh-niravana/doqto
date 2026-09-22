@@ -17,21 +17,11 @@ class Strings {
   static const String authResend = 'Resend code';
 
   // Login — one screen, four ways in
-  static const String loginTabPhone = 'Phone';
-  static const String loginTabEmail = 'Username / Email';
   static const String loginPhoneHelper = 'Tap the flag to change country';
-  static const String loginIdentifier = 'Username / Email';
-  static const String loginIdentifierHint = 'you@hospital.org or username';
-  static const String loginPassword = 'Password';
-  static const String loginPasswordHint = 'Your password';
-  static const String loginForgotPassword = 'Forgot password?';
-  static const String loginSignIn = 'Sign in';
   static const String loginDividerOr = 'or continue with';
   static const String loginGoogle = 'Continue with Google';
   static const String loginFacebook = 'Continue with Facebook';
   static const String loginApple = 'Continue with Apple';
-  static const String loginComingSoon =
-      'This sign-in method is coming soon. Use your phone number for now.';
 
   // Registration
   static const String regFirstName = 'First name';

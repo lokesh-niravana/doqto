@@ -114,28 +114,6 @@ class Validators {
         return null;
       };
 
-  /// Sign-in identifier: either an email address or a username. An `@`
-  /// anywhere means the user is typing an email, so they get the email error
-  /// rather than a confusing username one.
-  static Validator usernameOrEmail() => (value) {
-        final v = value.trim();
-        if (v.isEmpty) return 'Please enter your username or email.';
-        if (v.contains('@')) return email()(v);
-        if (v.length < 3) return 'Usernames are at least 3 characters.';
-        if (!RegExp(r'^[A-Za-z0-9._-]+$').hasMatch(v)) {
-          return 'Usernames use letters, digits, dot, dash or underscore.';
-        }
-        return null;
-      };
-
-  /// Password on sign-in: non-empty and long enough to be worth sending.
-  /// Strength rules belong on the sign-up form, not here.
-  static Validator password() => (value) {
-        if (value.isEmpty) return 'Please enter your password.';
-        if (value.length < 8) return 'Passwords are at least 8 characters.';
-        return null;
-      };
-
   /// OTP: exactly N digits.
   static Validator otp(int length) => (value) {
         final v = value.trim();

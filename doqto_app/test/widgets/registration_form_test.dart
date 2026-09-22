@@ -71,9 +71,11 @@ class _FakeUserRepository extends UserRepository {
 /// token, so the backend is never called — the same shape as production.
 class _PhoneBroker extends FakeAuthBroker {
   final List<String> codesSentTo = [];
+  AuthBrokerException? sendError;
 
   @override
   Future<PhoneChallenge> startPhoneSignIn(String phone) async {
+    if (sendError != null) throw sendError!;
     codesSentTo.add(phone);
     return PhoneChallenge('vid', phone);
   }
@@ -256,10 +258,21 @@ void main() {
       await tester.enterText(phone, _number);
       await tester.pumpAndSettle();
 
+      expect(tester.widget<AppButton>(continueButton).onPressed, isNull);
       await tapContinue(tester);
-
-      expect(find.text(Strings.regPhoneUnverified), findsOneWidget);
       expect(auth.registered, isEmpty);
+    });
+
+    testWidgets("Firebase's own refusal is shown, not a generic error",
+        (tester) async {
+      broker.sendError = const AuthBrokerException(
+          'invalid-phone-number', 'The phone number is invalid.');
+      await pump(tester, phone: '');
+      await tester.enterText(phone, _number);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(AppButton, Strings.regPhoneSendCode).first);
+      await tester.pumpAndSettle();
+      expect(find.text('The phone number is invalid.'), findsOneWidget);
     });
 
     testWidgets('a half-typed number offers no Send code', (tester) async {

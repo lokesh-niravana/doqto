@@ -32,7 +32,7 @@ class FirebaseAuthBroker implements AuthBroker {
         // this path would sign them in mid-keystroke.
       },
       verificationFailed: (e) {
-        if (!completer.isCompleted) completer.completeError(e);
+        if (!completer.isCompleted) completer.completeError(_plain(e));
       },
       codeSent: (verificationId, _) {
         if (!completer.isCompleted) {
@@ -50,7 +50,11 @@ class FirebaseAuthBroker implements AuthBroker {
       verificationId: challenge.verificationId,
       smsCode: code,
     );
-    return _idTokenFor(await _auth.signInWithCredential(credential));
+    try {
+      return _idTokenFor(await _auth.signInWithCredential(credential));
+    } on FirebaseAuthException catch (e) {
+      throw _plain(e);
+    }
   }
 
   @override
@@ -61,7 +65,11 @@ class FirebaseAuthBroker implements AuthBroker {
       verificationId: challenge.verificationId,
       smsCode: code,
     );
-    await user.linkWithCredential(credential);
+    try {
+      await user.linkWithCredential(credential);
+    } on FirebaseAuthException catch (e) {
+      throw _plain(e);
+    }
     // Force a refresh: the phone_number claim only appears in a token minted
     // after the link.
     final token = await user.getIdToken(true);
@@ -77,7 +85,11 @@ class FirebaseAuthBroker implements AuthBroker {
       final apple = AppleAuthProvider()
         ..addScope('email')
         ..addScope('name');
-      return _idTokenFor(await _auth.signInWithProvider(apple));
+      try {
+        return _idTokenFor(await _auth.signInWithProvider(apple));
+      } on FirebaseAuthException catch (e) {
+        throw _plain(e);
+      }
     }
     final credential = provider == SocialProvider.google
         ? await _googleCredential()
@@ -111,6 +123,10 @@ class FirebaseAuthBroker implements AuthBroker {
     if (result.status != LoginStatus.success) return null;
     return FacebookAuthProvider.credential(result.accessToken!.tokenString);
   }
+
+  /// Nothing outside this file may see a FirebaseAuthException.
+  AuthBrokerException _plain(FirebaseAuthException e) =>
+      AuthBrokerException(e.code, e.message ?? e.code);
 
   Future<String> _idTokenFor(UserCredential result) async {
     final token = await result.user?.getIdToken();

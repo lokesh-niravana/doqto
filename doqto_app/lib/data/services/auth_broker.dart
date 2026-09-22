@@ -13,6 +13,18 @@ library;
 
 enum SocialProvider { google, facebook, apple }
 
+/// Firebase refused. [message] is Firebase's own wording, which is readable
+/// enough to show ("The phone number is invalid", "SMS quota exceeded") and
+/// far more useful than "Something went wrong" when a tester reports it.
+class AuthBrokerException implements Exception {
+  const AuthBrokerException(this.code, this.message);
+  final String code;
+  final String message;
+
+  @override
+  String toString() => 'AuthBrokerException($code): $message';
+}
+
 /// A phone verification in flight. [verificationId] is Firebase's handle for
 /// the SMS it just sent; it is meaningless to us beyond passing it back.
 class PhoneChallenge {

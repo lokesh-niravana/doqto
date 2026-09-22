@@ -397,7 +397,8 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
               AppButton(
                 label: Strings.regContinue,
                 // Never gated on the lookup — it is a convenience, not a step.
-                onPressed: _submit,
+                // Gated on the phone: a typed number must be verified first.
+                onPressed: _phonePending ? null : _submit,
                 loading: _loading,
                 expand: true,
               ),

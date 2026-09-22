@@ -14,6 +14,7 @@
 import 'dart:async';
 
 import '../../data/api/api_client.dart';
+import '../../data/services/auth_broker.dart';
 
 class ErrorMessages {
   ErrorMessages._();
@@ -123,6 +124,7 @@ class ErrorMessages {
     if (err is TimeoutException) {
       return 'The request took too long. Check your connection.';
     }
+    if (err is AuthBrokerException) return err.message;
     return 'Something went wrong. Please try again.';
   }
 }

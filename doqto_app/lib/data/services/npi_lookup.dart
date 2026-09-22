@@ -19,6 +19,10 @@ class NpiMatch {
   /// Registry name, title-cased, with credential appended — "Vimal Nanavati, M.D."
   final String displayName;
 
+  /// The same name split, for "Use these details". Null on hand-built matches.
+  final String? firstName;
+  final String? lastName;
+
   /// Primary practice address, split for display. Null when the registry has
   /// no usable address.
   final String? addressLine;
@@ -34,6 +38,8 @@ class NpiMatch {
   const NpiMatch({
     required this.npi,
     required this.displayName,
+    this.firstName,
+    this.lastName,
     this.addressLine,
     this.cityStateZip,
     this.city,
@@ -43,10 +49,9 @@ class NpiMatch {
 
   factory NpiMatch.fromResult(Map<String, dynamic> r) {
     final basic = (r['basic'] as Map?)?.cast<String, dynamic>() ?? const {};
-    final name = [
-      titleCase((basic['first_name'] ?? '') as String),
-      titleCase((basic['last_name'] ?? '') as String),
-    ].where((p) => p.isNotEmpty).join(' ');
+    final firstName = titleCase((basic['first_name'] ?? '') as String);
+    final lastName = titleCase((basic['last_name'] ?? '') as String);
+    final name = [firstName, lastName].where((p) => p.isNotEmpty).join(' ');
     // Credentials ("M.D.", "DO") are already correctly cased — never touch them.
     final credential = ((basic['credential'] ?? '') as String).trim();
 
@@ -71,6 +76,8 @@ class NpiMatch {
     return NpiMatch(
       npi: (r['number'] ?? '').toString(),
       displayName: credential.isEmpty ? name : '$name, $credential',
+      firstName: _orNull(firstName),
+      lastName: _orNull(lastName),
       addressLine: addr == null ? null : _street(addr),
       cityStateZip: addr == null ? null : _cityStateZip(addr),
       city: addr == null ? null : _orNull(titleCase((addr['city'] ?? '') as String)),

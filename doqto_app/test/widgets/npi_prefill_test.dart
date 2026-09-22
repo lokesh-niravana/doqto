@@ -21,6 +21,8 @@ import 'package:doqto_app/ui/widgets/primary_button.dart';
 const _vimal = NpiMatch(
   npi: '1851408082',
   displayName: 'Vimal Nanavati, M.D.',
+  firstName: 'Vimal',
+  lastName: 'Nanavati',
   addressLine: '180 Otay Lakes Rd Ste 110',
   cityStateZip: 'Bonita, CA 91902-2444',
   city: 'Bonita',
@@ -289,6 +291,27 @@ void main() {
     await enterName(tester, 'Vimal', 'Nanavati');
 
     expect(textOf(tester, npi), '1234567890');
+  });
+
+  testWidgets('"Use these details" copies the registry record into the form',
+      (tester) async {
+    lookup.onName = (_, _) => const NpiLookupResult.matched(_vimal);
+    await pump(tester);
+
+    // A typo in the name, a wrong specialty: the registry has it right.
+    await enterName(tester, 'Vimla', 'Nanavaty');
+    await tester.enterText(specialty, 'Dermatology');
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(Strings.regMatchUse));
+    await tester.pumpAndSettle();
+
+    expect(textOf(tester, firstName), 'Vimal');
+    expect(textOf(tester, lastName), 'Nanavati');
+    expect(textOf(tester, specialty), _vimal.taxonomy);
+    expect(textOf(tester, npi), _vimal.npi);
+    // The card stays: it is still who they are.
+    expect(find.text(Strings.regMatchTitle), findsOneWidget);
   });
 
   testWidgets('"Not me" clears the card and everything it filled',

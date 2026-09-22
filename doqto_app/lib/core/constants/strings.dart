@@ -50,6 +50,7 @@ class Strings {
   static const String regPhoneUnverified =
       'Verify this number, or clear it to skip.';
   static const String regMatchDismiss = 'Not me';
+  static const String regMatchUse = 'Use these details';
   static const String regContinue = 'Continue';
   static String regSignedInAs(String who) => 'Signed in as $who';
   static const String regSignOut = 'Not you? Sign out';

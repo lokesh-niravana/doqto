@@ -188,6 +188,25 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
     _state = match.state;
   }
 
+  /// "Use these details" — the one case where the registry may overwrite what
+  /// the user typed: they just asked it to.
+  void _useMatch() {
+    final match = _match;
+    if (match == null) return;
+    setState(() {
+      if (match.firstName != null) _first.text = match.firstName!;
+      if (match.lastName != null) _last.text = match.lastName!;
+      if (match.taxonomy != null) {
+        _specialty.text = match.taxonomy!;
+        _specialtyAuto = true;
+        _specialtyError = null;
+      }
+      _npi.text = match.npi;
+      _npiAuto = true;
+      _lastNameQuery = '${match.firstName}|${match.lastName}'.toLowerCase();
+    });
+  }
+
   /// "Not me" — drop the card and everything it filled, and don't re-query the
   /// same name.
   void _dismissMatch() {
@@ -315,7 +334,11 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
               const SizedBox(height: AppSpacing.lg),
               FadeSlideIn(
                 key: ValueKey<String>(match.npi),
-                child: _MatchCard(match: match, onDismiss: _dismissMatch),
+                child: _MatchCard(
+                  match: match,
+                  onDismiss: _dismissMatch,
+                  onUse: _useMatch,
+                ),
               ),
             ],
             const SizedBox(height: AppSpacing.lg),
@@ -385,13 +408,18 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
   }
 }
 
-/// Read-only confirmation of who the registry thinks this is. Deliberately
-/// does not overwrite the name fields — the user typed those.
+/// Who the registry thinks this is. Never overwrites the name on its own —
+/// the user typed that — but offers to on request.
 class _MatchCard extends StatelessWidget {
   final NpiMatch match;
   final VoidCallback onDismiss;
+  final VoidCallback onUse;
 
-  const _MatchCard({required this.match, required this.onDismiss});
+  const _MatchCard({
+    required this.match,
+    required this.onDismiss,
+    required this.onUse,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -444,6 +472,18 @@ class _MatchCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.xs),
             Text(line, style: AppText.caption),
           ],
+          const SizedBox(height: AppSpacing.sm),
+          GestureDetector(
+            onTap: onUse,
+            child: Text(
+              Strings.regMatchUse,
+              style: AppText.caption.copyWith(
+                color: AppColors.medBlue,
+                fontWeight: FontWeight.w600,
+                decoration: TextDecoration.underline,
+              ),
+            ),
+          ),
         ],
       ),
     );

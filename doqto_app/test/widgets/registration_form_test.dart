@@ -154,6 +154,14 @@ void main() {
       expect(find.text(Strings.regSignedInAs('+15555550100')), findsOneWidget);
     });
 
+    testWidgets('an Apple relay address is described, not shown',
+        (tester) async {
+      await pump(tester, phone: '', email: 'st7gd696bw@privaterelay.appleid.com');
+      expect(find.text(Strings.regSignedInAs(Strings.regApplePrivateEmail)),
+          findsOneWidget);
+      expect(find.textContaining('privaterelay'), findsNothing);
+    });
+
     testWidgets('falls back to the provider email when the account has none',
         (tester) async {
       broker.profile = (name: null, email: 'from-google@example.com');

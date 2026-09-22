@@ -97,6 +97,11 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
   String get _identity {
     final user = ref.read(authProvider).user;
     final email = user?.email ?? ref.read(authBrokerProvider).profile?.email;
+    // "Hide My Email" hands us st7gd696bw@privaterelay.appleid.com — real,
+    // ours to keep, and meaningless to the person reading it.
+    if (email != null && email.endsWith('@privaterelay.appleid.com')) {
+      return Strings.regApplePrivateEmail;
+    }
     return email ?? user?.phone ?? '';
   }
 
@@ -281,15 +286,11 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const SizedBox(height: AppSpacing.sm),
-            Row(
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                Expanded(
-                  child: Text(
-                    Strings.regSignedInAs(_identity),
-                    style: AppText.caption,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
+                Text(Strings.regSignedInAs(_identity), style: AppText.caption),
                 TextButton(
                   onPressed: () => ref.read(authProvider.notifier).signOut(),
                   child: const Text(Strings.regSignOut),

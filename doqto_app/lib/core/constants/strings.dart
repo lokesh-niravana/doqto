@@ -54,6 +54,7 @@ class Strings {
   static const String regContinue = 'Continue';
   static String regSignedInAs(String who) => 'Signed in as $who';
   static const String regSignOut = 'Not you? Sign out';
+  static const String regApplePrivateEmail = 'your Apple ID (email hidden)';
 
   // Plans (shown once, straight after registration)
   static const String planTitle = 'Choose your plan';

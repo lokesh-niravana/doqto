@@ -12,7 +12,20 @@
           "package_name": "com.doqto.app"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "877848716365-obkf3hb37ac9mporabudc9h2ghvmpif8.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.doqto.app",
+            "certificate_hash": "13711f6a06d776e1b02611a558338526fba9c6c2"
+          }
+        },
+        {
+          "client_id": "877848716365-ognsg8o8ii2ioucd08h0f242a56bnb4b.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCVQDjXZIIuXaYJzTPV8I_QjaxbbBz01wQ"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "877848716365-ognsg8o8ii2ioucd08h0f242a56bnb4b.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "877848716365-994933avmd8jc7792f3t72lvt0hsoroq.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.doqto.doqtoApp"
+              }
+            }
+          ]
         }
       }
     }

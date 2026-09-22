@@ -81,10 +81,23 @@ class FirebaseAuthBroker implements AuthBroker {
     return _idTokenFor(await _auth.signInWithCredential(credential));
   }
 
+  // google_sign_in 7 must be initialized exactly once before any other call.
+  // No arguments: iOS reads CLIENT_ID from GoogleService-Info.plist, Android
+  // reads default_web_client_id generated from google-services.json.
+  Future<void>? _googleReady;
+
   Future<AuthCredential?> _googleCredential() async {
-    final account = await GoogleSignIn.instance.authenticate();
-    final auth = account.authentication;
-    return GoogleAuthProvider.credential(idToken: auth.idToken);
+    await (_googleReady ??= GoogleSignIn.instance.initialize());
+    try {
+      final account = await GoogleSignIn.instance.authenticate();
+      return GoogleAuthProvider.credential(
+        idToken: account.authentication.idToken,
+      );
+    } on GoogleSignInException catch (e) {
+      // v7 throws on a dismissed sheet rather than returning null.
+      if (e.code == GoogleSignInExceptionCode.canceled) return null;
+      rethrow;
+    }
   }
 
   Future<AuthCredential?> _facebookCredential() async {

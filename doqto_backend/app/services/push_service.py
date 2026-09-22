@@ -1,6 +1,6 @@
 """Push notification pipeline — sender-side, PHI-free, always pushed (no presence gate).
 
-Dev default (PUSH_PROVIDER=log) is a logging stub mirroring FakeSNSClient;
+Dev default (PUSH_PROVIDER=log) is a logging stub;
 real FCM slots in later via PUSH_PROVIDER=fcm + credentials in config.
 
 Payload policy: title/body are the fixed constants PUSH_TITLE /
@@ -45,7 +45,7 @@ class PushSender(Protocol):
 
 
 class DevLogPushSender:
-    """Local dev stub — logs instead of sending (mirrors FakeSNSClient)."""
+    """Local dev stub — logs instead of sending."""
 
     async def send(
         self, *, token: str, title: str, body: str, data: dict[str, str], collapse_key: str
@@ -106,7 +106,7 @@ class FcmPushSender:
 
 
 def _default_sender() -> PushSender:
-    # Mirrors _sns() in auth_service.py — provider keyed on settings.
+    # Provider keyed on settings.
     if settings.PUSH_PROVIDER == "fcm":
         return FcmPushSender()
     return DevLogPushSender()

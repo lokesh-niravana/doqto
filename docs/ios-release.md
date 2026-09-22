@@ -101,8 +101,6 @@ Apple names ITMS-90111.
 
 ### 6. After approval
 
-- Turn off the master OTP in prod (`infra/backend/main.tf`,
-  `MASTER_OTP_ENABLED`) once real SMS works (SNS sandbox exit).
 - Further builds go out as a new version (1.0.1), same script.
 
 ## Manual fallback (what the script automates)

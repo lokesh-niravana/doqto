@@ -1,6 +1,6 @@
 # Doqto Backend
 
-FastAPI + PostgreSQL 15 + Redis 7 + AWS (S3, Transcribe Medical, SNS).
+FastAPI + PostgreSQL 15 + Redis 7 + AWS (S3, Transcribe Medical) + Firebase Auth.
 
 ## Quick Start (local)
 

@@ -356,11 +356,6 @@ resource "aws_iam_role_policy" "task" {
         Effect   = "Allow"
         Action   = ["transcribe:StartMedicalTranscriptionJob", "transcribe:GetMedicalTranscriptionJob", "transcribe:StartTranscriptionJob", "transcribe:GetTranscriptionJob"]
         Resource = "*"
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["sns:Publish"]
-        Resource = "*"
       }
     ]
   })

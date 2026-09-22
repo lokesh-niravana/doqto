@@ -66,7 +66,16 @@ class FirebaseAuthBroker implements AuthBroker {
       smsCode: code,
     );
     try {
-      await user.linkWithCredential(credential);
+      // A login holds at most one phone. If one is already attached (a stale
+      // link from an earlier refused attempt, or a number being changed),
+      // replace it; linking again fails with provider-already-linked.
+      final hasPhone = user.providerData
+          .any((p) => p.providerId == PhoneAuthProvider.PROVIDER_ID);
+      if (hasPhone) {
+        await user.updatePhoneNumber(credential);
+      } else {
+        await user.linkWithCredential(credential);
+      }
     } on FirebaseAuthException catch (e) {
       throw _plain(e);
     }

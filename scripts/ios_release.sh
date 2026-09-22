@@ -10,7 +10,10 @@
 #     release macOS id; this Mac stamps the beta id. Rejected otherwise (b19).
 #   * The export re-signs, sealing the plist edits. Upload the export's IPA,
 #     never the one `flutter build ipa` writes to build/ios/ipa.
-#   * Xcode-beta holds the lokesh@doqto.ai session; release Xcode.app has none.
+#   * Signing and upload use whichever Xcode is selected (xcode-select -p) and
+#     need lokesh@doqto.ai signed in under Settings > Accounts. Until 2026-09-22
+#     this was Xcode-beta; the Mac now runs release macOS 27 + Xcode 27, so the
+#     stamp patch below is belt-and-braces rather than required.
 #
 # Usage:  scripts/ios_release.sh [build-number]
 #   No arg = current pubspec build number + 1. Commits the bump.
@@ -21,7 +24,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/doqto_app"
 ARCHIVE="$APP/build/ios/archive/Runner.xcarchive"
 STAMP=25G83                # last release macOS build id
-XCODE_BETA=/Applications/Xcode-beta.app/Contents/Developer
+XCODE_DEV=$(xcode-select -p)
 cd "$APP"
 
 # 1. build number
@@ -75,7 +78,7 @@ cat > build/ios/ExportUpload.plist <<'EOF'
 </dict></plist>
 EOF
 echo "== export + upload"
-DEVELOPER_DIR=$XCODE_BETA xcodebuild -exportArchive \
+DEVELOPER_DIR=$XCODE_DEV xcodebuild -exportArchive \
   -archivePath "$ARCHIVE" -exportOptionsPlist build/ios/ExportUpload.plist \
   -exportPath build/ios/upload -allowProvisioningUpdates 2>&1 \
   | grep -iE "error|succeeded|failed|Upload succeeded"
@@ -83,7 +86,7 @@ DEVELOPER_DIR=$XCODE_BETA xcodebuild -exportArchive \
 # Also keep a local copy of exactly what was uploaded, and verify it.
 sed 's|<string>upload</string>|<string>export</string>|' build/ios/ExportUpload.plist > build/ios/ExportLocal.plist
 rm -rf build/ios/ipa-clean
-if DEVELOPER_DIR=$XCODE_BETA xcodebuild -exportArchive \
+if DEVELOPER_DIR=$XCODE_DEV xcodebuild -exportArchive \
   -archivePath "$ARCHIVE" -exportOptionsPlist build/ios/ExportLocal.plist \
   -exportPath build/ios/ipa-clean -allowProvisioningUpdates > build/ios/export-local.log 2>&1; then
   echo "== verify build/ios/ipa-clean/doqto_app.ipa"

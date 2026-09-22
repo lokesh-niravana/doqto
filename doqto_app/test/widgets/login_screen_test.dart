@@ -28,13 +28,13 @@ class _Auth extends AuthRepository {
 
   @override
   Future<User> me() async => User.fromJson({
-        'id': 'u1',
-        'phone': '+15555550100',
-        'full_name': '',
-        'npi_number': 'PENDING01',
-        'role': 'doctor',
-        'created_at': DateTime.now().toIso8601String(),
-      });
+    'id': 'u1',
+    'phone': '+15555550100',
+    'full_name': '',
+    'npi_number': 'PENDING01',
+    'role': 'doctor',
+    'created_at': DateTime.now().toIso8601String(),
+  });
 }
 
 void main() {
@@ -42,14 +42,15 @@ void main() {
     WidgetTester tester, {
     AuthRepository? auth,
     AuthBroker? broker,
-  }) =>
-      tester.pumpWidget(ProviderScope(
-        overrides: [
-          if (auth != null) authRepositoryProvider.overrideWithValue(auth),
-          if (broker != null) authBrokerProvider.overrideWithValue(broker),
-        ],
-        child: const MaterialApp(home: LoginScreen()),
-      ));
+  }) => tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        if (auth != null) authRepositoryProvider.overrideWithValue(auth),
+        if (broker != null) authBrokerProvider.overrideWithValue(broker),
+      ],
+      child: const MaterialApp(home: LoginScreen()),
+    ),
+  );
 
   // The screen scrolls; error text can push a button below the test viewport.
   Future<void> tap(WidgetTester tester, Finder finder) async {
@@ -72,9 +73,15 @@ void main() {
     expect(find.text(Strings.authSendOtp), findsWidgets);
 
     // All three providers are offered regardless of the selected tab.
-    expect(find.byType(SocialButton), findsNWidgets(3));
+    expect(
+      find.byType(SocialButton),
+      findsNWidgets(kFacebookSignInEnabled ? 3 : 2),
+    );
     expect(find.text(Strings.loginGoogle), findsOneWidget);
-    expect(find.text(Strings.loginFacebook), findsOneWidget);
+    expect(
+      find.text(Strings.loginFacebook),
+      kFacebookSignInEnabled ? findsOneWidget : findsNothing,
+    );
 
     // Switching to Email swaps the form, not the rest of the screen.
     await tap(tester, find.text(Strings.loginTabEmail));
@@ -85,7 +92,10 @@ void main() {
     expect(find.text(Strings.loginPassword), findsOneWidget);
     expect(find.text(Strings.loginForgotPassword), findsOneWidget);
     expect(find.text(Strings.loginSignIn), findsWidgets);
-    expect(find.byType(SocialButton), findsNWidgets(3));
+    expect(
+      find.byType(SocialButton),
+      findsNWidgets(kFacebookSignInEnabled ? 3 : 2),
+    );
   });
 
   testWidgets('password sign-in takes a username or an email', (tester) async {
@@ -99,15 +109,20 @@ void main() {
     await tester.enterText(fields.at(1), 'hunter2hunter2');
     await tap(tester, find.text(Strings.loginSignIn).first);
 
-    expect(find.text('That doesn\'t look like an email address.'), findsOneWidget);
+    expect(
+      find.text('That doesn\'t look like an email address.'),
+      findsOneWidget,
+    );
     expect(find.text(Strings.loginComingSoon), findsNothing);
 
     // No @ means a username, judged by username rules.
     await tester.enterText(fields.at(0), 'dr alex');
     await tap(tester, find.text(Strings.loginSignIn).first);
 
-    expect(find.text('Usernames use letters, digits, dot, dash or underscore.'),
-        findsOneWidget);
+    expect(
+      find.text('Usernames use letters, digits, dot, dash or underscore.'),
+      findsOneWidget,
+    );
     expect(find.text(Strings.loginComingSoon), findsNothing);
 
     // Short password — same deal.
@@ -144,8 +159,9 @@ void main() {
     expect(find.text(Strings.loginComingSoon), findsNothing);
   });
 
-  testWidgets('dismissing the provider sheet leaves the screen alone',
-      (tester) async {
+  testWidgets('dismissing the provider sheet leaves the screen alone', (
+    tester,
+  ) async {
     final auth = _Auth();
     // A null token is Firebase reporting a cancelled sheet.
     await pump(tester, auth: auth, broker: FakeAuthBroker(idToken: null));
@@ -158,12 +174,15 @@ void main() {
     expect(find.text(Strings.loginComingSoon), findsNothing);
   });
 
-  testWidgets('Apple is offered alongside Google and Facebook', (tester) async {
+  testWidgets('Apple is offered alongside Google', (tester) async {
     // App Store guideline 4.8 requires it wherever a social login is offered.
     await pump(tester);
     await tester.pumpAndSettle();
 
     expect(find.text(Strings.loginApple), findsOneWidget);
-    expect(find.byType(SocialButton), findsNWidgets(3));
+    expect(
+      find.byType(SocialButton),
+      findsNWidgets(kFacebookSignInEnabled ? 3 : 2),
+    );
   });
 }

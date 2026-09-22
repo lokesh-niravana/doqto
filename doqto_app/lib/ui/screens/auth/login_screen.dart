@@ -30,6 +30,12 @@ import '../../widgets/social_button.dart';
 /// same place — one ID token, exchanged for a Doqto session. There is no
 /// separate sign-up: the identity decides. Email + password is still frontend
 /// only.
+/// ponytail: off until the Meta app (and its App ID) exists. With no App ID
+/// in Info.plist the Facebook SDK throws a native exception on login, so a
+/// visible button is a crash in a tester's hands. Flip to true once
+/// FacebookAppID/FacebookClientToken are configured — docs/auth.md.
+const bool kFacebookSignInEnabled = false;
+
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -115,8 +121,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       // Firebase sends the SMS and hands back a challenge; the code screen
       // gives it straight back when the user types the code.
-      final challenge =
-          await ref.read(authProvider.notifier).startPhoneSignIn(_e164);
+      final challenge = await ref
+          .read(authProvider.notifier)
+          .startPhoneSignIn(_e164);
       if (!mounted) return;
       context.push(AppRoutes.otp, extra: challenge);
     } catch (e) {
@@ -219,27 +226,31 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     4,
                     SocialButton.google(
                       label: Strings.loginGoogle,
-                      onPressed:
-                          _loading ? null : () => _social(SocialProvider.google),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  FadeSlideIn.staggered(
-                    5,
-                    SocialButton.facebook(
-                      label: Strings.loginFacebook,
                       onPressed: _loading
                           ? null
-                          : () => _social(SocialProvider.facebook),
+                          : () => _social(SocialProvider.google),
                     ),
                   ),
+                  if (kFacebookSignInEnabled) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    FadeSlideIn.staggered(
+                      5,
+                      SocialButton.facebook(
+                        label: Strings.loginFacebook,
+                        onPressed: _loading
+                            ? null
+                            : () => _social(SocialProvider.facebook),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: AppSpacing.md),
                   FadeSlideIn.staggered(
                     6,
                     SocialButton.apple(
                       label: Strings.loginApple,
-                      onPressed:
-                          _loading ? null : () => _social(SocialProvider.apple),
+                      onPressed: _loading
+                          ? null
+                          : () => _social(SocialProvider.apple),
                     ),
                   ),
                 ],

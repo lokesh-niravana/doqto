@@ -138,8 +138,8 @@ the cap:
 | Plan | Sent SMS/day |
 |---|---|
 | Spark, no billing account | 10 |
-| **Blaze + billing account (current)** | **1,000** |
-| Identity Platform | higher still |
+| Blaze + billing account | 1,000 |
+| **Identity Platform (current, since 2026-09-22)** | higher still |
 
 A $25 budget **alert** is set (email at 50/90/100%). It is an alert, not a cap —
 set a spend cap under Budgets if a hard ceiling is wanted.
@@ -150,16 +150,18 @@ reason for this change.
 
 ### Still outstanding
 
-1. **Google Cloud BAA + Identity Platform** — the Cloud console requires a fresh
-   password sign-in, so this has to be done by hand.
+1. ~~Google Cloud BAA~~ — accepted 2026-09-22 by lokesh@doqto.ai (IAM & Admin →
+   Privacy & Security). ~~Identity Platform~~ — done 2026-09-22 (irreversible;
+   free to 49,999 MAU).
 2. **`GoogleService-Info.plist` / `google-services.json`** — both changed when
    Google sign-in and the SHA fingerprints were added, and must be
    re-downloaded. Google sign-in on iOS cannot work until the plist carries
    `CLIENT_ID` / `REVERSED_CLIENT_ID` and that scheme is in `Info.plist`.
 3. ~~Billing account~~ — done: Blaze linked, 1,000 SMS/day.
-4. **Sign in with Apple on the App ID** at developer.apple.com. The entitlement
-   is already in `ios/Runner/Runner.entitlements`; automatic signing will try to
-   enable the capability, but the portal is the source of truth.
+4. **Sign in with Apple on the App ID.** The entitlement is in
+   `ios/Runner/Runner.entitlements`; the project uses automatic signing and
+   `ios_release.sh` archives with `-allowProvisioningUpdates`, so the next
+   release build should enable the capability itself. Confirm on that build.
 5. **Meta app + Business Verification** for Facebook.
 
 ### After enabling providers, re-download the config

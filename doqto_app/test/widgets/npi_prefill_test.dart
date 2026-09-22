@@ -9,6 +9,7 @@ import 'package:doqto_app/data/api/token_storage.dart';
 import 'package:doqto_app/data/models/user.dart';
 import 'package:doqto_app/data/repositories/auth_repository.dart';
 import 'package:doqto_app/data/repositories/user_repository.dart';
+import 'package:doqto_app/data/services/auth_broker.dart';
 import 'package:doqto_app/data/services/npi_lookup.dart';
 import 'package:doqto_app/ui/screens/auth/registration_screen.dart';
 import 'package:doqto_app/ui/widgets/primary_button.dart';
@@ -119,6 +120,7 @@ void main() {
       ProviderScope(
         overrides: [
           npiLookupProvider.overrideWithValue(lookup),
+          authBrokerProvider.overrideWithValue(FakeAuthBroker()),
           authRepositoryProvider.overrideWithValue(repo),
           userRepositoryProvider.overrideWithValue(users),
         ],

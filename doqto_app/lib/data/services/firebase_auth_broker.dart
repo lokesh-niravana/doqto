@@ -14,6 +14,12 @@ class FirebaseAuthBroker implements AuthBroker {
   final FirebaseAuth _auth;
 
   @override
+  SocialProfile? get profile {
+    final u = _auth.currentUser;
+    return u == null ? null : (name: u.displayName, email: u.email);
+  }
+
+  @override
   Future<PhoneChallenge> startPhoneSignIn(String phone) async {
     // verifyPhoneNumber is callback-based; this adapts it to a Future so the
     // UI can await "the SMS is on its way" like any other call.

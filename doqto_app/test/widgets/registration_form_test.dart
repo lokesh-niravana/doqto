@@ -23,9 +23,10 @@ import 'package:doqto_app/ui/widgets/primary_button.dart';
 //    a typed number must be verified by OTP before Continue accepts it
 //  * nobody reaches this screen without a verified session
 
-User _user({String phone = '+15555550100'}) => User.fromJson({
+User _user({String phone = '+15555550100', String? email}) => User.fromJson({
       'id': 'u1',
       'phone': phone,
+      'email': email,
       'full_name': '',
       'npi_number': 'PENDING',
       'role': 'doctor',
@@ -38,6 +39,9 @@ const _number = '2015550123'; // libphonenumber's own US example — always vali
 class _FakeAuthRepository extends AuthRepository {
   _FakeAuthRepository() : super(ApiClient(), TokenStorage());
   final List<String> registered = [];
+
+  @override
+  Future<void> logout() async {}
 
   @override
   Future<User> register({
@@ -96,7 +100,8 @@ void main() {
 
   /// [phone] is the phone on the signed-in account: set for phone sign-up,
   /// empty for social sign-up.
-  Future<void> pump(WidgetTester tester, {String phone = '+15555550100'}) async {
+  Future<void> pump(WidgetTester tester,
+      {String phone = '+15555550100', String? email}) async {
     await tester.binding.setSurfaceSize(const Size(800, 1800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final container = ProviderContainer(overrides: [
@@ -106,7 +111,7 @@ void main() {
       authBrokerProvider.overrideWithValue(broker),
     ]);
     addTearDown(container.dispose);
-    container.read(authProvider.notifier).setUser(_user(phone: phone));
+    container.read(authProvider.notifier).setUser(_user(phone: phone, email: email));
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
       child: const MaterialApp(home: RegistrationScreen()),
@@ -136,6 +141,42 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
   }
+
+  group('identity', () {
+    testWidgets('says who is signed in — by email', (tester) async {
+      await pump(tester, phone: '', email: 'vimal@example.com');
+      expect(find.text(Strings.regSignedInAs('vimal@example.com')), findsOneWidget);
+    });
+
+    testWidgets('says who is signed in — by phone when there is no email',
+        (tester) async {
+      await pump(tester);
+      expect(find.text(Strings.regSignedInAs('+15555550100')), findsOneWidget);
+    });
+
+    testWidgets('falls back to the provider email when the account has none',
+        (tester) async {
+      broker.profile = (name: null, email: 'from-google@example.com');
+      await pump(tester, phone: '');
+      expect(find.text(Strings.regSignedInAs('from-google@example.com')),
+          findsOneWidget);
+    });
+
+    testWidgets('prefills the name Google/Apple gave us', (tester) async {
+      broker.profile = (name: 'Vimal Kumar Nanavati', email: null);
+      await pump(tester, phone: '');
+      expect(tester.widget<TextField>(first).controller!.text, 'Vimal');
+      expect(tester.widget<TextField>(last).controller!.text, 'Kumar Nanavati');
+    });
+
+    testWidgets('"Not you? Sign out" ends the session, Firebase included',
+        (tester) async {
+      await pump(tester);
+      await tester.tap(find.text(Strings.regSignOut));
+      await tester.pumpAndSettle();
+      expect(broker.signedOut, 1);
+    });
+  });
 
   group('labels', () {
     testWidgets('required fields carry a *, and there are no helper texts',

@@ -51,6 +51,8 @@ class Strings {
       'Verify this number, or clear it to skip.';
   static const String regMatchDismiss = 'Not me';
   static const String regContinue = 'Continue';
+  static String regSignedInAs(String who) => 'Signed in as $who';
+  static const String regSignOut = 'Not you? Sign out';
 
   // Plans (shown once, straight after registration)
   static const String planTitle = 'Choose your plan';

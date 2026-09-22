@@ -21,7 +21,14 @@ class PhoneChallenge {
   final String phone;
 }
 
+/// What the provider told Firebase about the person: Google always has both,
+/// Apple only on the very first sign-in, phone has neither.
+typedef SocialProfile = ({String? name, String? email});
+
 abstract class AuthBroker {
+  /// The signed-in Firebase user's profile, or null when nobody is signed in.
+  SocialProfile? get profile;
+
   /// Sends the SMS. Throws if Firebase refuses (bad number, quota, no network).
   Future<PhoneChallenge> startPhoneSignIn(String phone);
 
@@ -51,6 +58,10 @@ class FakeAuthBroker implements AuthBroker {
   /// null means "user cancelled".
   final String? idToken;
   final List<String> startedFor = [];
+  int signedOut = 0;
+
+  @override
+  SocialProfile? profile;
 
   @override
   Future<PhoneChallenge> startPhoneSignIn(String phone) async {
@@ -76,5 +87,5 @@ class FakeAuthBroker implements AuthBroker {
   Future<String?> signInWithSocial(SocialProvider provider) async => idToken;
 
   @override
-  Future<void> signOut() async {}
+  Future<void> signOut() async => signedOut++;
 }

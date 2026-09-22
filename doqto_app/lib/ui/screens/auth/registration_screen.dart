@@ -79,6 +79,28 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
   String? _state;
 
   @override
+  void initState() {
+    super.initState();
+    // Google/Apple already told us the name; typing it again is friction.
+    // Split on the first space: Firebase gives one display string.
+    final name = ref.read(authBrokerProvider).profile?.name?.trim();
+    if (name != null && name.isNotEmpty) {
+      final i = name.indexOf(' ');
+      _first.text = i < 0 ? name : name.substring(0, i);
+      _last.text = i < 0 ? '' : name.substring(i + 1).trim();
+    }
+  }
+
+  /// Who this form belongs to, so a wrong-account sign-in is obvious here
+  /// rather than after registering. Email over phone: social users have no
+  /// phone yet, and the email is what they just picked in the provider sheet.
+  String get _identity {
+    final user = ref.read(authProvider).user;
+    final email = user?.email ?? ref.read(authBrokerProvider).profile?.email;
+    return email ?? user?.phone ?? '';
+  }
+
+  @override
   void dispose() {
     _first.dispose();
     _last.dispose();
@@ -239,7 +261,23 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: AppSpacing.lg),
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    Strings.regSignedInAs(_identity),
+                    style: AppText.caption,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => ref.read(authProvider.notifier).signOut(),
+                  child: const Text(Strings.regSignOut),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
             // One Focus around both name fields: tabbing first → last keeps
             // focus inside, so the registry is queried once, on the way out.
             Focus(

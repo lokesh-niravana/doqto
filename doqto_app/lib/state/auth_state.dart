@@ -260,6 +260,11 @@ class AuthNotifier extends Notifier<AuthState> {
       }
     } catch (_) {}
     await ref.read(authRepositoryProvider).logout();
+    // Firebase keeps its own session; without this the next social tap would
+    // silently reuse the old identity.
+    try {
+      await ref.read(authBrokerProvider).signOut();
+    } catch (_) {}
     await ref.read(websocketClientProvider).close();
     await _wipeLocalPhi();
     ref.read(orgProvider.notifier).clear();

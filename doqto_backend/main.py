@@ -13,6 +13,7 @@ from app.api.ws_manager import ws_manager
 from app.api.v1 import (
     admin,
     auth,
+    billing,
     conversations,
     groups,
     messages,
@@ -198,6 +199,7 @@ app.include_router(admin.router, prefix=ApiPrefix.ADMIN, tags=["admin"])
 app.include_router(network.router, prefix=ApiPrefix.NETWORK, tags=["network"])
 app.include_router(people.router, prefix=ApiPrefix.PEOPLE, tags=["people"])
 app.include_router(groups.router, prefix=ApiPrefix.GROUPS, tags=["groups"])
+app.include_router(billing.router, prefix=ApiPrefix.BILLING, tags=["billing"])
 app.include_router(
     notifications.router, prefix=ApiPrefix.NOTIFICATIONS, tags=["notifications"]
 )

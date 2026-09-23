@@ -15,6 +15,7 @@ class ApiPrefix:
     # Groups (M5) — mounted at the bare V1 prefix so it can also own the
     # sibling /group-invites and /me/groups surfaces.
     GROUPS = "/api/v1"
+    BILLING = "/api/v1/billing"
 
 
 class ApiRoutes:
@@ -106,3 +107,9 @@ class ApiRoutes:
     # WebSocket
     WS = "/ws"  # user-scoped socket (A1)
     WS_ORG = "/ws/{org_id}"  # legacy alias — path org ignored, one release only
+
+    # Billing
+    BILLING_STATUS = ""
+    BILLING_CHECKOUT = "/checkout"
+    BILLING_PORTAL = "/portal"
+    BILLING_WEBHOOK = "/webhook"

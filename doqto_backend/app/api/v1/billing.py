@@ -173,9 +173,12 @@ async def webhook(
                 select(User).where(User.stripe_customer_id == obj.get("customer"))
             )
     elif event_type in SUBSCRIPTION_EVENTS:
-        user = await db.scalar(
-            select(User).where(User.stripe_customer_id == obj.get("customer"))
-        )
+        # Guarded: `== None` would be IS NULL and match an arbitrary user.
+        user = None
+        if obj.get("customer"):
+            user = await db.scalar(
+                select(User).where(User.stripe_customer_id == obj.get("customer"))
+            )
     else:
         return {"ok": True}
 

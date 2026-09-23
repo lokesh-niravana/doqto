@@ -299,6 +299,9 @@ void main() {
     );
     await pump(tester);
     final before = billing.statusCalls;
+    // Not "your trial has ended": it's the card, and the copy says so.
+    expect(find.text(Strings.paywallCardBody), findsOneWidget);
+    expect(find.text(Strings.paywallBody), findsNothing);
 
     await tester.tap(find.widgetWithText(AppButton, Strings.paywallUpdatePayment).first);
     await tester.pumpAndSettle();
@@ -314,6 +317,7 @@ void main() {
     await pump(tester);
 
     expect(find.text(Strings.paywallUpdatePayment), findsNothing);
+    expect(find.text(Strings.paywallBody), findsOneWidget);
   });
 
   testWidgets('already subscribed at checkout opens the portal instead',

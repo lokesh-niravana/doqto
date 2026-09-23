@@ -270,7 +270,11 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                     FadeSlideIn.staggered(
                       0,
                       Text(
-                        _paywall ? Strings.paywallBody : Strings.planSubtitle,
+                        !_paywall
+                            ? Strings.planSubtitle
+                            : cardProblem
+                                ? Strings.paywallCardBody
+                                : Strings.paywallBody,
                         style: AppText.body,
                       ),
                     ),

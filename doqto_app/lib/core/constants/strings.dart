@@ -60,6 +60,9 @@ class Strings {
   static const String paywallBody =
       'Your free trial has ended. Your messages are safe and still readable — '
       'subscribing turns sending back on.';
+  static const String paywallCardBody =
+      "Your last payment didn't go through. Your messages are safe and still "
+      'readable — update your card to turn sending back on.';
   static const String paywallPaid = 'I have already paid';
   static const String paywallUpdatePayment = 'Update payment method';
   static const String paywallReadMessages = 'Read my messages';

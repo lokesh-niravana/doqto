@@ -62,13 +62,14 @@ class AccountDeletionService:
         # Stop the billing before the account goes, or a deleted doctor keeps
         # being charged. Best effort: deletion is a legal right and must not
         # depend on Stripe being configured or reachable.
-        if (
-            stripe is not None
-            and user.stripe_subscription_id
-            and user.billing_status not in TERMINAL_STATUSES
-        ):
+        # Ask Stripe rather than trust the mirror: a webhook may not have
+        # landed yet, and a customer can hold more than one subscription.
+        if stripe is not None and user.stripe_customer_id:
             try:
-                await run_in_threadpool(stripe.cancel_subscription, user.stripe_subscription_id)
+                subs = await run_in_threadpool(stripe.list_subscriptions, user.stripe_customer_id)
+                for sub in subs:
+                    if sub.status not in TERMINAL_STATUSES:
+                        await run_in_threadpool(stripe.cancel_subscription, sub.id)
             except Exception:
                 logger.exception("account deletion user=%s: stripe cancel failed", uid)
 

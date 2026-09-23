@@ -124,6 +124,24 @@ async def test_an_unknown_customer_is_accepted_and_ignored(client, db, stripe_ga
     assert r.status_code == 200
 
 
+async def test_an_event_with_no_customer_touches_nobody(client, db, stripe_gateway):
+    # `stripe_customer_id == None` is IS NULL: unguarded, it would pick a
+    # doctor who has never paid and write someone else's subscription onto them.
+    user = await helpers.create_user(db)
+    await db.commit()
+    stripe_gateway.subscriptions["sub_1"] = _sub()
+    stripe_gateway.event = {
+        "type": "customer.subscription.updated",
+        "data": {"object": {"id": "sub_1"}},
+    }
+
+    r = await _post(client)
+
+    assert r.status_code == 200
+    await db.refresh(user)
+    assert user.billing_status is None
+
+
 async def test_an_uninteresting_event_is_ignored(client, db, stripe_gateway):
     stripe_gateway.event = {"type": "invoice.paid", "data": {"object": {}}}
 

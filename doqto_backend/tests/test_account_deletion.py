@@ -13,6 +13,7 @@ from sqlalchemy import select
 from app.core.enums import AuditAction
 from app.models import AuditLog, Connection, Message, User
 from app.services.account_deletion_service import AccountDeletionService
+from app.services.stripe_client import Subscription
 from tests.helpers import (
     add_org_member,
     auth_headers,
@@ -143,6 +144,10 @@ async def test_deletion_clears_the_firebase_uid(db):
     assert user.firebase_uid is None
 
 
+def _sub(sub_id: str, status: str) -> Subscription:
+    return Subscription(sub_id, "cus_fake0", status, None, None)
+
+
 async def test_deletion_cancels_a_live_subscription(client, db, stripe_gateway):
     # Otherwise a deleted doctor keeps being charged for an account that no
     # longer exists.
@@ -151,18 +156,24 @@ async def test_deletion_cancels_a_live_subscription(client, db, stripe_gateway):
     user.stripe_subscription_id = "sub_1"
     user.billing_status = "active"
     await db.commit()
+    stripe_gateway.subscriptions["sub_1"] = _sub("sub_1", "active")
+    # Paid a second time before the first webhook landed: the mirror never
+    # heard of it, and it must still stop.
+    stripe_gateway.subscriptions["sub_2"] = _sub("sub_2", "active")
 
     r = await client.delete("/api/v1/users/me", headers=await auth_headers(user.id))
 
     assert r.status_code == 200, r.text
-    assert stripe_gateway.cancelled == ["sub_1"]
+    assert sorted(stripe_gateway.cancelled) == ["sub_1", "sub_2"]
 
 
 async def test_deletion_leaves_a_finished_subscription_alone(client, db, stripe_gateway):
     user = await create_user(db)
+    user.stripe_customer_id = "cus_fake0"
     user.stripe_subscription_id = "sub_1"
     user.billing_status = "canceled"
     await db.commit()
+    stripe_gateway.subscriptions["sub_1"] = _sub("sub_1", "canceled")
 
     await client.delete("/api/v1/users/me", headers=await auth_headers(user.id))
 
@@ -171,9 +182,11 @@ async def test_deletion_leaves_a_finished_subscription_alone(client, db, stripe_
 
 async def test_deletion_survives_a_stripe_error(client, db, stripe_gateway):
     user = await create_user(db)
+    user.stripe_customer_id = "cus_fake0"
     user.stripe_subscription_id = "sub_1"
     user.billing_status = "past_due"
     await db.commit()
+    stripe_gateway.subscriptions["sub_1"] = _sub("sub_1", "past_due")
     stripe_gateway.cancel_error = RuntimeError("stripe is down")
     user_id = user.id
 

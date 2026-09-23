@@ -195,6 +195,9 @@ failing open costs nothing and avoids locking people out on a network blip.
 - **Plan picker** (`payments_screen.dart`, after registration). The primary
   button becomes "Start 14-day free trial", which keeps today's behaviour. A
   second button, "Subscribe now", starts checkout for the selected plan.
+  The yearly row carries the saving against 12 monthly payments: "Save 26%"
+  and the effective "$6.67/mo". `GET /billing` returns both prices in cents so
+  the saving is computed from what Stripe charges, never typed twice.
 - **Paywall** (new, stage `needsSubscription`). The same two plans, a
   "Subscribe" button, "I've already paid" to re-check status, and "Sign out".
   It says plainly that messages are kept and readable.

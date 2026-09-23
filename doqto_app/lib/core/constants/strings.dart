@@ -52,10 +52,10 @@ class Strings {
   static const String planSubtitle =
       'Full access to secure messaging, groups and your network.';
   static const String planMonthly = 'Monthly';
-  static const String planMonthlyPrice = '\$29/mo';
+  static const String planMonthlyPrice = '\$8.99/mo';
   static const String planYearly = 'Yearly';
-  static const String planYearlyPrice = '\$290/yr';
-  static const String planYearlyNote = '2 months free';
+  static const String planYearlyPrice = '\$80/yr';
+  static const String planYearlyNote = 'Save 26% · \$6.67/mo';
   static const String planContinue = 'Continue';
   static const String planSkip = 'Skip for now';
 

@@ -50,7 +50,7 @@ One function decides access, `entitlement(user, now)`, in
 | `staff` | role is `super_admin` | yes |
 | `trial` | `trial_ends_at` is in the future | yes |
 | `subscribed` | Stripe status is `active` or `trialing` | yes |
-| `grace` | Stripe status is `past_due` and `current_period_end + 7 days` is in the future | yes |
+| `grace` | Stripe status is `past_due` and `current_period_start + 7 days` is in the future (a failed renewal has already advanced the period, so grace counts from the unpaid period's start) | yes |
 | `expired` | none of the above | no |
 
 The first matching row wins. A trial that is still running wins over a

@@ -36,8 +36,13 @@ class StripeGateway:
         # metadata carries our id so a webhook can find the user even when the
         # checkout session is long gone. Email is the only personal field we
         # send, and only so receipts reach the doctor.
+        # Idempotency key keyed on user id: two concurrent checkout requests
+        # from the same customer-less user both pass the in-memory guard
+        # above, but Stripe collapses duplicate creates within its
+        # idempotency window into the same customer instead of orphaning one.
         customer = self._client.customers.create(
-            params={"email": user.email or None, "metadata": {"user_id": str(user.id)}}
+            params={"email": user.email or None, "metadata": {"user_id": str(user.id)}},
+            options={"idempotency_key": f"doqto-customer-{user.id}"},
         )
         return customer.id
 

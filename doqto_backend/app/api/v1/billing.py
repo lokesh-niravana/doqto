@@ -7,9 +7,12 @@ requires.
 from __future__ import annotations
 
 import logging
+import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import stripe
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -90,3 +93,81 @@ async def create_portal(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="no_billing_account")
     url = await run_in_threadpool(stripe.portal_url, user.stripe_customer_id)
     return UrlOut(url=url)
+
+
+SUBSCRIPTION_EVENTS = frozenset(
+    {
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+    }
+)
+
+
+def _plan_for(price_id: str | None) -> str | None:
+    if price_id and price_id == settings.STRIPE_PRICE_MONTHLY:
+        return "monthly"
+    if price_id and price_id == settings.STRIPE_PRICE_YEARLY:
+        return "yearly"
+    return None
+
+
+@router.post(ApiRoutes.BILLING_WEBHOOK)
+async def webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    stripe_gateway: StripeGateway = Depends(get_stripe),
+) -> dict[str, bool]:
+    payload = await request.body()
+    signature = request.headers.get("stripe-signature", "")
+    try:
+        event = stripe_gateway.construct_event(payload, signature)
+    except (stripe.SignatureVerificationError, ValueError):
+        # Never log the payload or the signature header: both are unverified
+        # input, and the header is effectively a credential.
+        logger.warning("billing webhook rejected: bad signature")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="bad_signature")
+
+    event_type = event.get("type", "")
+    obj = event.get("data", {}).get("object", {})
+
+    if event_type == "checkout.session.completed":
+        user = None
+        reference = obj.get("client_reference_id")
+        if reference:
+            try:
+                reference_id = uuid.UUID(reference)
+            except ValueError:
+                reference_id = None
+            if reference_id is not None:
+                user = await db.scalar(select(User).where(User.id == reference_id))
+        if user is None and obj.get("customer"):
+            user = await db.scalar(
+                select(User).where(User.stripe_customer_id == obj.get("customer"))
+            )
+        subscription_id = obj.get("subscription")
+    elif event_type in SUBSCRIPTION_EVENTS:
+        user = await db.scalar(
+            select(User).where(User.stripe_customer_id == obj.get("customer"))
+        )
+        subscription_id = obj.get("id")
+    else:
+        return {"ok": True}
+
+    if user is None or not subscription_id:
+        # 200 anyway: Stripe retries for three days, and there is nothing to
+        # retry for a customer we do not have.
+        logger.warning("billing webhook %s for an unknown user", event_type)
+        return {"ok": True}
+
+    # Re-fetch rather than trust the event body: events arrive out of order
+    # and more than once, and the current subscription is the only truth.
+    sub = await run_in_threadpool(stripe_gateway.subscription, subscription_id)
+    user.stripe_customer_id = sub.customer_id
+    user.stripe_subscription_id = sub.id
+    user.billing_status = sub.status
+    user.billing_plan = _plan_for(sub.price_id)
+    user.current_period_end = sub.current_period_end
+    await db.commit()
+    logger.info("billing %s user=%s status=%s", event_type, user.id, sub.status)
+    return {"ok": True}

@@ -19,7 +19,7 @@ from app.core.constants import (
 from app.core import permissions
 from app.core.config import settings
 from app.core.security import decrypt_message, encrypt_message
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, require_entitled
 from app.core.enums import (
     AuditAction,
     ConversationAccess,
@@ -182,7 +182,7 @@ async def list_conversations(
 @router.post(ApiRoutes.CONVERSATIONS_CREATE, response_model=ConversationOut)
 async def create_conversation(
     body: ConversationCreateIn,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_entitled),
     db: AsyncSession = Depends(get_db),
 ) -> ConversationOut:
     # Use caller's org. For MVP, use the first org the caller belongs to.
@@ -308,7 +308,7 @@ async def send_message(
     conversation_id: uuid.UUID,
     body: MessageSendIn,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_entitled),
     db: AsyncSession = Depends(get_db),
 ) -> MessageOut:
     await enforce_rate_limit(user.id, "send_message")
@@ -369,7 +369,7 @@ async def send_message(
 async def schedule_message(
     conversation_id: uuid.UUID,
     body: MessageScheduleIn,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_entitled),
     db: AsyncSession = Depends(get_db),
 ) -> ScheduledMessageOut:
     await enforce_rate_limit(user.id, "send_message")

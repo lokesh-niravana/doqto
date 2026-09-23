@@ -14,6 +14,7 @@ from app.core.security import TokenError, decode_token
 from app.db.postgres import get_db
 from app.db.redis import get_redis
 from app.models import OrgMember, User
+from app.services.billing_service import entitlement
 
 
 async def _user_from_token(
@@ -55,6 +56,19 @@ async def get_current_user(
 async def require_super_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != UserRole.SUPER_ADMIN:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="super_admin_required")
+    return user
+
+
+async def require_entitled(user: User = Depends(get_current_user)) -> User:
+    """Trial running, subscription live, or inside the grace period.
+
+    402 rather than 403: this is about payment, and the app turns it into the
+    paywall rather than an error message.
+    """
+    if not entitlement(user).entitled:
+        raise HTTPException(
+            status.HTTP_402_PAYMENT_REQUIRED, detail="subscription_required"
+        )
     return user
 
 

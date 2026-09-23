@@ -14,7 +14,7 @@ from app.core.constants import (
     RATE_LIMIT_READS_PER_MINUTE,
     VOICE_NOTE_MAX_FILE_BYTES,
 )
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, require_entitled
 from app.core.enums import (
     AuditAction,
     MessageType,
@@ -65,7 +65,7 @@ async def upload_file(
     conversation_id: uuid.UUID,
     file: UploadFile,
     client_id: str | None = Form(default=None, max_length=64),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_entitled),
     db: AsyncSession = Depends(get_db),
 ) -> MessageOut:
     await enforce_rate_limit(user.id, "upload_file")
@@ -135,7 +135,7 @@ async def upload_voice_note(
     duration_sec: int = Form(default=0),
     transcript: str = Form(default=""),
     client_id: str | None = Form(default=None, max_length=64),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_entitled),
     db: AsyncSession = Depends(get_db),
 ) -> MessageOut:
     await enforce_rate_limit(user.id, "upload_voice_note")

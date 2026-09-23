@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import GROUPS_PAGE_SIZE, RATE_LIMIT_READS_PER_MINUTE
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, require_entitled
 from app.core.enums import GroupInviteState, GroupMemberState, GroupRole
 from app.core.rate_limit import enforce_rate_limit
 from app.core.routes import ApiRoutes
@@ -108,7 +108,7 @@ def _card_out(group: Group, membership: GroupMember | None) -> GroupCardOut:
 async def create_group(
     body: GroupCreateIn,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_entitled),
     db: AsyncSession = Depends(get_db),
 ) -> GroupOut:
     try:

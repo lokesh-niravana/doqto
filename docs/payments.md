@@ -162,6 +162,25 @@ End to end, in Stripe test mode after deploy: card `4242 4242 4242 4242`
 subscribes and the app unlocks; card `4000 0000 0000 0341` fails renewal and
 lands in grace; cancelling in the portal keeps access until the period ends.
 
+## Org is no longer a gate
+
+`_resolveStageForRegisteredUser` used to return `needsOrg` for a user with no
+orgs, which forced everyone through org selection. It now returns `signedIn`.
+
+The org machinery is untouched and still reachable — create/join still exist,
+and joining still comes back through the same resolver, which connects the
+realtime socket at that point. The only consequence of having no org is that
+`wsOrg(orgId)` has nothing to connect to, so a brand-new user has no live
+socket until they join one. `needsOrg` survives as the offline fallback when
+`/orgs/mine` can't be reached.
+
+Because of that, **no org is now the normal state of the My Org tab**, not an
+error. It used to render `Center(child: Text('No organization selected'))` — a
+dead end that was unreachable while onboarding forced an org, and would have
+been the first thing every new user saw. It now carries the same two doors the
+old org-selection step offered: create, or join with an invite code. Covered by
+`test/widgets/my_org_empty_test.dart`.
+
 ## Related
 
 - `test/widgets/payments_screen_test.dart` — plan picker rendering and both

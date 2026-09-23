@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -64,9 +66,17 @@ class _Billing extends BillingRepository {
   _Billing(this.value) : super(ApiClient());
   Billing value;
   Object? error;
+  int calls = 0;
+  /// When set, the next `status()` waits on it (one-shot).
+  Completer<Billing>? hold;
 
   @override
   Future<Billing> status() async {
+    calls++;
+    if (hold case final h?) {
+      hold = null;
+      return h.future;
+    }
     if (error != null) throw error!;
     return value;
   }
@@ -163,5 +173,40 @@ void main() {
     await c.read(authProvider.notifier).signOut();
 
     expect(c.read(billingProvider).value, isNull);
+  });
+
+  test('signing out during a billing re-check keeps the doctor signed out',
+      () async {
+    billing = _Billing(_entitled);
+    final c = container();
+    await signIn(c);
+
+    // A resume re-check is in flight when the doctor taps Sign out.
+    final held = Completer<Billing>();
+    billing.hold = held;
+    final inFlight = c.read(authProvider.notifier).refreshBilling();
+    await c.read(authProvider.notifier).signOut();
+    held.complete(_expired);
+    await inFlight;
+    await pumpEventQueue();
+
+    expect(c.read(authProvider).stage, AuthStage.signedOut);
+    expect(c.read(authProvider).user, isNull);
+    expect(c.read(billingProvider).value, isNull);
+  });
+
+  test('a burst of 402s triggers one billing re-check', () async {
+    billing = _Billing(_entitled);
+    final c = container();
+    await signIn(c);
+    final before = billing.calls;
+
+    final api = c.read(apiClientProvider);
+    for (var i = 0; i < 5; i++) {
+      api.onPaymentRequired!();
+    }
+    await pumpEventQueue();
+
+    expect(billing.calls, before + 1);
   });
 }

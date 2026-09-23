@@ -97,19 +97,23 @@ class SettingsScreen extends ConsumerWidget {
             4,
             Consumer(builder: (context, ref, _) {
               final billing = ref.watch(billingProvider).value;
+              // Staff never pay: there is nothing to open for them.
+              final staff = billing?.reason == 'staff';
               return ListTile(
                 title: const Text(Strings.subscriptionRow),
                 subtitle: Text(switch (billing?.reason) {
                   'trial' => Strings.trialDaysLeft(billing!.trialDaysLeft),
-                  'subscribed' =>
-                    billing!.plan == 'yearly' ? 'Yearly' : 'Monthly',
-                  'grace' => 'Payment problem — update your card',
-                  'staff' => 'Staff account',
-                  'expired' => 'No subscription',
+                  'subscribed' => billing!.plan == 'yearly'
+                      ? Strings.planYearly
+                      : Strings.planMonthly,
+                  'grace' => Strings.subscriptionGrace,
+                  'staff' => Strings.subscriptionStaff,
+                  'expired' => Strings.subscriptionNone,
                   _ => '—',
                 }),
-                trailing: const Icon(Icons.open_in_new, size: 18),
-                onTap: () => _openBilling(context, ref, billing),
+                trailing:
+                    staff ? null : const Icon(Icons.open_in_new, size: 18),
+                onTap: staff ? null : () => _openBilling(context, ref, billing),
               );
             }),
           ),

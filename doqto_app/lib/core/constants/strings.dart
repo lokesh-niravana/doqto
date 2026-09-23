@@ -67,6 +67,9 @@ class Strings {
   static const String checkoutOpenFailed =
       'Couldn\'t open the payment page. Please try again.';
   static const String subscriptionRow = 'Subscription';
+  static const String subscriptionGrace = 'Payment problem — update your card';
+  static const String subscriptionStaff = 'Staff account';
+  static const String subscriptionNone = 'No subscription';
   static String planSaving(int percent, String perMonth) =>
       'Save $percent% · $perMonth';
   static String trialDaysLeft(int days) =>

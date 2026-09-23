@@ -38,6 +38,7 @@ class AuthState {
 
 class AuthNotifier extends Notifier<AuthState> {
   StreamSubscription<String>? _tokenRefreshSub;
+  Future<void>? _billingRefresh;
 
   @override
   AuthState build() {
@@ -262,22 +263,33 @@ class AuthNotifier extends Notifier<AuthState> {
   /// Re-checks billing on resume (the browser may have taken a payment) and
   /// on a 402. Re-resolves the stage only when the answer disagrees with where
   /// the doctor is: entitled on the paywall, or lapsed anywhere past it.
-  Future<void> refreshBilling() async {
+  ///
+  /// One at a time: a burst of 402s shares the re-check already in flight.
+  Future<void> refreshBilling() => _billingRefresh ??=
+      _refreshBilling().whenComplete(() => _billingRefresh = null);
+
+  static const _billingGated = {
+    AuthStage.needsSubscription,
+    AuthStage.needsOrg,
+    AuthStage.pendingVerification,
+    AuthStage.signedIn,
+  };
+
+  Future<void> _refreshBilling() async {
     final user = state.user;
-    if (user == null) return;
-    const gated = {
-      AuthStage.needsSubscription,
-      AuthStage.needsOrg,
-      AuthStage.pendingVerification,
-      AuthStage.signedIn,
-    };
-    if (!gated.contains(state.stage)) return;
+    if (user == null || !_billingGated.contains(state.stage)) return;
+    // After every await: if the doctor signed out (or someone else signed in)
+    // meanwhile, this answer belongs to a session that no longer exists.
+    bool stale() =>
+        state.user?.id != user.id || !_billingGated.contains(state.stage);
     final billing = await ref.read(billingProvider.notifier).refresh();
     // Unreachable server: fail open, change nothing.
-    if (billing == null) return;
+    if (billing == null || stale()) return;
     final onPaywall = state.stage == AuthStage.needsSubscription;
     if (billing.entitled != onPaywall) return;
-    state = AuthState(await _resolveStageForRegisteredUser(), user);
+    final next = await _resolveStageForRegisteredUser();
+    if (stale()) return;
+    state = AuthState(next, state.user);
   }
 
   /// Replace the cached user (e.g. after a profile update). Keeps the current

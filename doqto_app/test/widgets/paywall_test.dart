@@ -237,6 +237,42 @@ void main() {
     );
     await pumpSettings(tester);
 
-    expect(find.textContaining('update your card'), findsOneWidget);
+    expect(find.text(Strings.subscriptionGrace), findsOneWidget);
+  });
+
+  testWidgets('settings sends a trial doctor to checkout, not the portal',
+      (tester) async {
+    billing.value = Billing(
+      entitled: true,
+      reason: 'trial',
+      monthlyCents: 899,
+      yearlyCents: 8000,
+      trialEndsAt: DateTime.now().toUtc().add(const Duration(days: 5)),
+    );
+    await pumpSettings(tester);
+
+    await tester.tap(find.text(Strings.subscriptionRow));
+    await tester.pumpAndSettle();
+
+    expect(billing.checkouts, ['yearly']);
+    expect(opener.opened, ['https://checkout.stripe.test/yearly']);
+  });
+
+  testWidgets('settings never sends a staff account to checkout',
+      (tester) async {
+    billing.value = const Billing(
+      entitled: true,
+      reason: 'staff',
+      monthlyCents: 899,
+      yearlyCents: 8000,
+    );
+    await pumpSettings(tester);
+
+    expect(find.text(Strings.subscriptionStaff), findsOneWidget);
+    await tester.tap(find.text(Strings.subscriptionRow));
+    await tester.pumpAndSettle();
+
+    expect(billing.checkouts, isEmpty);
+    expect(opener.opened, isEmpty);
   });
 }

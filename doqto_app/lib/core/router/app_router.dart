@@ -41,6 +41,8 @@ class AppRoutes {
   static const registration = '/auth/registration';
   static const payments = '/payments';
   static const paywall = '/paywall';
+  // Where Stripe sends the browser back (`doqto:///billing`). Not a page.
+  static const billing = '/billing';
   static const orgSelection = '/org/select';
   static const createOrg = '/org/create';
   static const joinOrg = '/org/join';
@@ -133,6 +135,13 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.paywall,
         parentNavigatorKey: rootNavigatorKey,
         builder: (_, s) => const PaymentsScreen(mode: PaymentsMode.paywall),
+      ),
+      // The resume hook already re-checks billing; the link only needs to land
+      // somewhere real. A doctor still unpaid is sent on to the paywall by the
+      // top-level redirect before this one runs.
+      GoRoute(
+        path: AppRoutes.billing,
+        redirect: (_, _) => AppRoutes.chats,
       ),
       GoRoute(
         path: AppRoutes.orgSelection,

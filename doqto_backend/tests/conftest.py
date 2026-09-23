@@ -29,9 +29,11 @@ from sqlalchemy.pool import NullPool  # noqa: E402
 
 import app.db.postgres as pg  # noqa: E402
 import app.db.redis as redis_mod  # noqa: E402
+from app.core.config import settings  # noqa: E402
 from app.db.postgres import Base, SessionLocal  # noqa: E402
 from app.db.redis import close_redis, get_redis  # noqa: E402
 from app.models import *  # noqa: E402,F401,F403 — register models on Base.metadata
+from app.services.stripe_client import Subscription, get_stripe  # noqa: E402
 
 # Tests run each function in its own event loop while the starlette TestClient
 # (websocket tests) runs the app in a portal thread — a pooled asyncpg
@@ -151,3 +153,58 @@ def firebase(monkeypatch):
         monkeypatch.setattr(firebase_auth, "verify_id_token", _verify)
 
     return _install
+
+
+class FakeStripe:
+    """Stands in for Stripe everywhere. Records what it was asked for so tests
+    can assert on the parameters, and hands back objects the real gateway
+    would return."""
+
+    def __init__(self) -> None:
+        self.customers: list[str] = []
+        self.checkouts: list[dict] = []
+        self.portals: list[str] = []
+        self.subscriptions: dict[str, Subscription] = {}
+        self.event: dict | None = None
+        self.signature_valid = True
+
+    def ensure_customer(self, user) -> str:
+        if user.stripe_customer_id:
+            return user.stripe_customer_id
+        customer_id = f"cus_fake{len(self.customers)}"
+        self.customers.append(customer_id)
+        return customer_id
+
+    def checkout_url(self, *, customer_id: str, price_id: str, user_id: str) -> str:
+        self.checkouts.append(
+            {"customer_id": customer_id, "price_id": price_id, "user_id": user_id}
+        )
+        return "https://checkout.stripe.test/session"
+
+    def portal_url(self, customer_id: str) -> str:
+        self.portals.append(customer_id)
+        return "https://portal.stripe.test/session"
+
+    def subscription(self, subscription_id: str) -> Subscription:
+        return self.subscriptions[subscription_id]
+
+    def construct_event(self, payload: bytes, signature: str) -> dict:
+        if not self.signature_valid:
+            import stripe
+
+            raise stripe.SignatureVerificationError("bad signature", signature)
+        return self.event
+
+
+@pytest.fixture
+def stripe_gateway(monkeypatch):
+    """A configured, faked Stripe. Also sets the price ids and a secret key so
+    endpoints don't take the 503 path."""
+    monkeypatch.setattr(settings, "STRIPE_SECRET_KEY", "sk_test_fake", raising=False)
+    monkeypatch.setattr(settings, "STRIPE_PRICE_MONTHLY", "price_monthly", raising=False)
+    monkeypatch.setattr(settings, "STRIPE_PRICE_YEARLY", "price_yearly", raising=False)
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "whsec_fake", raising=False)
+    fake = FakeStripe()
+    app.dependency_overrides[get_stripe] = lambda: fake
+    yield fake
+    app.dependency_overrides.pop(get_stripe, None)

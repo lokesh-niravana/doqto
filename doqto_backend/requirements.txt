@@ -18,3 +18,4 @@ pytest-asyncio==0.24.0
 ruff==0.6.9
 google-auth==2.57.1
 requests==2.32.3
+stripe==11.4.1

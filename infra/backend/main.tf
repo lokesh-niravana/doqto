@@ -33,6 +33,31 @@ variable "fcm_service_account_json" {
   default   = ""
 }
 
+# Stripe secret key (test or live). Empty keeps billing endpoints returning
+# 503 billing_unavailable; entitlement (trial) still works without it.
+variable "stripe_secret_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+# Signing secret for the /billing/webhook endpoint.
+variable "stripe_webhook_secret" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "stripe_price_monthly" {
+  type    = string
+  default = ""
+}
+
+variable "stripe_price_yearly" {
+  type    = string
+  default = ""
+}
+
 
 data "aws_caller_identity" "me" {}
 data "aws_vpc" "default" {
@@ -86,6 +111,8 @@ locals {
     SUPER_ADMIN_EMAIL        = var.super_admin["EMAIL"]
     SUPER_ADMIN_PASSWORD     = var.super_admin["PASSWORD"]
     FCM_SERVICE_ACCOUNT_JSON = var.fcm_service_account_json
+    STRIPE_SECRET_KEY        = var.stripe_secret_key
+    STRIPE_WEBHOOK_SECRET    = var.stripe_webhook_secret
   }
 }
 
@@ -392,6 +419,9 @@ resource "aws_ecs_task_definition" "api" {
       # the project id is needed: ID tokens are verified against Google's
       # public certs, so there is no secret here. Same project as FCM.
       { name = "FIREBASE_PROJECT_ID", value = "doqto-90684" },
+      { name = "STRIPE_PRICE_MONTHLY", value = var.stripe_price_monthly },
+      { name = "STRIPE_PRICE_YEARLY", value = var.stripe_price_yearly },
+      { name = "BILLING_RETURN_URL", value = "https://doqto.ai/billing/done" },
     ]
     secrets = [for k, p in aws_ssm_parameter.secret : { name = k, valueFrom = p.arn }]
     logConfiguration = {

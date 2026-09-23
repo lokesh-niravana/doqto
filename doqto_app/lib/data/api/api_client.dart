@@ -31,6 +31,10 @@ class ApiClient {
 
   SessionEndedCallback? onSessionEnded;
 
+  /// Called on any 402 (`subscription_required`). Set by the DI layer so the
+  /// app can re-check billing and show the paywall.
+  void Function()? onPaymentRequired;
+
   ApiClient({TokenStorage? tokens})
       : _tokens = tokens ?? TokenStorage(),
         _dio = Dio(BaseOptions(
@@ -175,6 +179,7 @@ class ApiClient {
       return await fn();
     } on DioException catch (e) {
       final status = e.response?.statusCode;
+      if (status == 402) onPaymentRequired?.call();
       final detail = (e.response?.data is Map) ? (e.response!.data['detail']?.toString() ?? e.message ?? '') : (e.message ?? '');
       throw ApiException(detail, status: status);
     }

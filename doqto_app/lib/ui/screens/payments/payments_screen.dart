@@ -8,7 +8,6 @@ import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
-import '../../../data/api/api_client.dart';
 import '../../../data/models/billing.dart';
 import '../../../state/auth_state.dart';
 import '../../../state/billing_state.dart';
@@ -93,14 +92,18 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     });
     try {
       final url = await ref.read(billingRepositoryProvider).checkoutUrl(_selected);
-      await ref.read(urlOpenerProvider).open(url);
+      if (!await ref.read(urlOpenerProvider).open(url)) {
+        if (mounted) setState(() => _error = Strings.checkoutOpenFailed);
+        return;
+      }
       final billing =
           await ref.read(billingProvider.notifier).pollAfterCheckout();
       // Paid: re-resolve the stage and let the router take them onward.
       if (billing?.entitled == true) {
         await ref.read(authProvider.notifier).recheckSubscription();
       }
-    } on ApiException catch (e) {
+    } catch (e) {
+      // Not only ApiException: the browser launch can throw a platform error.
       if (mounted) setState(() => _error = ErrorMessages.forApi(e));
     } finally {
       if (mounted) setState(() => _subscribing = false);
@@ -114,16 +117,22 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       _checking = true;
       _error = null;
     });
-    await ref.read(billingProvider.notifier).pollAfterCheckout();
+    final billing =
+        await ref.read(billingProvider.notifier).pollAfterCheckout();
     await ref.read(authProvider.notifier).recheckSubscription();
-    if (mounted) setState(() => _checking = false);
+    if (!mounted) return;
+    setState(() {
+      _checking = false;
+      if (billing?.entitled != true) _error = Strings.paywallNotPaidYet;
+    });
   }
 
   Future<void> _signOut() => ref.read(authProvider.notifier).signOut();
 
-  Widget _textButton(String label, VoidCallback onTap) => Center(
+  Widget _textButton(String label, VoidCallback onTap, {bool always = false}) =>
+      Center(
         child: AppPressable(
-          onTap: _busy ? null : onTap,
+          onTap: _busy && !always ? null : onTap,
           minTarget: true,
           child: Padding(
             padding: const EdgeInsets.symmetric(
@@ -163,7 +172,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                 ),
               )
             : _textButton(Strings.paywallPaid, _checkPaid),
-        _textButton(Strings.paywallSignOut, _signOut),
+        // Never disabled: the way off the paywall must not wait on a poll.
+        _textButton(Strings.paywallSignOut, _signOut, always: true),
       ] else ...[
         AppButton(
           label: Strings.planStartTrial,

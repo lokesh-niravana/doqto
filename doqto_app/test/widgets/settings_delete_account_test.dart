@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:doqto_app/core/di/providers.dart';
+import 'package:doqto_app/data/api/api_client.dart';
+import 'package:doqto_app/data/models/billing.dart';
+import 'package:doqto_app/data/repositories/billing_repository.dart';
 import 'package:doqto_app/data/repositories/user_repository.dart';
 import 'package:doqto_app/ui/screens/settings/settings_screen.dart';
 
@@ -19,10 +22,25 @@ class _SpyUserRepo implements UserRepository {
       throw UnimplementedError('${invocation.memberName} not stubbed');
 }
 
+/// Settings shows the subscription row; keep it off the network.
+class _Billing extends BillingRepository {
+  _Billing() : super(ApiClient());
+  @override
+  Future<Billing> status() async => const Billing(
+        entitled: true,
+        reason: 'trial',
+        monthlyCents: 899,
+        yearlyCents: 8000,
+      );
+}
+
 late _SpyUserRepo _repo;
 
 Widget _app() => ProviderScope(
-      overrides: [userRepositoryProvider.overrideWithValue(_repo)],
+      overrides: [
+        userRepositoryProvider.overrideWithValue(_repo),
+        billingRepositoryProvider.overrideWithValue(_Billing()),
+      ],
       child: const MaterialApp(home: SettingsScreen()),
     );
 

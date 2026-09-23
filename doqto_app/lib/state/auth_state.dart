@@ -46,6 +46,10 @@ class AuthNotifier extends Notifier<AuthState> {
     // token expired, revoked, or backend returns session_revoked), drop
     // straight to signedOut. The router redirect fires automatically.
     ref.read(apiClientProvider).onSessionEnded = _onSessionEnded;
+    // A 402 means the server thinks the subscription lapsed: re-check and let
+    // the router move the doctor to the paywall.
+    ref.read(apiClientProvider).onPaymentRequired =
+        () => unawaited(refreshBilling());
     return const AuthState(AuthStage.unknown, null);
   }
 
@@ -255,6 +259,27 @@ class AuthNotifier extends Notifier<AuthState> {
   /// have paid. Leaves the paywall only when the server agrees.
   Future<void> recheckSubscription() => refreshOrgStatus();
 
+  /// Re-checks billing on resume (the browser may have taken a payment) and
+  /// on a 402. Re-resolves the stage only when the answer disagrees with where
+  /// the doctor is: entitled on the paywall, or lapsed anywhere past it.
+  Future<void> refreshBilling() async {
+    final user = state.user;
+    if (user == null) return;
+    const gated = {
+      AuthStage.needsSubscription,
+      AuthStage.needsOrg,
+      AuthStage.pendingVerification,
+      AuthStage.signedIn,
+    };
+    if (!gated.contains(state.stage)) return;
+    final billing = await ref.read(billingProvider.notifier).refresh();
+    // Unreachable server: fail open, change nothing.
+    if (billing == null) return;
+    final onPaywall = state.stage == AuthStage.needsSubscription;
+    if (billing.entitled != onPaywall) return;
+    state = AuthState(await _resolveStageForRegisteredUser(), user);
+  }
+
   /// Replace the cached user (e.g. after a profile update). Keeps the current
   /// auth stage — callers can't change auth stage via this method.
   void setUser(User user) {
@@ -281,6 +306,8 @@ class AuthNotifier extends Notifier<AuthState> {
     await ref.read(websocketClientProvider).close();
     await _wipeLocalPhi();
     ref.read(orgProvider.notifier).clear();
+    // The next doctor on this device must never see this one's subscription.
+    ref.read(billingProvider.notifier).reset();
     state = const AuthState(AuthStage.signedOut, null);
   }
 }

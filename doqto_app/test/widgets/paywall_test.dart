@@ -9,6 +9,8 @@ import 'package:doqto_app/data/models/billing.dart';
 import 'package:doqto_app/data/repositories/billing_repository.dart';
 import 'package:doqto_app/data/services/url_opener.dart';
 import 'package:doqto_app/ui/screens/payments/payments_screen.dart';
+import 'package:doqto_app/ui/screens/settings/settings_screen.dart';
+import 'package:doqto_app/ui/widgets/app_pressable.dart';
 import 'package:doqto_app/ui/widgets/primary_button.dart';
 
 class _FakeBilling extends BillingRepository {
@@ -22,13 +24,21 @@ class _FakeBilling extends BillingRepository {
     yearlyCents: 8000,
   );
 
+  int statusCalls = 0;
+  /// When set, checkout leaves the doctor unpaid (the webhook hasn't landed).
+  bool staysUnpaid = false;
+
   @override
-  Future<Billing> status() async => value;
+  Future<Billing> status() async {
+    statusCalls++;
+    return value;
+  }
 
   @override
   Future<String> checkoutUrl(String plan) async {
     if (checkoutError != null) throw checkoutError!;
     checkouts.add(plan);
+    if (staysUnpaid) return 'https://checkout.stripe.test/$plan';
     // Stripe's webhook has landed by the time the doctor is back, so the
     // post-checkout poll ends on its first refresh instead of leaving timers.
     value = const Billing(
@@ -62,6 +72,17 @@ void main() {
         urlOpenerProvider.overrideWithValue(opener),
       ],
       child: MaterialApp(home: PaymentsScreen(mode: mode)),
+    ));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> pumpSettings(WidgetTester tester) async {
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        billingRepositoryProvider.overrideWithValue(billing),
+        urlOpenerProvider.overrideWithValue(opener),
+      ],
+      child: const MaterialApp(home: SettingsScreen()),
     ));
     await tester.pumpAndSettle();
   }
@@ -130,5 +151,92 @@ void main() {
       findsOneWidget,
     );
     expect(find.text(Strings.planSkip), findsOneWidget);
+  });
+
+  testWidgets('a browser that will not open is explained, and nothing polls',
+      (tester) async {
+    opener.result = false;
+    await pump(tester);
+    final before = billing.statusCalls;
+
+    await tester.tap(find.widgetWithText(AppButton, Strings.planSubscribe).first);
+    await tester.pumpAndSettle();
+
+    expect(find.text(Strings.checkoutOpenFailed), findsOneWidget);
+    expect(billing.statusCalls, before);
+  });
+
+  testWidgets('an unexpected checkout error is shown, not thrown',
+      (tester) async {
+    billing.checkoutError = StateError('platform said no');
+    await pump(tester);
+
+    await tester.tap(find.widgetWithText(AppButton, Strings.planSubscribe).first);
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Something went wrong. Please try again.'), findsOneWidget);
+  });
+
+  testWidgets('"I have already paid" says so when the payment has not landed',
+      (tester) async {
+    await pump(tester);
+
+    await tester.tap(find.text(Strings.paywallPaid));
+    // Sign out is the one way off the paywall; it never waits on the poll.
+    await tester.pump();
+    final signOut = find.ancestor(
+      of: find.text(Strings.paywallSignOut),
+      matching: find.byType(AppPressable),
+    );
+    expect(tester.widget<AppPressable>(signOut).onTap, isNotNull);
+
+    await tester.pumpAndSettle();
+    expect(find.text(Strings.paywallNotPaidYet), findsOneWidget);
+  });
+
+  testWidgets('settings shows the trial countdown', (tester) async {
+    billing.value = Billing(
+      entitled: true,
+      reason: 'trial',
+      monthlyCents: 899,
+      yearlyCents: 8000,
+      trialEndsAt: DateTime.now().toUtc().add(const Duration(days: 3, hours: 2)),
+    );
+    await pumpSettings(tester);
+
+    expect(find.text(Strings.subscriptionRow), findsOneWidget);
+    expect(find.text(Strings.trialDaysLeft(4)), findsOneWidget);
+  });
+
+  testWidgets('settings opens the Stripe portal for a subscriber',
+      (tester) async {
+    billing.value = const Billing(
+      entitled: true,
+      reason: 'subscribed',
+      status: 'active',
+      plan: 'yearly',
+      monthlyCents: 899,
+      yearlyCents: 8000,
+    );
+    await pumpSettings(tester);
+
+    await tester.tap(find.text(Strings.subscriptionRow));
+    await tester.pumpAndSettle();
+
+    expect(opener.opened, ['https://portal.stripe.test/s']);
+  });
+
+  testWidgets('settings flags a payment problem during grace', (tester) async {
+    billing.value = const Billing(
+      entitled: true,
+      reason: 'grace',
+      status: 'past_due',
+      monthlyCents: 899,
+      yearlyCents: 8000,
+    );
+    await pumpSettings(tester);
+
+    expect(find.textContaining('update your card'), findsOneWidget);
   });
 }

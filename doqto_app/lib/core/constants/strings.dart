@@ -62,6 +62,10 @@ class Strings {
       'subscribing turns sending back on.';
   static const String paywallPaid = 'I have already paid';
   static const String paywallSignOut = 'Sign out';
+  static const String paywallNotPaidYet =
+      'We haven\'t received your payment yet. It can take a minute.';
+  static const String checkoutOpenFailed =
+      'Couldn\'t open the payment page. Please try again.';
   static const String subscriptionRow = 'Subscription';
   static String planSaving(int percent, String perMonth) =>
       'Save $percent% · $perMonth';

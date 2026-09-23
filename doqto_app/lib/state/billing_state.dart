@@ -26,6 +26,13 @@ class BillingNotifier extends AsyncNotifier<Billing?> {
     return value;
   }
 
+  /// On sign-out. A plain invalidate would keep the old value visible while
+  /// the refetch loads, so drop it first; the next watcher fetches afresh.
+  void reset() {
+    state = const AsyncValue.data(null);
+    ref.invalidateSelf();
+  }
+
   /// Stripe's webhook can land a few seconds after the browser sends the
   /// doctor back. Poll briefly rather than show them a stale paywall.
   Future<Billing?> pollAfterCheckout() async {

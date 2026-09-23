@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/tokens/spacing.dart';
+import '../../../core/utils/error_messages.dart';
+import '../../../data/models/billing.dart';
 import '../../../state/auth_state.dart';
+import '../../../state/billing_state.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
 
@@ -35,6 +39,28 @@ class SettingsScreen extends ConsumerWidget {
     // signOut also wipes the local encrypted PHI caches.
     await ref.read(authProvider.notifier).signOut();
     if (context.mounted) context.go(AppRoutes.login);
+  }
+
+  /// Someone with no Stripe customer yet (still on the trial) goes to
+  /// checkout; the portal would 409 for them.
+  Future<void> _openBilling(
+      BuildContext context, WidgetRef ref, Billing? billing) async {
+    final repo = ref.read(billingRepositoryProvider);
+    String? error;
+    try {
+      final url = billing?.status == null
+          ? await repo.checkoutUrl('yearly')
+          : await repo.portalUrl();
+      if (!await ref.read(urlOpenerProvider).open(url)) {
+        error = Strings.checkoutOpenFailed;
+      }
+    } catch (e) {
+      error = ErrorMessages.forApi(e);
+    }
+    if (error != null && context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error)));
+    }
   }
 
   @override
@@ -67,12 +93,32 @@ class SettingsScreen extends ConsumerWidget {
                 title: const Text('Specialty'),
                 subtitle: Text(user?.specialty ?? '—')),
           ),
+          FadeSlideIn.staggered(
+            4,
+            Consumer(builder: (context, ref, _) {
+              final billing = ref.watch(billingProvider).value;
+              return ListTile(
+                title: const Text(Strings.subscriptionRow),
+                subtitle: Text(switch (billing?.reason) {
+                  'trial' => Strings.trialDaysLeft(billing!.trialDaysLeft),
+                  'subscribed' =>
+                    billing!.plan == 'yearly' ? 'Yearly' : 'Monthly',
+                  'grace' => 'Payment problem — update your card',
+                  'staff' => 'Staff account',
+                  'expired' => 'No subscription',
+                  _ => '—',
+                }),
+                trailing: const Icon(Icons.open_in_new, size: 18),
+                onTap: () => _openBilling(context, ref, billing),
+              );
+            }),
+          ),
           // Destructive zone: visually separated from the info rows above,
           // rendered in red via the danger variant.
           const SizedBox(height: AppSpacing.sm),
           const Divider(),
           FadeSlideIn.staggered(
-            4,
+            5,
             Padding(
               padding: const EdgeInsets.all(AppSpacing.lg),
               child: AppButton(
@@ -88,7 +134,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           FadeSlideIn.staggered(
-            5,
+            6,
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg)
                   .copyWith(bottom: AppSpacing.lg),

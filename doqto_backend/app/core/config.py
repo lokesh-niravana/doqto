@@ -31,6 +31,21 @@ class Settings(BaseSettings):
     # public certs, so there is no secret to hold here.
     FIREBASE_PROJECT_ID: str = ""
 
+    # Billing. Every value has a default so local dev and tests run with no
+    # Stripe account at all: entitlement still works, only the endpoints that
+    # call Stripe refuse (503 billing_unavailable).
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRICE_MONTHLY: str = ""
+    STRIPE_PRICE_YEARLY: str = ""
+    BILLING_TRIAL_DAYS: int = 14
+    BILLING_GRACE_DAYS: int = 7
+    # Shown in the app so the yearly saving is computed, never typed twice.
+    # Must match the Stripe prices above.
+    BILLING_PRICE_MONTHLY_CENTS: int = 899
+    BILLING_PRICE_YEARLY_CENTS: int = 8000
+    BILLING_RETURN_URL: str = "https://doqto.ai/billing/done"
+
     JWT_SECRET: str
     MESSAGE_ENCRYPTION_KEY: str
 

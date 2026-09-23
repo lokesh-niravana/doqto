@@ -47,17 +47,26 @@ class Strings {
   static const String regSignOut = 'Not you? Sign out';
   static const String regApplePrivateEmail = 'your Apple ID (email hidden)';
 
-  // Plans (shown once, straight after registration)
+  // Plans (after registration) and the paywall (after the trial)
   static const String planTitle = 'Choose your plan';
   static const String planSubtitle =
       'Full access to secure messaging, groups and your network.';
   static const String planMonthly = 'Monthly';
-  static const String planMonthlyPrice = '\$8.99/mo';
   static const String planYearly = 'Yearly';
-  static const String planYearlyPrice = '\$80/yr';
-  static const String planYearlyNote = 'Save 26% · \$6.67/mo';
-  static const String planContinue = 'Continue';
   static const String planSkip = 'Skip for now';
+  static const String planStartTrial = 'Start 14-day free trial';
+  static const String planSubscribe = 'Subscribe';
+  static const String paywallTitle = 'Subscribe to keep going';
+  static const String paywallBody =
+      'Your free trial has ended. Your messages are safe and still readable — '
+      'subscribing turns sending back on.';
+  static const String paywallPaid = 'I have already paid';
+  static const String paywallSignOut = 'Sign out';
+  static const String subscriptionRow = 'Subscription';
+  static String planSaving(int percent, String perMonth) =>
+      'Save $percent% · $perMonth';
+  static String trialDaysLeft(int days) =>
+      days == 1 ? 'Trial: 1 day left' : 'Trial: $days days left';
 
   // Org
   static const String orgNoneTitle = 'You\'re not in an organization yet';

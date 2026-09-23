@@ -40,6 +40,7 @@ class AppRoutes {
   static const otp = '/auth/otp';
   static const registration = '/auth/registration';
   static const payments = '/payments';
+  static const paywall = '/paywall';
   static const orgSelection = '/org/select';
   static const createOrg = '/org/create';
   static const joinOrg = '/org/join';
@@ -127,6 +128,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.payments,
         parentNavigatorKey: rootNavigatorKey,
         builder: (_, s) => const PaymentsScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.paywall,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const PaymentsScreen(mode: PaymentsMode.paywall),
       ),
       GoRoute(
         path: AppRoutes.orgSelection,
@@ -305,6 +311,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (auth.stage == AuthStage.needsPayment && loc != AppRoutes.payments) {
         return AppRoutes.payments;
       }
+      if (auth.stage == AuthStage.needsSubscription && loc != AppRoutes.paywall) {
+        return AppRoutes.paywall;
+      }
       if (auth.stage == AuthStage.needsOrg && !inOrgFlow) {
         return AppRoutes.orgSelection;
       }
@@ -314,7 +323,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Signed-in user shouldn't be stuck on the pending screen or any of the
       // pre-auth / org-onboarding flows. Push them to chats.
       if (auth.stage == AuthStage.signedIn &&
-          (inAuthFlow || inOrgFlow || loc == AppRoutes.payments)) {
+          (inAuthFlow ||
+              inOrgFlow ||
+              loc == AppRoutes.payments ||
+              loc == AppRoutes.paywall)) {
         return AppRoutes.chats;
       }
       return null;

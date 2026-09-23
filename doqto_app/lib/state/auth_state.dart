@@ -8,6 +8,7 @@ import '../core/enums/app_enums.dart';
 import '../data/models/user.dart';
 import '../data/services/auth_broker.dart';
 import '../data/repositories/user_repository.dart';
+import 'billing_state.dart';
 import 'org_state.dart';
 
 enum AuthStage {
@@ -18,6 +19,9 @@ enum AuthStage {
   /// [AuthNotifier.completeRegistration] — there is no server-side record of a
   /// plan yet, so a returning user is never sent back here.
   needsPayment,
+  /// The trial is over and there is no live subscription. The server decides
+  /// this (`GET /billing`); the app never infers it from dates.
+  needsSubscription,
   needsOrg,
   pendingVerification,
   signedIn,
@@ -99,6 +103,11 @@ class AuthNotifier extends Notifier<AuthState> {
   /// or can go straight to chats. Also hydrates [orgProvider] as a side effect
   /// so downstream screens have the active org available.
   Future<AuthStage> _resolveStageForRegisteredUser() async {
+    // The server is the authority. A failed check lets the user in: the
+    // endpoints still return 402, so failing open costs nothing and avoids
+    // locking someone out over a flaky network.
+    final billing = await ref.read(billingProvider.notifier).refresh();
+    if (billing != null && !billing.entitled) return AuthStage.needsSubscription;
     try {
       final orgs = await ref.read(orgRepositoryProvider).listMine();
       // No org is no longer a blocker: onboarding ends at the plan picker and
@@ -241,6 +250,10 @@ class AuthNotifier extends Notifier<AuthState> {
     if (user == null) return;
     state = AuthState(await _resolveStageForRegisteredUser(), user);
   }
+
+  /// Re-checks billing (and everything after it) once the doctor says they
+  /// have paid. Leaves the paywall only when the server agrees.
+  Future<void> recheckSubscription() => refreshOrgStatus();
 
   /// Replace the cached user (e.g. after a profile update). Keeps the current
   /// auth stage — callers can't change auth stage via this method.

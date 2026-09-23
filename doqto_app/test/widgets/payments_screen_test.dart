@@ -8,9 +8,11 @@ import 'package:doqto_app/core/enums/app_enums.dart';
 import 'package:doqto_app/data/api/api_client.dart';
 import 'package:doqto_app/data/api/token_storage.dart';
 import 'package:doqto_app/data/api/websocket_client.dart';
+import 'package:doqto_app/data/models/billing.dart';
 import 'package:doqto_app/data/models/organization.dart';
 import 'package:doqto_app/data/models/user.dart';
 import 'package:doqto_app/data/repositories/auth_repository.dart';
+import 'package:doqto_app/data/repositories/billing_repository.dart';
 import 'package:doqto_app/data/repositories/org_repository.dart';
 import 'package:doqto_app/data/services/push_token_provider.dart';
 import 'package:doqto_app/state/auth_state.dart';
@@ -18,8 +20,8 @@ import 'package:doqto_app/ui/screens/payments/payments_screen.dart';
 import 'package:doqto_app/ui/widgets/primary_button.dart';
 
 // The plan picker is the last onboarding step: both plans on screen, yearly
-// preselected, and the user leaves whether they pick one or skip. It charges
-// nothing — see docs/payments.md.
+// preselected, and the user leaves by starting the trial or skipping. Subscribe
+// is covered in paywall_test.dart.
 
 User _user() => User.fromJson({
       'id': 'u1',
@@ -71,6 +73,20 @@ class _FakeWebsocketClient extends WebsocketClient {
   }
 }
 
+/// A doctor fresh out of registration is in their trial. Leaving the picker
+/// re-resolves the stage, which asks billing first; never hit the real API.
+class _FakeBillingRepository extends BillingRepository {
+  _FakeBillingRepository() : super(ApiClient());
+
+  @override
+  Future<Billing> status() async => const Billing(
+        entitled: true,
+        reason: 'trial',
+        monthlyCents: 899,
+        yearlyCents: 8000,
+      );
+}
+
 class _FakeAuthRepository extends AuthRepository {
   _FakeAuthRepository() : super(ApiClient(), TokenStorage());
 
@@ -102,6 +118,7 @@ void main() {
       authRepositoryProvider.overrideWithValue(_FakeAuthRepository()),
       websocketClientProvider.overrideWithValue(ws),
       pushTokenProviderProvider.overrideWithValue(StubPushTokenProvider()),
+      billingRepositoryProvider.overrideWithValue(_FakeBillingRepository()),
     ]);
     addTearDown(container.dispose);
 
@@ -138,6 +155,9 @@ void main() {
     return 'none';
   }
 
+  final startTrial = find.byWidgetPredicate(
+      (w) => w is AppButton && w.label == Strings.planStartTrial);
+
   Future<void> leave(WidgetTester tester, Finder target) async {
     await tester.tap(target);
     // Bounded pumps: the button shows an indeterminate spinner while working.
@@ -150,10 +170,11 @@ void main() {
 
     expect(find.text(Strings.planTitle), findsOneWidget);
     expect(find.text(Strings.planMonthly), findsOneWidget);
-    expect(find.text(Strings.planMonthlyPrice), findsOneWidget);
+    // Prices are the server's, formatted by Billing.
+    expect(find.text('\$8.99/mo'), findsOneWidget);
     expect(find.text(Strings.planYearly), findsOneWidget);
-    expect(find.text(Strings.planYearlyPrice), findsOneWidget);
-    expect(find.text(Strings.planYearlyNote), findsOneWidget);
+    expect(find.text('\$80/yr'), findsOneWidget);
+    expect(find.text('Save 26% · \$6.67/mo'), findsOneWidget);
     expect(find.text(Strings.planSkip), findsOneWidget);
 
     expect(find.byIcon(Icons.radio_button_checked), findsOneWidget);
@@ -176,10 +197,10 @@ void main() {
     expect(find.byIcon(Icons.radio_button_off), findsOneWidget);
   });
 
-  testWidgets('Continue ends onboarding — no org needed', (tester) async {
+  testWidgets('Start trial ends onboarding — no org needed', (tester) async {
     final container = await pump(tester);
 
-    await leave(tester, find.byType(AppButton));
+    await leave(tester, startTrial);
 
     expect(orgRepo.listMineCalls, 1);
     expect(container.read(authProvider).stage, AuthStage.signedIn);
@@ -199,7 +220,7 @@ void main() {
     orgRepo = _FakeOrgRepository([_org(OrgStatus.active)]);
     final container = await pump(tester);
 
-    await leave(tester, find.byType(AppButton));
+    await leave(tester, startTrial);
 
     expect(container.read(authProvider).stage, AuthStage.signedIn);
     expect(ws.connects, 1, reason: 'an active org gets the realtime socket');
@@ -210,7 +231,7 @@ void main() {
     orgRepo = _FakeOrgRepository([_org(OrgStatus.pending)]);
     final container = await pump(tester);
 
-    await leave(tester, find.byType(AppButton));
+    await leave(tester, startTrial);
 
     expect(container.read(authProvider).stage, AuthStage.pendingVerification);
   });

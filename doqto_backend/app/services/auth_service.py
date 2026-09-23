@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi.concurrency import run_in_threadpool
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.constants import (
     ACCESS_TOKEN_TTL_SECONDS,
     RATE_LIMIT_SIGNIN_PER_HOUR,
@@ -233,5 +234,12 @@ class AuthService:
         user.full_name = full_name
         user.specialty = specialty
         user.npi_number = npi_number
+        # The trial starts when registration finishes, not at the first
+        # sign-in: a half-finished sign-up hasn't used any of it. Never reset
+        # an existing one, or registering again would restart the clock.
+        if user.trial_ends_at is None:
+            user.trial_ends_at = datetime.now(tz=timezone.utc) + timedelta(
+                days=settings.BILLING_TRIAL_DAYS
+            )
         await AuditService.log(db, user_id=user.id, action=AuditAction.REGISTER)
         return user

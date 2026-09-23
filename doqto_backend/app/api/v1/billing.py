@@ -13,6 +13,7 @@ import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -21,7 +22,7 @@ from app.core.routes import ApiRoutes
 from app.models import User
 from app.schemas.billing import BillingOut, CheckoutIn, UrlOut
 from app.services.billing_service import entitlement
-from app.services.stripe_client import StripeGateway, get_stripe
+from app.services.stripe_client import StripeGateway, Subscription, get_stripe
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -70,6 +71,15 @@ async def create_checkout(
             status.HTTP_503_SERVICE_UNAVAILABLE, detail="billing_unavailable"
         )
 
+    # The mirror lags the webhook by seconds. Ask Stripe too, or a double tap
+    # on Subscribe during that window buys a second subscription.
+    if user.stripe_customer_id:
+        existing = await run_in_threadpool(
+            stripe.list_subscriptions, user.stripe_customer_id
+        )
+        if any(sub.status in SUBSCRIBED_STATUSES for sub in existing):
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="already_subscribed")
+
     customer_id = await run_in_threadpool(stripe.ensure_customer, user)
     if user.stripe_customer_id != customer_id:
         user.stripe_customer_id = customer_id
@@ -112,12 +122,29 @@ def _plan_for(price_id: str | None) -> str | None:
     return None
 
 
+# Which subscription speaks for a customer who has more than one: a paying
+# one first, then the newest.
+_STATUS_RANK = {"active": 0, "trialing": 1, "past_due": 2}
+
+
+def _best(subs: list[Subscription]) -> Subscription | None:
+    if not subs:
+        return None
+    return min(subs, key=lambda s: (_STATUS_RANK.get(s.status, 3), -s.created))
+
+
 @router.post(ApiRoutes.BILLING_WEBHOOK)
 async def webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
     stripe_gateway: StripeGateway = Depends(get_stripe),
 ) -> dict[str, bool]:
+    if not settings.STRIPE_WEBHOOK_SECRET:
+        # Without the secret nothing can be verified; 503 so Stripe retries
+        # once the deployment is fixed, instead of a 400 for every event.
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="billing_unavailable"
+        )
     payload = await request.body()
     signature = request.headers.get("stripe-signature", "")
     try:
@@ -145,29 +172,46 @@ async def webhook(
             user = await db.scalar(
                 select(User).where(User.stripe_customer_id == obj.get("customer"))
             )
-        subscription_id = obj.get("subscription")
     elif event_type in SUBSCRIPTION_EVENTS:
         user = await db.scalar(
             select(User).where(User.stripe_customer_id == obj.get("customer"))
         )
-        subscription_id = obj.get("id")
     else:
         return {"ok": True}
 
-    if user is None or not subscription_id:
+    customer_id = obj.get("customer") or (user.stripe_customer_id if user else None)
+    if user is None or not customer_id:
         # 200 anyway: Stripe retries for three days, and there is nothing to
         # retry for a customer we do not have.
         logger.warning("billing webhook %s for an unknown user", event_type)
         return {"ok": True}
 
     # Re-fetch rather than trust the event body: events arrive out of order
-    # and more than once, and the current subscription is the only truth.
-    sub = await run_in_threadpool(stripe_gateway.subscription, subscription_id)
-    user.stripe_customer_id = sub.customer_id
-    user.stripe_subscription_id = sub.id
-    user.billing_status = sub.status
-    user.billing_plan = _plan_for(sub.price_id)
-    user.current_period_end = sub.current_period_end
-    await db.commit()
-    logger.info("billing %s user=%s status=%s", event_type, user.id, sub.status)
+    # and more than once, and the current state is the only truth. Fetch by
+    # customer, not by the subscription the event names, so a late event
+    # about an old subscription can't overwrite a newer, live one.
+    sub = _best(await run_in_threadpool(stripe_gateway.list_subscriptions, customer_id))
+    user_id = user.id  # rollback below expires the instance
+    user.stripe_customer_id = customer_id
+    if sub is None:
+        user.stripe_subscription_id = None
+        user.billing_status = "canceled"
+        user.billing_plan = None
+        user.current_period_start = None
+        user.current_period_end = None
+    else:
+        user.stripe_subscription_id = sub.id
+        user.billing_status = sub.status
+        user.billing_plan = _plan_for(sub.price_id)
+        user.current_period_start = sub.current_period_start
+        user.current_period_end = sub.current_period_end
+    try:
+        await db.commit()
+    except IntegrityError:
+        # The customer id already belongs to another user. Retrying can't fix
+        # that, so 200 and leave it to a human.
+        await db.rollback()
+        logger.warning("billing %s user=%s: customer id already in use", event_type, user_id)
+        return {"ok": True}
+    logger.info("billing %s user=%s status=%s", event_type, user_id, user.billing_status)
     return {"ok": True}

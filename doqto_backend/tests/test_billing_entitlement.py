@@ -62,17 +62,22 @@ async def test_a_live_subscription_is_entitled(db, status):
 
 
 async def test_a_failed_payment_keeps_access_for_the_grace_period(db):
+    # A failed renewal: Stripe has already rolled the period forward, so the
+    # start of the new period is the day the charge failed.
     user = await helpers.create_user(db, trial_days=None)
     user.billing_status = "past_due"
-    user.current_period_end = NOW - timedelta(days=6)
+    user.current_period_start = NOW - timedelta(days=2)
+    user.current_period_end = NOW + timedelta(days=28)
 
     assert entitlement(user, NOW) == (True, "grace")
 
 
 async def test_grace_runs_out_after_seven_days(db):
+    # The period end is weeks away, and must not buy a month of free access.
     user = await helpers.create_user(db, trial_days=None)
     user.billing_status = "past_due"
-    user.current_period_end = NOW - timedelta(days=7)
+    user.current_period_start = NOW - timedelta(days=8)
+    user.current_period_end = NOW + timedelta(days=22)
 
     assert entitlement(user, NOW) == (False, "expired")
 

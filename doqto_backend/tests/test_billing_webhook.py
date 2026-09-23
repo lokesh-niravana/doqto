@@ -10,16 +10,24 @@ from tests import helpers
 
 pytestmark = pytest.mark.asyncio
 
+PERIOD_START = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
 PERIOD_END = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
 
 
-def _sub(status: str = "active", price: str = "price_yearly") -> Subscription:
+def _sub(
+    status: str = "active",
+    price: str = "price_yearly",
+    id: str = "sub_1",
+    created: int = 1,
+) -> Subscription:
     return Subscription(
-        id="sub_1",
+        id=id,
         customer_id="cus_fake0",
         status=status,
         price_id=price,
         current_period_end=PERIOD_END,
+        current_period_start=PERIOD_START,
+        created=created,
     )
 
 
@@ -54,6 +62,7 @@ async def test_checkout_completed_subscribes_the_user(client, db, stripe_gateway
     assert user.stripe_subscription_id == "sub_1"
     assert user.stripe_customer_id == "cus_fake0"
     assert user.current_period_end == PERIOD_END
+    assert user.current_period_start == PERIOD_START
 
 
 async def test_subscription_updated_is_matched_by_customer(client, db, stripe_gateway):
@@ -147,3 +156,112 @@ async def test_checkout_completed_with_no_reference_falls_back_to_customer(
     assert user.billing_status == "active"
     assert user.billing_plan == "yearly"
     assert user.stripe_subscription_id == "sub_1"
+
+
+async def test_the_live_subscription_wins_over_a_late_delete_of_the_old_one(
+    client, db, stripe_gateway
+):
+    # A doctor ends up with two subscriptions on one customer. The old one's
+    # delete event arrives after the new one is active: it must not overwrite
+    # the mirror with "canceled".
+    user = await helpers.create_user(db)
+    user.stripe_customer_id = "cus_fake0"
+    await db.commit()
+    stripe_gateway.subscriptions["sub_old"] = _sub(
+        status="canceled", price="price_monthly", id="sub_old", created=1
+    )
+    stripe_gateway.subscriptions["sub_new"] = _sub(status="active", id="sub_new", created=2)
+
+    for event_type in ("customer.subscription.updated", "customer.subscription.deleted"):
+        stripe_gateway.event = {
+            "type": event_type,
+            "data": {"object": {"id": "sub_old", "customer": "cus_fake0"}},
+        }
+        assert (await _post(client)).status_code == 200
+
+    await db.refresh(user)
+    assert user.billing_status == "active"
+    assert user.stripe_subscription_id == "sub_new"
+    assert user.billing_plan == "yearly"
+
+
+async def test_the_newest_subscription_wins_a_tie(client, db, stripe_gateway):
+    user = await helpers.create_user(db)
+    user.stripe_customer_id = "cus_fake0"
+    await db.commit()
+    stripe_gateway.subscriptions["sub_a"] = _sub(status="canceled", id="sub_a", created=5)
+    stripe_gateway.subscriptions["sub_b"] = _sub(status="canceled", id="sub_b", created=9)
+    stripe_gateway.event = {
+        "type": "customer.subscription.deleted",
+        "data": {"object": {"id": "sub_a", "customer": "cus_fake0"}},
+    }
+
+    await _post(client)
+
+    await db.refresh(user)
+    assert user.stripe_subscription_id == "sub_b"
+
+
+async def test_a_customer_with_no_subscriptions_is_cleared(client, db, stripe_gateway):
+    user = await helpers.create_user(db)
+    user.stripe_customer_id = "cus_fake0"
+    user.stripe_subscription_id = "sub_gone"
+    user.billing_status = "active"
+    user.billing_plan = "monthly"
+    user.current_period_end = PERIOD_END
+    await db.commit()
+    stripe_gateway.event = {
+        "type": "customer.subscription.deleted",
+        "data": {"object": {"id": "sub_gone", "customer": "cus_fake0"}},
+    }
+
+    assert (await _post(client)).status_code == 200
+
+    await db.refresh(user)
+    assert user.billing_status == "canceled"
+    assert user.stripe_subscription_id is None
+    assert user.billing_plan is None
+    assert user.current_period_end is None
+
+
+async def test_the_webhook_is_503_without_a_signing_secret(
+    client, db, stripe_gateway, monkeypatch
+):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "")
+    stripe_gateway.event = {"type": "invoice.paid", "data": {"object": {}}}
+
+    r = await _post(client)
+
+    assert r.status_code == 503
+    assert r.json()["detail"] == "billing_unavailable"
+
+
+async def test_a_customer_id_already_owned_by_someone_else_is_skipped(
+    client, db, stripe_gateway
+):
+    # The unique constraint on stripe_customer_id: a 500 here would make
+    # Stripe retry for three days over something a retry can't fix.
+    owner = await helpers.create_user(db)
+    owner.stripe_customer_id = "cus_fake0"
+    await db.commit()
+    other = await helpers.create_user(db)
+    stripe_gateway.subscriptions["sub_1"] = _sub()
+    stripe_gateway.event = {
+        "type": "checkout.session.completed",
+        "data": {
+            "object": {
+                "client_reference_id": str(other.id),
+                "customer": "cus_fake0",
+                "subscription": "sub_1",
+            }
+        },
+    }
+
+    r = await _post(client)
+
+    assert r.status_code == 200
+    await db.refresh(other)
+    assert other.stripe_customer_id is None
+    assert other.billing_status is None

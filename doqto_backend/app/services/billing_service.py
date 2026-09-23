@@ -38,11 +38,13 @@ def entitlement(user: User, now: datetime | None = None) -> Entitlement:
 
     # A failed renewal keeps the door open briefly: cards expire, people are
     # on call, and losing a messaging app over a declined charge is worse than
-    # a few unpaid days.
+    # a few unpaid days. Measured from the period START: by the time a renewal
+    # fails Stripe has already rolled the period forward, so the start is the
+    # day the charge failed and the end is a whole billing period away.
     if (
         user.billing_status == "past_due"
-        and user.current_period_end is not None
-        and user.current_period_end + timedelta(days=settings.BILLING_GRACE_DAYS) > now
+        and user.current_period_start is not None
+        and user.current_period_start + timedelta(days=settings.BILLING_GRACE_DAYS) > now
     ):
         return Entitlement(True, "grace")
 

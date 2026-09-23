@@ -1,6 +1,6 @@
 """Stripe billing on users.
 
-Six columns. Five mirror Stripe; `trial_ends_at` is ours, because the 14-day
+Seven columns. Six mirror Stripe; `trial_ends_at` is ours, because the 14-day
 trial takes no card and so never exists in Stripe.
 
 Backfill: everyone already registered starts their trial now rather than at
@@ -33,6 +33,9 @@ def upgrade() -> None:
     op.add_column("users", sa.Column("billing_status", sa.String(length=20), nullable=True))
     op.add_column("users", sa.Column("billing_plan", sa.String(length=10), nullable=True))
     op.add_column(
+        "users", sa.Column("current_period_start", sa.DateTime(timezone=True), nullable=True)
+    )
+    op.add_column(
         "users", sa.Column("current_period_end", sa.DateTime(timezone=True), nullable=True)
     )
     op.create_unique_constraint("uq_users_stripe_customer_id", "users", ["stripe_customer_id"])
@@ -61,6 +64,7 @@ def downgrade() -> None:
     op.drop_constraint("uq_users_stripe_customer_id", "users", type_="unique")
     for column in (
         "current_period_end",
+        "current_period_start",
         "billing_plan",
         "billing_status",
         "stripe_subscription_id",

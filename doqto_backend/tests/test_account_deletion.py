@@ -141,3 +141,57 @@ async def test_deletion_clears_the_firebase_uid(db):
     await db.commit()
 
     assert user.firebase_uid is None
+
+
+async def test_deletion_cancels_a_live_subscription(client, db, stripe_gateway):
+    # Otherwise a deleted doctor keeps being charged for an account that no
+    # longer exists.
+    user = await create_user(db)
+    user.stripe_customer_id = "cus_fake0"
+    user.stripe_subscription_id = "sub_1"
+    user.billing_status = "active"
+    await db.commit()
+
+    r = await client.delete("/api/v1/users/me", headers=await auth_headers(user.id))
+
+    assert r.status_code == 200, r.text
+    assert stripe_gateway.cancelled == ["sub_1"]
+
+
+async def test_deletion_leaves_a_finished_subscription_alone(client, db, stripe_gateway):
+    user = await create_user(db)
+    user.stripe_subscription_id = "sub_1"
+    user.billing_status = "canceled"
+    await db.commit()
+
+    await client.delete("/api/v1/users/me", headers=await auth_headers(user.id))
+
+    assert stripe_gateway.cancelled == []
+
+
+async def test_deletion_survives_a_stripe_error(client, db, stripe_gateway):
+    user = await create_user(db)
+    user.stripe_subscription_id = "sub_1"
+    user.billing_status = "past_due"
+    await db.commit()
+    stripe_gateway.cancel_error = RuntimeError("stripe is down")
+    user_id = user.id
+
+    r = await client.delete("/api/v1/users/me", headers=await auth_headers(user_id))
+
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    row = await db.scalar(select(User).where(User.id == user_id))
+    assert row.deleted_at is not None
+
+
+async def test_deletion_works_without_stripe_configured(client, db):
+    # No stripe_gateway fixture: billing is switched off in this deployment.
+    user = await create_user(db)
+    user.stripe_subscription_id = "sub_1"
+    user.billing_status = "active"
+    await db.commit()
+
+    r = await client.delete("/api/v1/users/me", headers=await auth_headers(user.id))
+
+    assert r.status_code == 200, r.text

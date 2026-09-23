@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +29,12 @@ from app.models import (
     UserPrivacySettings,
 )
 from app.services.audit_service import AuditService
+from app.services.stripe_client import StripeGateway
+
+logger = logging.getLogger(__name__)
+
+# Subscriptions Stripe will never charge again.
+TERMINAL_STATUSES = frozenset({"canceled", "incomplete_expired"})
 
 
 class AccountDeletionService:
@@ -47,8 +55,22 @@ class AccountDeletionService:
         db: AsyncSession,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        stripe: StripeGateway | None = None,
     ) -> None:
         uid = user.id
+
+        # Stop the billing before the account goes, or a deleted doctor keeps
+        # being charged. Best effort: deletion is a legal right and must not
+        # depend on Stripe being configured or reachable.
+        if (
+            stripe is not None
+            and user.stripe_subscription_id
+            and user.billing_status not in TERMINAL_STATUSES
+        ):
+            try:
+                await run_in_threadpool(stripe.cancel_subscription, user.stripe_subscription_id)
+            except Exception:
+                logger.exception("account deletion user=%s: stripe cancel failed", uid)
 
         # Audit first: after the scrub there is no name left to record, and the
         # row must survive the deletion it describes.

@@ -93,6 +93,54 @@ async def test_checkout_sends_a_subscriber_to_the_portal_instead(client, db, str
     assert stripe_gateway.checkouts == []
 
 
+async def test_checkout_asks_stripe_before_creating_a_second_subscription(
+    client, db, stripe_gateway
+):
+    # The webhook hasn't landed yet, so the mirror is empty — but Stripe
+    # already has a live subscription for this customer.
+    from app.services.stripe_client import Subscription
+
+    user = await helpers.create_user(db)
+    user.stripe_customer_id = "cus_existing"
+    await db.commit()
+    stripe_gateway.subscriptions["sub_1"] = Subscription(
+        id="sub_1",
+        customer_id="cus_existing",
+        status="active",
+        price_id="price_monthly",
+        current_period_end=None,
+    )
+    headers = await helpers.auth_headers(user.id)
+
+    r = await client.post("/api/v1/billing/checkout", json={"plan": "monthly"}, headers=headers)
+
+    assert r.status_code == 409
+    assert r.json()["detail"] == "already_subscribed"
+    assert stripe_gateway.checkouts == []
+
+
+async def test_registering_starts_the_trial(client, db):
+    # A Firebase sign-in creates the row without a trial; finishing
+    # registration is what starts the clock.
+    user = await helpers.create_user(db, full_name="", trial_days=None)
+    user.npi_number = "PENDING01"
+    await db.commit()
+    headers = await helpers.auth_headers(user.id)
+
+    r = await client.post(
+        "/api/v1/auth/register",
+        json={"full_name": "Dr New", "npi_number": "1234567890"},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+
+    body = (await client.get("/api/v1/billing", headers=headers)).json()
+    assert body["entitled"] is True
+    assert body["reason"] == "trial"
+    trial_ends_at = datetime.fromisoformat(body["trial_ends_at"])
+    assert trial_ends_at > datetime.now(timezone.utc) + timedelta(days=13)
+
+
 async def test_checkout_is_503_when_stripe_is_not_configured(client, db):
     # No stripe_gateway fixture: this is production with a missing key.
     user = await helpers.create_user(db)

@@ -48,3 +48,64 @@ def test_ensure_customer_sends_an_idempotency_key_keyed_on_the_user(monkeypatch)
     assert len(calls) == 1
     idempotency_key = calls[0]["options"]["idempotency_key"]
     assert str(user.id) in idempotency_key
+
+
+def test_the_portal_returns_to_a_neutral_page(monkeypatch):
+    # Not ?status=success: the doctor may only have looked at an invoice.
+    gateway = StripeGateway("sk_test_dummy")
+    calls = []
+
+    def _fake_create(params=None, options=None):
+        calls.append(params)
+
+        class _Session:
+            url = "https://portal.stripe.test/session"
+
+        return _Session()
+
+    monkeypatch.setattr(gateway._client.billing_portal.sessions, "create", _fake_create)
+
+    gateway.portal_url("cus_1")
+
+    assert calls[0]["return_url"] == f"{settings.BILLING_RETURN_URL}?status=portal"
+
+
+def test_list_subscriptions_reads_the_period_from_the_item_when_needed(monkeypatch):
+    # Newer API versions moved both period fields onto the subscription item.
+    import stripe
+
+    gateway = StripeGateway("sk_test_dummy")
+    sub = stripe.StripeObject.construct_from(
+        {
+            "id": "sub_1",
+            "customer": "cus_1",
+            "status": "past_due",
+            "created": 100,
+            "items": {
+                "data": [
+                    {
+                        "price": {"id": "price_monthly"},
+                        "current_period_start": 1_000,
+                        "current_period_end": 2_000,
+                    }
+                ]
+            },
+        },
+        "sk_test_dummy",
+    )
+    calls = []
+
+    def _fake_list(params=None, options=None):
+        calls.append(params)
+        return stripe.StripeObject.construct_from({"data": [sub]}, "sk_test_dummy")
+
+    monkeypatch.setattr(gateway._client.subscriptions, "list", _fake_list)
+
+    [result] = gateway.list_subscriptions("cus_1")
+
+    assert calls[0]["customer"] == "cus_1"
+    assert calls[0]["status"] == "all"
+    assert result.status == "past_due"
+    assert result.created == 100
+    assert result.current_period_start.timestamp() == 1_000
+    assert result.current_period_end.timestamp() == 2_000

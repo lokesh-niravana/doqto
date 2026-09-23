@@ -45,6 +45,9 @@ class User(Base):
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     billing_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     billing_plan: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    current_period_start: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     current_period_end: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

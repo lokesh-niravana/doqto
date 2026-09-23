@@ -21,6 +21,8 @@ class Subscription(NamedTuple):
     status: str
     price_id: str | None
     current_period_end: datetime | None
+    current_period_start: datetime | None = None
+    created: int = 0  # unix seconds; breaks ties between two subscriptions
 
 
 class StripeGateway:
@@ -62,28 +64,47 @@ class StripeGateway:
 
     def portal_url(self, customer_id: str) -> str:
         session = self._client.billing_portal.sessions.create(
-            params={"customer": customer_id, "return_url": settings.BILLING_RETURN_URL}
+            params={
+                "customer": customer_id,
+                "return_url": f"{settings.BILLING_RETURN_URL}?status=portal",
+            }
         )
         return session.url
 
-    def subscription(self, subscription_id: str) -> Subscription:
-        sub = self._client.subscriptions.retrieve(subscription_id)
+    def list_subscriptions(self, customer_id: str) -> list[Subscription]:
+        """Every subscription the customer has, in any state. Nobody holds
+        more than a handful, so one page is all of them."""
+        page = self._client.subscriptions.list(
+            params={"customer": customer_id, "status": "all", "limit": 100}
+        )
+        return [self._to_subscription(sub) for sub in page.data]
+
+    def cancel_subscription(self, subscription_id: str) -> None:
+        """Immediately, not at period end: the account is going away."""
+        self._client.subscriptions.cancel(subscription_id)
+
+    @staticmethod
+    def _to_subscription(sub) -> Subscription:
         items = sub["items"]["data"]
-        # `current_period_end` lives on the subscription itself in older API
-        # versions; newer ones moved it onto each subscription item instead.
-        # Read it from the subscription when present, else fall back to the
+
+        # The period fields live on the subscription itself in older API
+        # versions; newer ones moved them onto each subscription item instead.
+        # Read them from the subscription when present, else fall back to the
         # first item, so this keeps working across API version bumps.
-        period_end = sub.get("current_period_end")
-        if period_end is None and items:
-            period_end = items[0].get("current_period_end")
+        def period(field: str) -> datetime | None:
+            value = sub.get(field)
+            if value is None and items:
+                value = items[0].get(field)
+            return datetime.fromtimestamp(value, tz=timezone.utc) if value else None
+
         return Subscription(
             id=sub.id,
             customer_id=str(sub.customer),
             status=sub.status,
             price_id=items[0]["price"]["id"] if items else None,
-            current_period_end=(
-                datetime.fromtimestamp(period_end, tz=timezone.utc) if period_end else None
-            ),
+            current_period_end=period("current_period_end"),
+            current_period_start=period("current_period_start"),
+            created=sub.get("created") or 0,
         )
 
     def construct_event(self, payload: bytes, signature: str) -> dict:
@@ -107,3 +128,12 @@ def get_stripe() -> StripeGateway:
     if _gateway is None:
         _gateway = StripeGateway(settings.STRIPE_SECRET_KEY)
     return _gateway
+
+
+def get_optional_stripe() -> StripeGateway | None:
+    """For work that must go ahead with or without billing, like deleting an
+    account: None instead of a 503 when Stripe isn't configured."""
+    try:
+        return get_stripe()
+    except HTTPException:
+        return None

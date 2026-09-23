@@ -33,7 +33,11 @@ from app.core.config import settings  # noqa: E402
 from app.db.postgres import Base, SessionLocal  # noqa: E402
 from app.db.redis import close_redis, get_redis  # noqa: E402
 from app.models import *  # noqa: E402,F401,F403 — register models on Base.metadata
-from app.services.stripe_client import Subscription, get_stripe  # noqa: E402
+from app.services.stripe_client import (  # noqa: E402
+    Subscription,
+    get_optional_stripe,
+    get_stripe,
+)
 
 # Tests run each function in its own event loop while the starlette TestClient
 # (websocket tests) runs the app in a portal thread — a pooled asyncpg
@@ -165,6 +169,8 @@ class FakeStripe:
         self.checkouts: list[dict] = []
         self.portals: list[str] = []
         self.subscriptions: dict[str, Subscription] = {}
+        self.cancelled: list[str] = []
+        self.cancel_error: Exception | None = None
         self.event: dict | None = None
         self.signature_valid = True
 
@@ -185,8 +191,13 @@ class FakeStripe:
         self.portals.append(customer_id)
         return "https://portal.stripe.test/session"
 
-    def subscription(self, subscription_id: str) -> Subscription:
-        return self.subscriptions[subscription_id]
+    def list_subscriptions(self, customer_id: str) -> list[Subscription]:
+        return [s for s in self.subscriptions.values() if s.customer_id == customer_id]
+
+    def cancel_subscription(self, subscription_id: str) -> None:
+        if self.cancel_error is not None:
+            raise self.cancel_error
+        self.cancelled.append(subscription_id)
 
     def construct_event(self, payload: bytes, signature: str) -> dict:
         if not self.signature_valid:
@@ -206,5 +217,7 @@ def stripe_gateway(monkeypatch):
     monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "whsec_fake", raising=False)
     fake = FakeStripe()
     app.dependency_overrides[get_stripe] = lambda: fake
+    app.dependency_overrides[get_optional_stripe] = lambda: fake
     yield fake
     app.dependency_overrides.pop(get_stripe, None)
+    app.dependency_overrides.pop(get_optional_stripe, None)

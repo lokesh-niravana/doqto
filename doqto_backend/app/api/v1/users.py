@@ -28,6 +28,7 @@ from app.services.auth_service import AuthError, AuthService, PhoneTaken, WrongA
 from app.services.file_service import FileService
 from app.services.push_service import PushService
 from app.services.relationship_service import RelationshipService
+from app.services.stripe_client import StripeGateway, get_optional_stripe
 from sqlalchemy import and_, or_, select
 
 router = APIRouter()
@@ -82,6 +83,7 @@ async def delete_me(
     request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    stripe: StripeGateway | None = Depends(get_optional_stripe),
 ) -> OkResponse:
     """App Store 5.1.1(v): account deletion initiated from inside the app.
 
@@ -93,6 +95,7 @@ async def delete_me(
         db=db,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
+        stripe=stripe,
     )
     return OkResponse()
 

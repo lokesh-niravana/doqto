@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import random
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,6 +35,7 @@ async def create_user(
     state: str | None = None,
     headline: str | None = None,
     handle: str | None = None,
+    trial_days: int | None = 14,
 ) -> User:
     user = User(
         phone=f"+1{_digits(10)}",
@@ -44,6 +46,12 @@ async def create_user(
         state=state,
         headline=headline,
         handle=handle,
+        # Every test user is a normal, entitled doctor unless a test says
+        # otherwise. Without this the 402 gate would fail every suite.
+        trial_ends_at=(
+            None if trial_days is None
+            else datetime.now(timezone.utc) + timedelta(days=trial_days)
+        ),
     )
     db.add(user)
     await db.commit()

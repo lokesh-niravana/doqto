@@ -34,6 +34,20 @@ class User(Base):
     firebase_uid: Mapped[str | None] = mapped_column(
         String(128), unique=True, nullable=True, index=True
     )
+    # Billing — mirrored from Stripe by the webhook, except trial_ends_at,
+    # which is ours: the trial needs no card, so Stripe never sees it.
+    trial_ends_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    stripe_customer_id: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True
+    )
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    billing_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    billing_plan: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    current_period_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     # Public handle (nullable, generated lazily on first profile edit) + headline.
     handle: Mapped[str | None] = mapped_column(String(30), unique=True, nullable=True)

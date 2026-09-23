@@ -33,7 +33,7 @@ place that decides access:
 | `staff` | role is `super_admin` | yes |
 | `trial` | `trial_ends_at` is in the future | yes |
 | `subscribed` | Stripe status is `active` or `trialing` | yes |
-| `grace` | Stripe status is `past_due` and `current_period_end + BILLING_GRACE_DAYS` is in the future | yes |
+| `grace` | Stripe status is `past_due` and `current_period_start + BILLING_GRACE_DAYS` is in the future | yes |
 | `expired` | none of the above | no |
 
 The first matching row wins, so a doctor who subscribes during their trial
@@ -49,14 +49,17 @@ passes — subscribing early changes nothing they can do.
 2. Stripe Checkout collects the card and starts the subscription.
 3. Stripe redirects to `https://doqto.ai/billing/done`, a static page on the
    landing site (`landing/src/app/billing/done/page.tsx`). It reads
-   `?status=success|cancel`, tries to reopen the app via `doqto:///billing`
-   automatically on success, and always shows an "Open Doqto" button as a
+   `?status=success|cancel|portal` (`portal` is the customer portal's return,
+   with neutral copy since nothing may have been paid), tries to reopen the
+   app via `doqto:///billing` automatically unless cancelled, and always shows an "Open Doqto" button as a
    fallback for browsers that block the automatic redirect.
 4. Stripe also calls the backend webhook
    (`POST /api/v1/billing/webhook`, signed) with the subscription event.
    **The webhook, not the redirect, is the source of truth** — the backend
-   re-fetches the subscription from Stripe on every handled event and mirrors
-   its status, price and period end onto the user row. The app never trusts
+   re-fetches the customer's subscriptions from Stripe on every handled event
+   and mirrors the best one (active > trialing > past_due > the rest, newest
+   on a tie) — its status, price and period start/end — onto the user row, so
+   a late event about an old subscription can't overwrite a live one. The app never trusts
    the redirect by itself.
 5. The app re-checks `GET /api/v1/billing` whenever it starts, returns to the
    foreground, opens the `doqto:///billing` link, or gets a 402 on a request.
@@ -125,8 +128,25 @@ The Stripe test-mode account is already configured:
    into `infra/backend/terraform.tfvars`:
    `stripe_secret_key`, `stripe_webhook_secret`, `stripe_price_monthly`,
    `stripe_price_yearly`.
-4. Run `./deploy.sh` from `infra/backend/` to build, push and apply.
-5. Confirm `GET /api/v1/billing` on a real account and a live test
+4. **Required: clear the test-mode billing state.** Every Stripe id and
+   status mirrored so far belongs to test mode and means nothing to the live
+   account: a test `active` would keep a doctor entitled forever, and a test
+   customer id makes checkout and the portal fail. Run this against the
+   production database immediately before the deploy in the next step
+   (`trial_ends_at` is ours, not Stripe's, and stays):
+
+   ```sql
+   UPDATE users
+      SET stripe_customer_id     = NULL,
+          stripe_subscription_id = NULL,
+          billing_status         = NULL,
+          billing_plan           = NULL,
+          current_period_start   = NULL,
+          current_period_end     = NULL;
+   ```
+
+5. Run `./deploy.sh` from `infra/backend/` to build, push and apply.
+6. Confirm `GET /api/v1/billing` on a real account and a live test
    subscription end to end before relying on it.
 
 ## App Store

@@ -209,4 +209,48 @@ void main() {
 
     expect(billing.calls, before + 1);
   });
+
+  test('reading past the paywall lasts until the next 402', () async {
+    billing = _Billing(_expired);
+    final c = container();
+    await signIn(c);
+
+    c.read(authProvider.notifier).enterReadOnly();
+    expect(c.read(authProvider).readOnly, isTrue);
+
+    // A send while read-only: the server says pay first.
+    c.read(apiClientProvider).onPaymentRequired!();
+    await pumpEventQueue();
+
+    expect(c.read(authProvider).readOnly, isFalse);
+    expect(c.read(authProvider).stage, AuthStage.needsSubscription);
+  });
+
+  test('read-only is only offered on the paywall', () async {
+    billing = _Billing(_entitled);
+    final c = container();
+    await signIn(c);
+
+    c.read(authProvider.notifier).enterReadOnly();
+
+    expect(c.read(authProvider).readOnly, isFalse);
+  });
+
+  test('signing out during "I have already paid" keeps the doctor signed out',
+      () async {
+    billing = _Billing(_expired);
+    final c = container();
+    await signIn(c);
+
+    final held = Completer<Billing>();
+    billing.hold = held;
+    final inFlight = c.read(authProvider.notifier).recheckSubscription();
+    await c.read(authProvider.notifier).signOut();
+    held.complete(_entitled);
+    await inFlight;
+    await pumpEventQueue();
+
+    expect(c.read(authProvider).stage, AuthStage.signedOut);
+    expect(c.read(authProvider).user, isNull);
+  });
 }

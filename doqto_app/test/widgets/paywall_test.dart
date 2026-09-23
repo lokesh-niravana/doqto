@@ -16,6 +16,7 @@ import 'package:doqto_app/ui/widgets/primary_button.dart';
 class _FakeBilling extends BillingRepository {
   _FakeBilling() : super(ApiClient());
   final List<String> checkouts = [];
+  int portals = 0;
   Object? checkoutError;
   Billing value = const Billing(
     entitled: false,
@@ -51,7 +52,18 @@ class _FakeBilling extends BillingRepository {
   }
 
   @override
-  Future<String> portalUrl() async => 'https://portal.stripe.test/s';
+  Future<String> portalUrl() async {
+    portals++;
+    // The new card took and the retried invoice paid.
+    value = const Billing(
+      entitled: true,
+      reason: 'subscribed',
+      status: 'active',
+      monthlyCents: 899,
+      yearlyCents: 8000,
+    );
+    return 'https://portal.stripe.test/s';
+  }
 }
 
 void main() {
@@ -274,5 +286,64 @@ void main() {
 
     expect(billing.checkouts, isEmpty);
     expect(opener.opened, isEmpty);
+  });
+
+  testWidgets('a lapsed subscriber can fix their card from the paywall',
+      (tester) async {
+    billing.value = const Billing(
+      entitled: false,
+      reason: 'expired',
+      status: 'past_due',
+      monthlyCents: 899,
+      yearlyCents: 8000,
+    );
+    await pump(tester);
+    final before = billing.statusCalls;
+
+    await tester.tap(find.widgetWithText(AppButton, Strings.paywallUpdatePayment).first);
+    await tester.pumpAndSettle();
+
+    expect(opener.opened, ['https://portal.stripe.test/s']);
+    expect(billing.checkouts, isEmpty);
+    // Polls like Subscribe does, so a fixed card lifts the paywall.
+    expect(billing.statusCalls, greaterThan(before));
+  });
+
+  testWidgets('a doctor who never subscribed has no card to update',
+      (tester) async {
+    await pump(tester);
+
+    expect(find.text(Strings.paywallUpdatePayment), findsNothing);
+  });
+
+  testWidgets('already subscribed at checkout opens the portal instead',
+      (tester) async {
+    // The mirror hadn't caught up, but Stripe has a subscription: a second
+    // checkout would be refused, and the portal is where it gets fixed.
+    billing.checkoutError = ApiException('already_subscribed', status: 409);
+    await pump(tester);
+
+    await tester.tap(find.widgetWithText(AppButton, Strings.planSubscribe).first);
+    await tester.pumpAndSettle();
+
+    expect(opener.opened, ['https://portal.stripe.test/s']);
+    expect(find.textContaining('already have a subscription'), findsNothing);
+  });
+
+  testWidgets('settings shows the plan for a doctor who paid during the trial',
+      (tester) async {
+    billing.value = Billing(
+      entitled: true,
+      reason: 'trial',
+      status: 'active',
+      plan: 'monthly',
+      monthlyCents: 899,
+      yearlyCents: 8000,
+      trialEndsAt: DateTime.now().toUtc().add(const Duration(days: 5)),
+    );
+    await pumpSettings(tester);
+
+    expect(find.text(Strings.planMonthly), findsOneWidget);
+    expect(find.textContaining('Trial:'), findsNothing);
   });
 }

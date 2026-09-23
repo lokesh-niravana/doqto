@@ -85,10 +85,11 @@ void openConversation(BuildContext context, String conversationId) {
   context.push(AppRoutes.chat(conversationId));
 }
 
-/// Re-evaluates redirects whenever AuthStage changes.
+/// Re-evaluates redirects whenever AuthStage (or read-only) changes.
 Listenable _authListenable(Ref ref) {
-  final notifier = ValueNotifier<AuthStage>(ref.read(authProvider).stage);
-  ref.listen(authProvider.select((s) => s.stage), (_, next) => notifier.value = next);
+  (AuthStage, bool) key(AuthState s) => (s.stage, s.readOnly);
+  final notifier = ValueNotifier(key(ref.read(authProvider)));
+  ref.listen(authProvider.select(key), (_, next) => notifier.value = next);
   return notifier;
 }
 
@@ -320,7 +321,15 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (auth.stage == AuthStage.needsPayment && loc != AppRoutes.payments) {
         return AppRoutes.payments;
       }
-      if (auth.stage == AuthStage.needsSubscription && loc != AppRoutes.paywall) {
+      // "Read my messages": a lapsed doctor may go anywhere past onboarding.
+      // Sending still 402s, and the 402 clears read-only.
+      final reading = auth.readOnly &&
+          !inAuthFlow &&
+          !inOrgFlow &&
+          loc != AppRoutes.payments;
+      if (auth.stage == AuthStage.needsSubscription &&
+          loc != AppRoutes.paywall &&
+          !reading) {
         return AppRoutes.paywall;
       }
       if (auth.stage == AuthStage.needsOrg && !inOrgFlow) {

@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
+import '../../../data/api/api_client.dart';
 import '../../../data/models/billing.dart';
 import '../../../state/auth_state.dart';
 import '../../../state/billing_state.dart';
@@ -54,6 +57,10 @@ const _fallback = Billing(
   yearlyCents: 8000,
 );
 
+/// A subscription that exists but isn't being paid. The card is the fix, and
+/// that happens in Stripe's portal, not a second checkout.
+const _cardProblem = {'past_due', 'unpaid', 'incomplete'};
+
 List<_Plan> _plansFor(Billing b) => [
       _Plan('monthly', Strings.planMonthly, b.monthlyLabel),
       _Plan(
@@ -69,11 +76,12 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   String _selected = 'yearly';
   bool _loading = false;
   bool _subscribing = false;
+  bool _updating = false;
   bool _checking = false;
   String? _error;
 
   bool get _paywall => widget.mode == PaymentsMode.paywall;
-  bool get _busy => _loading || _subscribing || _checking;
+  bool get _busy => _loading || _subscribing || _updating || _checking;
 
   Future<void> _leave() async {
     setState(() => _loading = true);
@@ -85,13 +93,35 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     if (mounted) setState(() => _loading = false);
   }
 
-  Future<void> _subscribe() async {
+  Future<void> _subscribe() => _openAndPoll(() async {
+        final repo = ref.read(billingRepositoryProvider);
+        try {
+          return await repo.checkoutUrl(_selected);
+        } on ApiException catch (e) {
+          // Stripe already has a subscription the app hadn't heard about yet.
+          // Whatever is wrong with it is fixed in the portal.
+          if (e.status == 409 && e.detail == 'already_subscribed') {
+            return repo.portalUrl();
+          }
+          rethrow;
+        }
+      });
+
+  Future<void> _updatePayment() => _openAndPoll(
+        ref.read(billingRepositoryProvider).portalUrl,
+        portal: true,
+      );
+
+  /// Opens a Stripe page in the browser, then polls until the webhook has
+  /// landed.
+  Future<void> _openAndPoll(Future<String> Function() urlFor,
+      {bool portal = false}) async {
     setState(() {
-      _subscribing = true;
+      portal ? _updating = true : _subscribing = true;
       _error = null;
     });
     try {
-      final url = await ref.read(billingRepositoryProvider).checkoutUrl(_selected);
+      final url = await urlFor();
       if (!await ref.read(urlOpenerProvider).open(url)) {
         if (mounted) setState(() => _error = Strings.checkoutOpenFailed);
         return;
@@ -106,7 +136,12 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       // Not only ApiException: the browser launch can throw a platform error.
       if (mounted) setState(() => _error = ErrorMessages.forApi(e));
     } finally {
-      if (mounted) setState(() => _subscribing = false);
+      if (mounted) {
+        setState(() {
+          _subscribing = false;
+          _updating = false;
+        });
+      }
     }
   }
 
@@ -128,6 +163,13 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   }
 
   Future<void> _signOut() => ref.read(authProvider.notifier).signOut();
+
+  /// Reading never needs a subscription. The first send that does brings
+  /// them back here.
+  void _read() {
+    ref.read(authProvider.notifier).enterReadOnly();
+    context.go(AppRoutes.chats);
+  }
 
   Widget _textButton(String label, VoidCallback onTap, {bool always = false}) =>
       Center(
@@ -151,11 +193,24 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   Widget build(BuildContext context) {
     final billing = ref.watch(billingProvider).value ?? _fallback;
     final plans = _plansFor(billing);
+    final cardProblem = _cardProblem.contains(billing.status);
 
     final actions = <Widget>[
       if (_paywall) ...[
+        if (cardProblem) ...[
+          AppButton(
+            label: Strings.paywallUpdatePayment,
+            onPressed: _busy ? null : _updatePayment,
+            loading: _updating,
+            expand: true,
+          ),
+          const SizedBox(height: AppSpacing.md),
+        ],
         AppButton(
           label: Strings.planSubscribe,
+          variant: cardProblem
+              ? AppButtonVariant.secondary
+              : AppButtonVariant.primary,
           onPressed: _busy ? null : _subscribe,
           loading: _subscribing,
           expand: true,
@@ -172,7 +227,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                 ),
               )
             : _textButton(Strings.paywallPaid, _checkPaid),
-        // Never disabled: the way off the paywall must not wait on a poll.
+        // Never disabled: the ways off the paywall must not wait on a poll.
+        _textButton(Strings.paywallReadMessages, _read, always: true),
         _textButton(Strings.paywallSignOut, _signOut, always: true),
       ] else ...[
         AppButton(

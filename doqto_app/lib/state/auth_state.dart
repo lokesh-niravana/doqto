@@ -30,10 +30,18 @@ enum AuthStage {
 class AuthState {
   final AuthStage stage;
   final User? user;
-  const AuthState(this.stage, this.user);
 
-  AuthState copyWith({AuthStage? stage, User? user}) =>
-      AuthState(stage ?? this.stage, user ?? this.user);
+  /// On the paywall, the doctor chose "Read my messages": the router lets
+  /// them past it, since reading never needs a subscription. The next 402
+  /// clears it. Deliberately not persisted — a restart shows the paywall.
+  final bool readOnly;
+  const AuthState(this.stage, this.user, {this.readOnly = false});
+
+  AuthState copyWith({AuthStage? stage, User? user, bool? readOnly}) => AuthState(
+        stage ?? this.stage,
+        user ?? this.user,
+        readOnly: readOnly ?? this.readOnly,
+      );
 }
 
 class AuthNotifier extends Notifier<AuthState> {
@@ -48,9 +56,12 @@ class AuthNotifier extends Notifier<AuthState> {
     // straight to signedOut. The router redirect fires automatically.
     ref.read(apiClientProvider).onSessionEnded = _onSessionEnded;
     // A 402 means the server thinks the subscription lapsed: re-check and let
-    // the router move the doctor to the paywall.
-    ref.read(apiClientProvider).onPaymentRequired =
-        () => unawaited(refreshBilling());
+    // the router move the doctor to the paywall. Read-only ends here too: they
+    // tried something that needs paying for.
+    ref.read(apiClientProvider).onPaymentRequired = () {
+      if (state.readOnly) state = state.copyWith(readOnly: false);
+      unawaited(refreshBilling());
+    };
     return const AuthState(AuthStage.unknown, null);
   }
 
@@ -147,6 +158,9 @@ class AuthNotifier extends Notifier<AuthState> {
     final user = state.user;
     if (user == null) return;
     final nextStage = await _resolveStageForRegisteredUser();
+    // Same guard as [_refreshBilling]: a sign-out (or another doctor signing
+    // in) while this was in flight wins.
+    if (state.user?.id != user.id || state.stage == AuthStage.signedOut) return;
     state = AuthState(nextStage, user);
   }
 
@@ -254,6 +268,13 @@ class AuthNotifier extends Notifier<AuthState> {
     final user = state.user;
     if (user == null) return;
     state = AuthState(await _resolveStageForRegisteredUser(), user);
+  }
+
+  /// "Read my messages" on the paywall. Only there: everyone else can already
+  /// read.
+  void enterReadOnly() {
+    if (state.stage != AuthStage.needsSubscription) return;
+    state = state.copyWith(readOnly: true);
   }
 
   /// Re-checks billing (and everything after it) once the doctor says they

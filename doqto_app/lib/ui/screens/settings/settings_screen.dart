@@ -99,13 +99,19 @@ class SettingsScreen extends ConsumerWidget {
               final billing = ref.watch(billingProvider).value;
               // Staff never pay: there is nothing to open for them.
               final staff = billing?.reason == 'staff';
+              final plan = billing?.plan == 'yearly'
+                  ? Strings.planYearly
+                  : Strings.planMonthly;
               return ListTile(
                 title: const Text(Strings.subscriptionRow),
                 subtitle: Text(switch (billing?.reason) {
+                  // Paid before the trial ran out: the plan is what matters
+                  // now, not a countdown to nothing.
+                  'trial' when const {'active', 'trialing'}
+                          .contains(billing!.status) =>
+                    plan,
                   'trial' => Strings.trialDaysLeft(billing!.trialDaysLeft),
-                  'subscribed' => billing!.plan == 'yearly'
-                      ? Strings.planYearly
-                      : Strings.planMonthly,
+                  'subscribed' => plan,
                   'grace' => Strings.subscriptionGrace,
                   'staff' => Strings.subscriptionStaff,
                   'expired' => Strings.subscriptionNone,

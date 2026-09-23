@@ -4,7 +4,7 @@ Date: 2026-09-22. Status: approved in chat, awaiting spec review.
 
 ## Goal
 
-Doctors pay for Doqto with a Stripe subscription: $29/month or $290/year.
+Doctors pay for Doqto with a Stripe subscription: $8.99/month or $80/year.
 Every doctor gets a 14-day free trial with no card. When the trial ends
 without a subscription, the app asks them to subscribe before they can send
 anything. Reading existing messages always keeps working.
@@ -171,7 +171,7 @@ New dependency: the official `stripe` Python package.
 
 ## Stripe setup (test mode first)
 
-- Product "Doqto" with two recurring prices: $29 monthly and $290 yearly, USD.
+- Product "Doqto" with two recurring prices: $8.99 monthly and $80 yearly, USD.
 - Webhook endpoint `https://api.doqto.ai/api/v1/billing/webhook`, subscribed
   to the four events above.
 - Customer Portal: allow cancel at period end, switching between the two

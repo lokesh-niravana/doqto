@@ -63,6 +63,16 @@ class Strings {
   static const String paywallCardBody =
       "Your last payment didn't go through. Your messages are safe and still "
       'readable — update your card to turn sending back on.';
+  // Android: no way to pay in the app, so no call to action and no website.
+  static const String planTrialStarts = 'Your 14-day free trial starts now.';
+  static const String paywallTitleNoCheckout = 'Subscription inactive';
+  static const String paywallBodyNoCheckout =
+      'Your free trial has ended. Your messages are safe and still readable. '
+      'Sending is paused while your subscription is inactive.';
+  static const String paywallCardBodyNoCheckout =
+      "Your subscription payment didn't go through. Your messages are safe "
+      'and still readable. Sending is paused while your subscription is '
+      'inactive.';
   static const String paywallPaid = 'I have already paid';
   static const String paywallUpdatePayment = 'Update payment method';
   static const String paywallReadMessages = 'Read my messages';
@@ -73,6 +83,7 @@ class Strings {
       'Couldn\'t open the payment page. Please try again.';
   static const String subscriptionRow = 'Subscription';
   static const String subscriptionGrace = 'Payment problem — update your card';
+  static const String subscriptionGraceNoCheckout = 'Payment problem';
   static const String subscriptionStaff = 'Staff account';
   static const String subscriptionNone = 'No subscription';
   static String planSaving(int percent, String perMonth) =>

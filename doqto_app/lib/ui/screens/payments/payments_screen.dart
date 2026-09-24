@@ -192,12 +192,14 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   @override
   Widget build(BuildContext context) {
     final billing = ref.watch(billingProvider).value ?? _fallback;
-    final plans = _plansFor(billing);
+    // Android: no plans, no prices, no way to pay (see webCheckoutProvider).
+    final web = ref.watch(webCheckoutProvider);
+    final plans = web ? _plansFor(billing) : const <_Plan>[];
     final cardProblem = _cardProblem.contains(billing.status);
 
     final actions = <Widget>[
       if (_paywall) ...[
-        if (cardProblem) ...[
+        if (web && cardProblem) ...[
           AppButton(
             label: Strings.paywallUpdatePayment,
             onPressed: _busy ? null : _updatePayment,
@@ -206,16 +208,18 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
           ),
           const SizedBox(height: AppSpacing.md),
         ],
-        AppButton(
-          label: Strings.planSubscribe,
-          variant: cardProblem
-              ? AppButtonVariant.secondary
-              : AppButtonVariant.primary,
-          onPressed: _busy ? null : _subscribe,
-          loading: _subscribing,
-          expand: true,
-        ),
-        const SizedBox(height: AppSpacing.sm),
+        if (web) ...[
+          AppButton(
+            label: Strings.planSubscribe,
+            variant: cardProblem
+                ? AppButtonVariant.secondary
+                : AppButtonVariant.primary,
+            onPressed: _busy ? null : _subscribe,
+            loading: _subscribing,
+            expand: true,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+        ],
         _checking
             ? const Center(
                 child: Padding(
@@ -237,22 +241,28 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
           loading: _loading,
           expand: true,
         ),
-        const SizedBox(height: AppSpacing.md),
-        AppButton(
-          label: Strings.planSubscribe,
-          variant: AppButtonVariant.secondary,
-          onPressed: _busy ? null : _subscribe,
-          loading: _subscribing,
-          expand: true,
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        _textButton(Strings.planSkip, _leave),
+        if (web) ...[
+          const SizedBox(height: AppSpacing.md),
+          AppButton(
+            label: Strings.planSubscribe,
+            variant: AppButtonVariant.secondary,
+            onPressed: _busy ? null : _subscribe,
+            loading: _subscribing,
+            expand: true,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          _textButton(Strings.planSkip, _leave),
+        ],
       ],
     ];
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_paywall ? Strings.paywallTitle : Strings.planTitle),
+        title: Text(!_paywall
+            ? Strings.planTitle
+            : web
+                ? Strings.paywallTitle
+                : Strings.paywallTitleNoCheckout),
         // The paywall is a stage, not a page: there is nothing to go back to.
         automaticallyImplyLeading: !_paywall,
       ),
@@ -270,11 +280,15 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                     FadeSlideIn.staggered(
                       0,
                       Text(
-                        !_paywall
-                            ? Strings.planSubtitle
-                            : cardProblem
-                                ? Strings.paywallCardBody
-                                : Strings.paywallBody,
+                        switch ((_paywall, web, cardProblem)) {
+                          (false, true, _) => Strings.planSubtitle,
+                          (false, false, _) => Strings.planTrialStarts,
+                          (true, true, true) => Strings.paywallCardBody,
+                          (true, true, false) => Strings.paywallBody,
+                          (true, false, true) =>
+                            Strings.paywallCardBodyNoCheckout,
+                          (true, false, false) => Strings.paywallBodyNoCheckout,
+                        },
                         style: AppText.body,
                       ),
                     ),

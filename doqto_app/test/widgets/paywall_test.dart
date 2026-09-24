@@ -8,6 +8,7 @@ import 'package:doqto_app/data/api/api_client.dart';
 import 'package:doqto_app/data/models/billing.dart';
 import 'package:doqto_app/data/repositories/billing_repository.dart';
 import 'package:doqto_app/data/services/url_opener.dart';
+import 'package:doqto_app/state/billing_state.dart';
 import 'package:doqto_app/ui/screens/payments/payments_screen.dart';
 import 'package:doqto_app/ui/screens/settings/settings_screen.dart';
 import 'package:doqto_app/ui/widgets/app_pressable.dart';
@@ -75,24 +76,27 @@ void main() {
     opener = FakeUrlOpener();
   });
 
-  Future<void> pump(WidgetTester tester, {PaymentsMode mode = PaymentsMode.paywall}) async {
+  Future<void> pump(WidgetTester tester,
+      {PaymentsMode mode = PaymentsMode.paywall, bool web = true}) async {
     await tester.binding.setSurfaceSize(const Size(800, 1600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(ProviderScope(
       overrides: [
         billingRepositoryProvider.overrideWithValue(billing),
         urlOpenerProvider.overrideWithValue(opener),
+        webCheckoutProvider.overrideWithValue(web),
       ],
       child: MaterialApp(home: PaymentsScreen(mode: mode)),
     ));
     await tester.pumpAndSettle();
   }
 
-  Future<void> pumpSettings(WidgetTester tester) async {
+  Future<void> pumpSettings(WidgetTester tester, {bool web = true}) async {
     await tester.pumpWidget(ProviderScope(
       overrides: [
         billingRepositoryProvider.overrideWithValue(billing),
         urlOpenerProvider.overrideWithValue(opener),
+        webCheckoutProvider.overrideWithValue(web),
       ],
       child: const MaterialApp(home: SettingsScreen()),
     ));
@@ -349,5 +353,63 @@ void main() {
 
     expect(find.text(Strings.planMonthly), findsOneWidget);
     expect(find.textContaining('Trial:'), findsNothing);
+  });
+
+  // Android (webCheckoutProvider false): Play forbids linking out to Stripe,
+  // so there is no way to pay and nothing pointing at one.
+  group('without web checkout', () {
+    for (final status in [null, 'past_due']) {
+      testWidgets('the paywall offers no way to pay (status: $status)',
+          (tester) async {
+        billing.value = Billing(
+          entitled: false,
+          reason: 'expired',
+          status: status,
+          monthlyCents: 899,
+          yearlyCents: 8000,
+        );
+        await pump(tester, web: false);
+
+        expect(find.text(Strings.planSubscribe), findsNothing);
+        expect(find.text(Strings.paywallUpdatePayment), findsNothing);
+        expect(find.text(Strings.paywallTitle), findsNothing);
+        expect(find.text(Strings.planMonthly), findsNothing);
+        expect(find.text(Strings.planYearly), findsNothing);
+        expect(find.textContaining('\$'), findsNothing);
+        expect(
+          find.text(status == null
+              ? Strings.paywallBodyNoCheckout
+              : Strings.paywallCardBodyNoCheckout),
+          findsOneWidget,
+        );
+        expect(find.text(Strings.paywallPaid), findsOneWidget);
+        expect(find.text(Strings.paywallReadMessages), findsOneWidget);
+        expect(find.text(Strings.paywallSignOut), findsOneWidget);
+      });
+    }
+
+    for (final status in [null, 'active']) {
+      testWidgets('the settings row opens nothing (status: $status)',
+          (tester) async {
+        billing.value = Billing(
+          entitled: true,
+          reason: status == null ? 'trial' : 'subscribed',
+          status: status,
+          plan: 'yearly',
+          monthlyCents: 899,
+          yearlyCents: 8000,
+          trialEndsAt: DateTime.now().toUtc().add(const Duration(days: 5)),
+        );
+        await pumpSettings(tester, web: false);
+
+        expect(find.byIcon(Icons.open_in_new), findsNothing);
+        await tester.tap(find.text(Strings.subscriptionRow));
+        await tester.pumpAndSettle();
+
+        expect(billing.checkouts, isEmpty);
+        expect(billing.portals, 0);
+        expect(opener.opened, isEmpty);
+      });
+    }
   });
 }

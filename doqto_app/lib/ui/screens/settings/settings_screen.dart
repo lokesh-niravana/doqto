@@ -97,8 +97,10 @@ class SettingsScreen extends ConsumerWidget {
             4,
             Consumer(builder: (context, ref, _) {
               final billing = ref.watch(billingProvider).value;
-              // Staff never pay: there is nothing to open for them.
-              final staff = billing?.reason == 'staff';
+              // Staff never pay: there is nothing to open for them. Nor on
+              // Android, which has no in-app way to pay (webCheckoutProvider).
+              final tappable = billing?.reason != 'staff' &&
+                  ref.watch(webCheckoutProvider);
               final plan = billing?.plan == 'yearly'
                   ? Strings.planYearly
                   : Strings.planMonthly;
@@ -112,14 +114,19 @@ class SettingsScreen extends ConsumerWidget {
                     plan,
                   'trial' => Strings.trialDaysLeft(billing!.trialDaysLeft),
                   'subscribed' => plan,
-                  'grace' => Strings.subscriptionGrace,
+                  'grace' => tappable
+                      ? Strings.subscriptionGrace
+                      : Strings.subscriptionGraceNoCheckout,
                   'staff' => Strings.subscriptionStaff,
                   'expired' => Strings.subscriptionNone,
                   _ => '—',
                 }),
-                trailing:
-                    staff ? null : const Icon(Icons.open_in_new, size: 18),
-                onTap: staff ? null : () => _openBilling(context, ref, billing),
+                trailing: tappable
+                    ? const Icon(Icons.open_in_new, size: 18)
+                    : null,
+                onTap: tappable
+                    ? () => _openBilling(context, ref, billing)
+                    : null,
               );
             }),
           ),

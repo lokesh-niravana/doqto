@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -56,3 +57,10 @@ class BillingNotifier extends AsyncNotifier<Billing?> {
 
 final billingProvider =
     AsyncNotifierProvider<BillingNotifier, Billing?>(BillingNotifier.new);
+
+/// Whether the app may send doctors to Stripe (checkout, portal) at all.
+/// Off on Android: Google Play forbids linking US users out to web payments
+/// unless the app joins Play's external content links program, which we
+/// haven't integrated. There the app shows billing status only — no way to
+/// pay, no link, no copy pointing at a website. Tests override it.
+final webCheckoutProvider = Provider<bool>((ref) => !Platform.isAndroid);

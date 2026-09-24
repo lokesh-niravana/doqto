@@ -16,6 +16,7 @@ import 'package:doqto_app/data/repositories/billing_repository.dart';
 import 'package:doqto_app/data/repositories/org_repository.dart';
 import 'package:doqto_app/data/services/push_token_provider.dart';
 import 'package:doqto_app/state/auth_state.dart';
+import 'package:doqto_app/state/billing_state.dart';
 import 'package:doqto_app/ui/screens/payments/payments_screen.dart';
 import 'package:doqto_app/ui/widgets/primary_button.dart';
 
@@ -112,8 +113,9 @@ void main() {
 
   /// Pumps the picker with the user parked on [AuthStage.needsPayment], which
   /// is exactly where registration leaves them.
-  Future<ProviderContainer> pump(WidgetTester tester) async {
+  Future<ProviderContainer> pump(WidgetTester tester, {bool web = true}) async {
     final container = ProviderContainer(overrides: [
+      webCheckoutProvider.overrideWithValue(web),
       orgRepositoryProvider.overrideWithValue(orgRepo),
       authRepositoryProvider.overrideWithValue(_FakeAuthRepository()),
       websocketClientProvider.overrideWithValue(ws),
@@ -234,5 +236,20 @@ void main() {
     await leave(tester, startTrial);
 
     expect(container.read(authProvider).stage, AuthStage.pendingVerification);
+  });
+
+  testWidgets('without web checkout (Android) only the trial is on offer',
+      (tester) async {
+    final container = await pump(tester, web: false);
+
+    expect(find.text(Strings.planTrialStarts), findsOneWidget);
+    expect(find.text(Strings.planSubscribe), findsNothing);
+    expect(find.text(Strings.planMonthly), findsNothing);
+    expect(find.text(Strings.planYearly), findsNothing);
+    expect(find.textContaining('\$'), findsNothing);
+
+    await leave(tester, startTrial);
+
+    expect(container.read(authProvider).stage, AuthStage.signedIn);
   });
 }

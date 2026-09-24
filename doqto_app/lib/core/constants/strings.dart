@@ -74,6 +74,7 @@ class Strings {
       'and still readable. Sending is paused while your subscription is '
       'inactive.';
   static const String paywallPaid = 'I have already paid';
+  static const String paywallRefreshStatus = 'Refresh status';
   static const String paywallUpdatePayment = 'Update payment method';
   static const String paywallReadMessages = 'Read my messages';
   static const String paywallSignOut = 'Sign out';

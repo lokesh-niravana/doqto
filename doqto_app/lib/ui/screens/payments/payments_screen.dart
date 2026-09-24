@@ -230,7 +230,10 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                   ),
                 ),
               )
-            : _textButton(Strings.paywallPaid, _checkPaid),
+            : _textButton(
+                web ? Strings.paywallPaid : Strings.paywallRefreshStatus,
+                _checkPaid,
+              ),
         // Never disabled: the ways off the paywall must not wait on a poll.
         _textButton(Strings.paywallReadMessages, _read, always: true),
         _textButton(Strings.paywallSignOut, _signOut, always: true),

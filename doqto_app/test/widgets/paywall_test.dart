@@ -382,7 +382,8 @@ void main() {
               : Strings.paywallCardBodyNoCheckout),
           findsOneWidget,
         );
-        expect(find.text(Strings.paywallPaid), findsOneWidget);
+        expect(find.text(Strings.paywallRefreshStatus), findsOneWidget);
+        expect(find.text(Strings.paywallPaid), findsNothing);
         expect(find.text(Strings.paywallReadMessages), findsOneWidget);
         expect(find.text(Strings.paywallSignOut), findsOneWidget);
       });

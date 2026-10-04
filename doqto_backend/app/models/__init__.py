@@ -12,6 +12,7 @@ from app.models.network import (
     Report,
 )
 from app.models.notification import Notification
+from app.models.org_directory import OrgDirectoryEntry, OrgDirectoryMember
 from app.models.organization import Organization, OrgMember
 from app.models.privacy import UserPrivacySettings
 from app.models.user import User
@@ -37,6 +38,8 @@ __all__ = [
     "Mute",
     "Notification",
     "Organization",
+    "OrgDirectoryEntry",
+    "OrgDirectoryMember",
     "OrgMember",
     "Report",
     "User",

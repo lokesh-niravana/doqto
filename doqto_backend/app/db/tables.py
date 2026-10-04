@@ -5,6 +5,10 @@ class Tables:
     ORGANIZATIONS = "organizations"
     USERS = "users"
     ORG_MEMBERS = "org_members"
+    # Public directory of US practices (CMS / NPPES), refreshed by
+    # scripts/import_org_directory.py
+    ORG_DIRECTORY = "org_directory"
+    ORG_DIRECTORY_MEMBERS = "org_directory_members"
     CONVERSATIONS = "conversations"
     CONVERSATION_MEMBERS = "conversation_members"
     DIRECT_CONVERSATION_KEYS = "direct_conversation_keys"

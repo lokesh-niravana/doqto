@@ -8,10 +8,12 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
     true,
 )
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
@@ -24,6 +26,15 @@ from app.db.tables import Tables
 
 class Organization(Base):
     __tablename__ = Tables.ORGANIZATIONS
+    __table_args__ = (
+        Index(
+            "uq_organizations_directory",
+            "directory_source",
+            "directory_id",
+            unique=True,
+            postgresql_where=text("directory_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
@@ -38,6 +49,10 @@ class Organization(Base):
         String(20), default=OrgStatus.PENDING, nullable=False, index=True
     )
     review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The public-directory entry this org was created from (org_directory),
+    # unique together so one practice can't be created twice.
+    directory_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    directory_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Networking policy (M0 substrate). Kill switch checked server-side on
     # every external path; changes are audit-logged (ORG_POLICY_CHANGED).
     external_networking_enabled: Mapped[bool] = mapped_column(

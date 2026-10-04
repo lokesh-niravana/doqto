@@ -26,6 +26,7 @@ from app.core.enums import (
     ConversationType,
     MessageType,
     OrgRole,
+    OrgStatus,
     WsEventServer,
 )
 from app.core.rate_limit import enforce_rate_limit
@@ -35,6 +36,7 @@ from app.models import (
     Conversation,
     ConversationMember,
     Message,
+    Organization,
     OrgMember,
     ScheduledMessage,
     User,
@@ -215,7 +217,13 @@ async def create_conversation(
         # the service); org_id passed here is ignored for direct.
         conv_org = None
     else:
-        # Group conversations keep the org gate + org ownership unchanged.
+        # Group conversations keep the org gate + org ownership unchanged,
+        # and wait for the org to be verified.
+        caller_org_status = await db.scalar(
+            select(Organization.status).where(Organization.id == caller_org)
+        )
+        if caller_org_status != OrgStatus.ACTIVE:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="org_not_verified")
         await _assert_users_in_org(caller_org, body.member_ids, db)
         conv_org = caller_org
         create_access = ConversationAccess.OPEN

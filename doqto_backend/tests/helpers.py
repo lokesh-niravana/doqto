@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import ACCESS_TOKEN_TTL_SECONDS
-from app.core.enums import ConversationType, JwtTokenType, OrgRole
+from app.core.enums import ConversationType, JwtTokenType, OrgRole, OrgStatus
 from app.core.redis_keys import session_key
 from app.core.security import create_token
 from app.db.redis import get_redis
@@ -59,8 +59,11 @@ async def create_user(
     return user
 
 
-async def create_org(db: AsyncSession, *, name: str = "Test Clinic") -> Organization:
-    org = Organization(name=name, invite_code=uuid.uuid4().hex[:9].upper())
+async def create_org(
+    db: AsyncSession, *, name: str = "Test Clinic", status: OrgStatus = OrgStatus.ACTIVE
+) -> Organization:
+    # Verified by default: most suites test what members do, not review.
+    org = Organization(name=name, invite_code=uuid.uuid4().hex[:9].upper(), status=status)
     db.add(org)
     await db.commit()
     await db.refresh(org)

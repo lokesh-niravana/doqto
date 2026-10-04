@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,9 @@ from app.db.redis import get_redis
 from app.models import OrgMember, Organization, User
 from app.schemas.common import OkResponse
 from app.schemas.organization import (
+    DirectoryEntryOut,
+    DirectoryOrgOut,
+    DirectoryRefIn,
     MemberOut,
     OrgCreateIn,
     OrgJoinIn,
@@ -27,9 +30,35 @@ from app.schemas.organization import (
 )
 from app.services.audit_service import AuditService
 from app.services.file_service import FileService
-from app.services.org_service import OrgError, OrgService
+from app.services.org_directory_service import DirectoryHit, OrgDirectoryService
+from app.services.org_service import ORG_ERROR_STATUS, OrgError, OrgService
 
 router = APIRouter()
+
+
+def _org_http_error(e: OrgError) -> HTTPException:
+    code = str(e)
+    return HTTPException(ORG_ERROR_STATUS.get(code, status.HTTP_400_BAD_REQUEST), detail=code)
+
+
+def _hit_out(hit: DirectoryHit) -> DirectoryEntryOut:
+    e = hit.entry
+    return DirectoryEntryOut(
+        source=e.source,
+        source_id=e.source_id,
+        name=e.display_name,
+        legal_name=e.name,
+        city=e.city,
+        state=e.state,
+        practice_type=e.practice_type,
+        member_count=e.member_count,
+        you_are_listed=hit.you_are_listed,
+        doqto_org=(
+            DirectoryOrgOut(id=hit.doqto_org.id, name=hit.doqto_org.name, status=hit.doqto_org.status)
+            if hit.doqto_org
+            else None
+        ),
+    )
 
 
 async def _to_out(org: Organization, db: AsyncSession) -> OrgOut:
@@ -53,10 +82,53 @@ async def create_org(
             city=body.city,
             state=body.state,
             practice_type=body.practice_type.value if body.practice_type else None,
+            directory_source=body.directory_source,
+            directory_id=body.directory_id,
             db=db,
         )
     except OrgError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        await db.rollback()
+        raise _org_http_error(e) from e
+    return await _to_out(org, db)
+
+
+# Directory routes sit above /{org_id} so "directory" is never read as an id.
+@router.get(ApiRoutes.ORGS_DIRECTORY_SEARCH, response_model=list[DirectoryEntryOut])
+async def search_directory(
+    q: str = Query(min_length=2, max_length=100),
+    state: str | None = Query(default=None, min_length=2, max_length=2),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[DirectoryEntryOut]:
+    await enforce_rate_limit(user.id, "org_directory_search", RATE_LIMIT_READS_PER_MINUTE)
+    hits = await OrgDirectoryService.search(db=db, query=q, state=state, npi=user.npi_number)
+    return [_hit_out(h) for h in hits]
+
+
+@router.get(ApiRoutes.ORGS_DIRECTORY_SUGGESTED, response_model=list[DirectoryEntryOut])
+async def suggested_directory(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[DirectoryEntryOut]:
+    hits = await OrgDirectoryService.suggested(db=db, npi=user.npi_number)
+    return [_hit_out(h) for h in hits]
+
+
+@router.post(ApiRoutes.ORGS_DIRECTORY_JOIN, response_model=OrgOut)
+async def join_by_directory(
+    body: DirectoryRefIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> OrgOut:
+    try:
+        org = await OrgService.join_by_directory(
+            user=user,
+            directory_source=body.directory_source,
+            directory_id=body.directory_id,
+            db=db,
+        )
+    except OrgError as e:
+        raise _org_http_error(e) from e
     return await _to_out(org, db)
 
 

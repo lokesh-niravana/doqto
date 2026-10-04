@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.ws_manager import ws_manager
 from app.core import constants
 from app.core.enums import (
+    OrgStatus,
     AuditAction,
     ConversationType,
     GroupInviteState,
@@ -37,6 +38,7 @@ from app.core.enums import (
 from app.core.permissions import can_add_to_group
 from app.core.rate_limit import enforce_rate_limit
 from app.models import (
+    Organization,
     Conversation,
     ConversationMember,
     Group,
@@ -200,6 +202,11 @@ class GroupService:
         )
         if (owned or 0) >= constants.GROUP_MAX_OWNED:
             raise GroupError("group_owner_limit", status_code=429)
+        if org_id is not None:
+            # Groups wait for the org to be verified.
+            org = await db.get(Organization, org_id)
+            if org is None or org.status != OrgStatus.ACTIVE:
+                raise GroupError("org_not_verified", status_code=403)
 
         # One transaction: conversation (network group) + group + owner as
         # group_member(owner) AND conversation_member (via create_conversation).

@@ -11,7 +11,7 @@ import '../../ui/screens/auth/registration_screen.dart';
 import '../../ui/screens/chat/chat_details_screen.dart';
 import '../../ui/screens/chat/chat_list_screen.dart';
 import '../../ui/screens/chat/chat_thread_screen.dart';
-import '../../ui/screens/chat/create_group_screen.dart';
+import '../../ui/screens/chat/new_message_screen.dart';
 import '../../ui/screens/groups/create_group_flow_screen.dart';
 import '../../ui/screens/groups/group_detail_screen.dart';
 import '../../ui/screens/groups/groups_tab_screen.dart';
@@ -51,7 +51,7 @@ class AppRoutes {
   // Put NEW-group under a distinct prefix so it never collides with
   // `/chat/:id`. The colon segment of a UUID would otherwise happily
   // swallow "create-group".
-  static const createGroup = '/new-group';
+  static const newMessage = '/new-message';
   static String chat(String convId) => '/chat/$convId';
   static String chatDetails(String convId) => '/chat/$convId/details';
   static const myOrg = '/my-org';
@@ -174,9 +174,9 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, s) => const CreateGroupFlowScreen(),
       ),
       GoRoute(
-        path: AppRoutes.createGroup,
+        path: AppRoutes.newMessage,
         parentNavigatorKey: rootNavigatorKey,
-        builder: (_, s) => const CreateGroupScreen(),
+        builder: (_, s) => const NewMessageScreen(),
       ),
 
       // --- The 4-tab shell (indexed stack, per-branch state preserved) ---

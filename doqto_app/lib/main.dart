@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
@@ -33,6 +34,20 @@ Future<void> main() async {
   }
   // Remote push: config comes from GoogleService-Info.plist / google-services.json.
   await Firebase.initializeApp();
+  // Emulators and sideloaded APKs fail Play Integrity, so local builds can opt
+  // out of app verification. With it on, ONLY Firebase's fictional test
+  // numbers (e.g. the demo login) work; real numbers fail with "missing a valid
+  // app identifier". Release builds ignore it.
+  if (!kReleaseMode &&
+      const bool.fromEnvironment('FIREBASE_TEST_NUMBERS')) {
+    await FirebaseAuth.instance
+        .setSettings(appVerificationDisabledForTesting: true);
+  }
+  // Real numbers on an emulator: skip Play Integrity (it never vouches for a
+  // sideloaded APK) and go straight to the reCAPTCHA check.
+  if (!kReleaseMode && const bool.fromEnvironment('FIREBASE_FORCE_RECAPTCHA')) {
+    await FirebaseAuth.instance.setSettings(forceRecaptchaFlow: true);
+  }
   FirebaseMessaging.onBackgroundMessage(_onBackgroundPush);
   await Hive.initFlutter();
   // H1: boxes hold PHI (message text, transcripts, cached history) — AES-256

@@ -146,6 +146,11 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                 style: AppText.display.copyWith(fontSize: 28),
               ),
               actions: [
+                IconButton(
+                  tooltip: 'New message',
+                  onPressed: () => context.push(AppRoutes.newMessage),
+                  icon: const Icon(Icons.edit_square, color: AppColors.medBlue),
+                ),
                 if (user != null)
                   Padding(
                     padding: const EdgeInsets.only(right: AppSpacing.sm),
@@ -255,7 +260,7 @@ class _ConversationList extends ConsumerWidget {
                       subtitle:
                           'Message a colleague or start a group to get going.',
                       actionLabel: 'Start a conversation',
-                      onAction: () => context.push(AppRoutes.createGroup),
+                      onAction: () => context.push(AppRoutes.newMessage),
                     ),
                   ],
                 )

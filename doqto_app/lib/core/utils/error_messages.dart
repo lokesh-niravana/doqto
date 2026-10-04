@@ -77,7 +77,11 @@ class ErrorMessages {
     'directory_entry_not_found':
         'We couldn\'t find that practice. Enter it yourself instead.',
     'user_not_in_any_org':
-        'Join or create an organization before starting a chat.',
+        'Group chats need an organization. Join or create one first.',
+    'user_unavailable': 'This doctor can\'t be messaged right now.',
+    'not_reachable': 'This doctor isn\'t accepting messages right now.',
+    'network_dm_disabled':
+        'Messaging doctors outside your organization isn\'t available yet.',
 
     // Conversations / messages
     'conversation_not_found': 'This conversation no longer exists.',

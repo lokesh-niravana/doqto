@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/di/providers.dart';
+import '../core/enums/app_enums.dart';
 import '../data/models/organization.dart';
 
 class OrgState {
@@ -25,7 +26,14 @@ class OrgNotifier extends Notifier<OrgState> {
     state = const OrgState();
   }
 
-  Future<Organization> createOrg({required String name, String? address, String? city, String? state}) async {
+  Future<Organization> createOrg({
+    required String name,
+    String? address,
+    String? city,
+    String? state,
+    PracticeType? practiceType,
+    DirectoryEntry? from,
+  }) async {
     this.state = this.state.copyWith(loading: true, error: null);
     try {
       final org = await ref.read(orgRepositoryProvider).create(
@@ -33,6 +41,8 @@ class OrgNotifier extends Notifier<OrgState> {
             address: address,
             city: city,
             state: state,
+            practiceType: practiceType,
+            from: from,
           );
       this.state = OrgState(current: org);
       return org;
@@ -52,6 +62,12 @@ class OrgNotifier extends Notifier<OrgState> {
       state = state.copyWith(loading: false, error: e.toString());
       rethrow;
     }
+  }
+
+  Future<Organization> joinByDirectory(DirectoryEntry entry) async {
+    final org = await ref.read(orgRepositoryProvider).joinByDirectory(entry);
+    state = OrgState(current: org);
+    return org;
   }
 
   Future<void> refreshMembers() async {

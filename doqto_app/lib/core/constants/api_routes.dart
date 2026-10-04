@@ -22,6 +22,9 @@ class ApiRoutes {
   static const String orgs = '$apiV1/orgs';
   static const String orgsJoin = '$apiV1/orgs/join';
   static const String orgsMine = '$apiV1/orgs/mine';
+  static const String orgsDirectorySearch = '$apiV1/orgs/directory/search';
+  static const String orgsDirectorySuggested = '$apiV1/orgs/directory/suggested';
+  static const String orgsDirectoryJoin = '$apiV1/orgs/directory/join';
   static String orgDetail(String id) => '$apiV1/orgs/$id';
   static String orgMembers(String id) => '$apiV1/orgs/$id/members';
   static String orgMember(String orgId, String userId) =>

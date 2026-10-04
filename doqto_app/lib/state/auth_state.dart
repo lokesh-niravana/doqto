@@ -130,20 +130,23 @@ class AuthNotifier extends Notifier<AuthState> {
       // chats loads without one. Joining an org later comes back through here
       // and connects the socket then.
       if (orgs.isEmpty) return AuthStage.signedIn;
-      // Pick the most recently created org as "current". Users with multiple
-      // orgs can switch in a later release.
-      final org = orgs.first;
+      // An org adds to an account; it never gates it. A pending org (just
+      // created, waiting for review) shows as pending on My Org, and chats
+      // and connections keep working. Current org: the newest verified one,
+      // else the newest pending one. Users with several orgs can switch in a
+      // later release.
+      final org = orgs.firstWhere(
+        (o) => o.status == OrgStatus.active,
+        orElse: () => orgs.firstWhere(
+          (o) => o.status == OrgStatus.pending,
+          orElse: () => orgs.first,
+        ),
+      );
       ref.read(orgProvider.notifier).setCurrent(org);
-      final stage = switch (org.status) {
-        OrgStatus.active => AuthStage.signedIn,
-        OrgStatus.pending || OrgStatus.suspended => AuthStage.pendingVerification,
-      };
-      if (stage == AuthStage.signedIn) {
-        await _connectWs(org.id);
-        // Fire-and-forget: push registration must never block sign-in.
-        unawaited(_syncPushToken());
-      }
-      return stage;
+      await _connectWs(org.id);
+      // Fire-and-forget: push registration must never block sign-in.
+      unawaited(_syncPushToken());
+      return AuthStage.signedIn;
     } catch (_) {
       // If we can't reach the backend right now, assume needs-org so the user
       // isn't stuck on a broken chats screen.

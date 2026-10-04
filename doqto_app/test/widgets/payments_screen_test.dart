@@ -228,14 +228,16 @@ void main() {
     expect(ws.connects, 1, reason: 'an active org gets the realtime socket');
   });
 
-  testWidgets('an org still under review lands on the pending screen',
+  testWidgets('an org still under review does not lock the app',
       (tester) async {
     orgRepo = _FakeOrgRepository([_org(OrgStatus.pending)]);
     final container = await pump(tester);
 
     await leave(tester, startTrial);
 
-    expect(container.read(authProvider).stage, AuthStage.pendingVerification);
+    // A pending org is a state of the org, not of the account.
+    expect(container.read(authProvider).stage, AuthStage.signedIn);
+    expect(ws.connects, 1);
   });
 
   testWidgets('without web checkout (Android) only the trial is on offer',

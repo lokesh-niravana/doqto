@@ -13,6 +13,7 @@ class OrgRepository {
     String? city,
     String? state,
     PracticeType? practiceType,
+    DirectoryEntry? from,
   }) async {
     final j = await _api.post(ApiRoutes.orgs, body: {
       'name': name,
@@ -20,6 +21,29 @@ class OrgRepository {
       'city': city,
       'state': state,
       'practice_type': practiceType?.wire,
+      'directory_source': ?from?.source,
+      'directory_id': ?from?.sourceId,
+    });
+    return Organization.fromJson(j);
+  }
+
+  Future<List<DirectoryEntry>> searchDirectory(String query, {String? state}) async {
+    final list = await _api.getList(ApiRoutes.orgsDirectorySearch,
+        query: {'q': query, 'state': ?state});
+    return list.map((e) => DirectoryEntry.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  /// Practices the public data lists this doctor's NPI under.
+  Future<List<DirectoryEntry>> suggestedDirectory() async {
+    final list = await _api.getList(ApiRoutes.orgsDirectorySuggested);
+    return list.map((e) => DirectoryEntry.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  /// Join the Doqto org made from [entry]; allowed when your NPI is listed.
+  Future<Organization> joinByDirectory(DirectoryEntry entry) async {
+    final j = await _api.post(ApiRoutes.orgsDirectoryJoin, body: {
+      'directory_source': entry.source,
+      'directory_id': entry.sourceId,
     });
     return Organization.fromJson(j);
   }

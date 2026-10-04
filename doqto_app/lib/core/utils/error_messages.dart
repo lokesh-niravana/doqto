@@ -67,6 +67,15 @@ class ErrorMessages {
     'super_admin_required':
         'This action is restricted to platform administrators.',
     'org_admin_required': 'Only an org admin can perform this action.',
+    'org_pending_exists':
+        'You already have an organization waiting for verification.',
+    'org_exists':
+        'That practice is already on Doqto. Ask a member for the invite code.',
+    'npi_not_listed':
+        'Your NPI isn\'t listed with that practice. Ask a member for the invite code.',
+    'org_not_verified': 'Groups open once your organization is verified.',
+    'directory_entry_not_found':
+        'We couldn\'t find that practice. Enter it yourself instead.',
     'user_not_in_any_org':
         'Join or create an organization before starting a chat.',
 

@@ -339,10 +339,13 @@ final routerProvider = Provider<GoRouter>((ref) {
         return AppRoutes.pending;
       }
       // Signed-in user shouldn't be stuck on the pending screen or any of the
-      // pre-auth / org-onboarding flows. Push them to chats.
+      // pre-auth / onboarding flows. Push them to chats. Creating or joining
+      // an org is something a signed-in doctor does from My Org, so those
+      // two stay open.
+      final orgAction = loc == AppRoutes.createOrg || loc == AppRoutes.joinOrg;
       if (auth.stage == AuthStage.signedIn &&
           (inAuthFlow ||
-              inOrgFlow ||
+              (inOrgFlow && !orgAction) ||
               loc == AppRoutes.payments ||
               loc == AppRoutes.paywall)) {
         return AppRoutes.chats;

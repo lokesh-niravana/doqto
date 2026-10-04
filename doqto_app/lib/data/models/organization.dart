@@ -45,6 +45,58 @@ class Organization {
       );
 }
 
+/// One organization-lookup result: a practice from the public directory
+/// (Medicare groups, hospitals, NPI Registry). [doqtoOrgId] is set when the
+/// practice is already on Doqto — then the user joins instead of creating.
+class DirectoryEntry {
+  final String source;
+  final String sourceId;
+  final String name;
+  final String? city;
+  final String? state;
+  final PracticeType practiceType;
+  final int? memberCount;
+  final bool youAreListed;
+  final String? doqtoOrgId;
+  final String? doqtoOrgName;
+
+  const DirectoryEntry({
+    required this.source,
+    required this.sourceId,
+    required this.name,
+    this.city,
+    this.state,
+    required this.practiceType,
+    this.memberCount,
+    this.youAreListed = false,
+    this.doqtoOrgId,
+    this.doqtoOrgName,
+  });
+
+  bool get onDoqto => doqtoOrgId != null;
+
+  String get place => [city, state].whereType<String>().join(', ');
+
+  factory DirectoryEntry.fromJson(Map<String, dynamic> j) {
+    final org = j['doqto_org'] as Map<String, dynamic>?;
+    return DirectoryEntry(
+      source: j['source'] as String,
+      sourceId: j['source_id'] as String,
+      name: j['name'] as String,
+      city: j['city'] as String?,
+      state: j['state'] as String?,
+      practiceType: PracticeType.values.firstWhere(
+        (t) => t.wire == j['practice_type'],
+        orElse: () => PracticeType.independent,
+      ),
+      memberCount: j['member_count'] as int?,
+      youAreListed: (j['you_are_listed'] ?? false) as bool,
+      doqtoOrgId: org?['id'] as String?,
+      doqtoOrgName: org?['name'] as String?,
+    );
+  }
+}
+
 // Flat member shape — the API returns only minimum-necessary fields
 // (no phone/email/NPI) per HIPAA minimum-necessary.
 class OrgMember {

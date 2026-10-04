@@ -32,6 +32,41 @@ proves nothing. Only the App Store submission exercises the validator.
   uses Xcode-beta for the upload. If export fails with "Failed to Use
   Accounts", sign in again in Xcode-beta → Settings → Accounts.
 
+## Moving to the DOQTO LLC team (branch `ios-org-team`)
+
+App Review rejected 1.0 under 5.1.1(ix): a medical app needs an organization
+account. Apple would not convert the individual team (case 102974682902), so
+DOQTO LLC enrolled separately (enrollment `4Y88NV2RKY`, 2026-10-04). The app
+cannot be transferred, because Apple only transfers apps that have been released.
+`com.doqto.doqtoApp` cannot be reused either, because builds were uploaded
+under it. iOS therefore starts over as **`com.doqto.ios`** on the new team. Android
+(`com.doqto.app`) is unaffected.
+
+Done on the branch: `PRODUCT_BUNDLE_IDENTIFIER` is `com.doqto.ios`.
+
+Once the org team is approved and lokesh@doqto.ai is an Admin on it:
+
+1. **Team ID.** Replace `GBM6D48UJZ` in `project.pbxproj` (3×),
+   `scripts/ios_release.sh` and `scripts/ios_patch_and_upload.sh`, then sign
+   Xcode-beta into the new team.
+2. **App ID** `com.doqto.ios` with Push Notifications and Sign in with Apple.
+   Automatic signing creates it on the first archive; confirm both
+   capabilities are on.
+3. **Firebase** (project `doqto-90684`): add an iOS app `com.doqto.ios`.
+   - Download its `GoogleService-Info.plist` over `ios/Runner/`.
+   - Copy its `REVERSED_CLIENT_ID` into the `google-signin` URL scheme in
+     `ios/Runner/Info.plist`.
+   - Upload a new APNs key from the new team (Cloud Messaging → Apple app
+     config). Key `YWRP5W2MHQ` belongs to the old team.
+   - Delete the old `com.doqto.doqtoApp` app only after the switch has shipped.
+4. **App Store Connect:** create the app "Doqto", bundle `com.doqto.ios`. To
+   free the name, first remove app `6802418904` from the old team. Then set up
+   the listing, privacy answers, US availability, demo login and the Stripe
+   note, upload a build, and add TestFlight testers. They get a new invite link.
+5. **Apple sign-in users** get a new Apple user ID under a new team, so they
+   appear as new users. Their phone number still adopts the existing account.
+6. Update the account facts above, merge, and release.
+
 ## Procedure
 
 ### 1. Code ready on `revamp`

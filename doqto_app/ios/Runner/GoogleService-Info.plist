@@ -3,9 +3,11 @@
 <plist version="1.0">
 <dict>
 	<key>CLIENT_ID</key>
-	<string>877848716365-994933avmd8jc7792f3t72lvt0hsoroq.apps.googleusercontent.com</string>
+	<string>877848716365-hv40uhirlbuu9kiero392diaqiv4d0lf.apps.googleusercontent.com</string>
 	<key>REVERSED_CLIENT_ID</key>
-	<string>com.googleusercontent.apps.877848716365-994933avmd8jc7792f3t72lvt0hsoroq</string>
+	<string>com.googleusercontent.apps.877848716365-hv40uhirlbuu9kiero392diaqiv4d0lf</string>
+	<key>ANDROID_CLIENT_ID</key>
+	<string>877848716365-7bktlki2jtur2pco4gh2fnvqna5rhi4p.apps.googleusercontent.com</string>
 	<key>API_KEY</key>
 	<string>AIzaSyBH__a7U2KmPgR1oP3DuKUo8IdVtoZCzZ0</string>
 	<key>GCM_SENDER_ID</key>
@@ -13,7 +15,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.doqto.doqtoApp</string>
+	<string>com.doqto.ios</string>
 	<key>PROJECT_ID</key>
 	<string>doqto-90684</string>
 	<key>STORAGE_BUCKET</key>
@@ -29,6 +31,6 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:877848716365:ios:25769c10f0d4d1fa7c2804</string>
+	<string>1:877848716365:ios:63536c45ed0488087c2804</string>
 </dict>
 </plist>

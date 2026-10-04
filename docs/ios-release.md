@@ -42,7 +42,7 @@ cannot be transferred, because Apple only transfers apps that have been released
 under it. iOS therefore starts over as **`com.doqto.ios`** on the new team. Android
 (`com.doqto.app`) is unaffected.
 
-Done on the branch: `PRODUCT_BUNDLE_IDENTIFIER` is `com.doqto.ios`.
+Done on the branch: `PRODUCT_BUNDLE_IDENTIFIER` is `com.doqto.ios`, and Firebase is configured for it (step 3).
 
 Once the org team is approved and lokesh@doqto.ai is an Admin on it:
 
@@ -52,12 +52,14 @@ Once the org team is approved and lokesh@doqto.ai is an Admin on it:
 2. **App ID** `com.doqto.ios` with Push Notifications and Sign in with Apple.
    Automatic signing creates it on the first archive; confirm both
    capabilities are on.
-3. **Firebase** (project `doqto-90684`): add an iOS app `com.doqto.ios`.
-   - Download its `GoogleService-Info.plist` over `ios/Runner/`.
-   - Copy its `REVERSED_CLIENT_ID` into the `google-signin` URL scheme in
-     `ios/Runner/Info.plist`.
-   - Upload a new APNs key from the new team (Cloud Messaging → Apple app
+3. **Firebase** (project `doqto-90684`): the iOS app `com.doqto.ios` is
+   registered as "Doqto iOS (DOQTO LLC)", app ID
+   `1:877848716365:ios:63536c45ed0488087c2804`, with its own Google iOS client.
+   Its `GoogleService-Info.plist` and `google-signin` URL scheme are already on
+   the branch. Still to do:
+   - Upload an APNs key from the new team (Cloud Messaging → Apple app
      config). Key `YWRP5W2MHQ` belongs to the old team.
+   - Set the Team ID on the Firebase app.
    - Delete the old `com.doqto.doqtoApp` app only after the switch has shipped.
 4. **App Store Connect:** create the app "Doqto", bundle `com.doqto.ios`. To
    free the name, first remove app `6802418904` from the old team. Then set up

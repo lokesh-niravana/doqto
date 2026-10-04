@@ -1,7 +1,8 @@
 # Create an organization, and messaging without one
 
 Status: part 1 **built** (2026-10-04, with the lookup from
-`2026-10-04-org-lookup-research.md`); part 2 is next.
+`2026-10-04-org-lookup-research.md`); part 2 **built** (2026-10-05), together
+with the New message picker (design: https://claude.ai/artifact/N5RdNSUp2vYBnCxLU9Dpj7).
 
 Decisions taken (owner: "go with your recommendations"):
 - Groups wait for verification: 403 `org_not_verified`.
@@ -202,9 +203,21 @@ The backend socket already accepts users with no org (`websocket.py:62-81`).
    Terraform sets it to true, but with no shared org the flag decides, so if it
    is false users with no org still can't start DMs.
 
+### Also: Start a conversation opened the group creator
+
+Chats → **Start a conversation** pushed `/new-group`, a group-only screen
+listing org members. It is replaced by **New message**
+(`new_message_screen.dart`, route `/new-message`), modelled on WhatsApp:
+connections first, then colleagues (each person once), search, **New group**
+only for a verified org, **Find doctors on Doqto**, and an empty state. Tapping
+a person opens the existing direct chat or creates one, replacing the picker so
+back returns to Chats. The Chats header gained a compose button to the same
+screen. The old `create_group_screen.dart` is deleted; groups are created from
+the Groups tab flow.
+
 ### Tests
 
-- Backend:
+- Backend (`tests/test_dm_without_org.py`):
   - a user with no org and an accepted connection: create a DM gives 201, and
     sending works
   - with no connection, it gives 403 `not_connected`

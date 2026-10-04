@@ -14,9 +14,10 @@ A living list. Update it as items close. Last updated 2026-10-04.
    Organization lookup research (CMS group, hospital and NPPES data):
    `docs/superpowers/specs/2026-10-04-org-lookup-research.md`. Decide this
    before finalising the create flow.
-2. **Users with no org can't message connections.** Remove the org gate from
-   direct-message creation, and add the socket and push for users with no org.
-   Same spec, part 2. **After 1.**
+2. **Users with no org can't message connections: built, not yet deployed.**
+   The org gate now applies to groups only, and Chats → Start a conversation
+   opens the New message picker. Same spec, part 2. Needs the backend deploy
+   and a new app build.
 
 ## Waiting on others
 

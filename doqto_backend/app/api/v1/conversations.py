@@ -187,13 +187,8 @@ async def create_conversation(
     user: User = Depends(require_entitled),
     db: AsyncSession = Depends(get_db),
 ) -> ConversationOut:
-    # Use caller's org. For MVP, use the first org the caller belongs to.
-    caller_org = await db.scalar(
-        select(OrgMember.org_id).where(OrgMember.user_id == user.id).limit(1)
-    )
-    if caller_org is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="user_not_in_any_org")
-
+    # Direct messages never need an org: who can reach whom is decided by the
+    # permission module below (colleague or connection). Only groups use one.
     if body.type == ConversationType.DIRECT and len(body.member_ids) == 1:
         # M3: the central permission module (A4) decides reachability — this
         # REPLACES the old org-membership gate for direct conversations. Same-org
@@ -217,12 +212,19 @@ async def create_conversation(
         # the service); org_id passed here is ignored for direct.
         conv_org = None
     else:
-        # Group conversations keep the org gate + org ownership unchanged,
-        # and wait for the org to be verified.
-        caller_org_status = await db.scalar(
-            select(Organization.status).where(Organization.id == caller_org)
-        )
-        if caller_org_status != OrgStatus.ACTIVE:
+        # Groups belong to an org and wait for it to be verified. A doctor in
+        # an active org and a pending one gets the active one.
+        orgs = (
+            await db.execute(
+                select(OrgMember.org_id, Organization.status)
+                .join(Organization, Organization.id == OrgMember.org_id)
+                .where(OrgMember.user_id == user.id)
+            )
+        ).all()
+        if not orgs:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="user_not_in_any_org")
+        caller_org = next((o for o, st in orgs if st == OrgStatus.ACTIVE), None)
+        if caller_org is None:
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="org_not_verified")
         await _assert_users_in_org(caller_org, body.member_ids, db)
         conv_org = caller_org

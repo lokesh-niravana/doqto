@@ -1,6 +1,6 @@
 # Next steps
 
-A living list. Update it as items close. Last updated 2026-10-04.
+A living list. Update it as items close. Last updated 2026-10-05.
 
 ## Now: bugs
 
@@ -14,10 +14,9 @@ A living list. Update it as items close. Last updated 2026-10-04.
    Organization lookup research (CMS group, hospital and NPPES data):
    `docs/superpowers/specs/2026-10-04-org-lookup-research.md`. Decide this
    before finalising the create flow.
-2. **Users with no org can't message connections: built, not yet deployed.**
-   The org gate now applies to groups only, and Chats → Start a conversation
-   opens the New message picker. Same spec, part 2. Needs the backend deploy
-   and a new app build.
+2. **Users with no org can't message connections: fixed.** The org gate now
+   applies to groups only (backend deployed 2026-10-05), and Chats → Start a
+   conversation opens the New message picker (app build 34). Same spec, part 2.
 
 ## Waiting on others
 

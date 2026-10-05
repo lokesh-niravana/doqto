@@ -34,6 +34,19 @@ class NetworkRepository {
     return _page(j, PersonCard.fromJson);
   }
 
+  // --- Recommended for you ---
+
+  Future<CursorPage<PersonCard>> suggestions({String? cursor, int? limit}) async {
+    final j = await _api.get(ApiRoutes.suggestions, query: {
+      'cursor': ?cursor,
+      'limit': ?limit,
+    });
+    return _page(j, PersonCard.fromJson);
+  }
+
+  Future<void> dismissSuggestion(String userId) =>
+      _api.post(ApiRoutes.suggestionDismiss(userId));
+
   // --- Invitations ---
 
   Future<Invitation> sendInvitation(String recipientId, {String? message}) async {

@@ -18,17 +18,22 @@ class PersonCardRow extends StatelessWidget {
   /// message ghost icon). When null, the degree badge is shown (if any).
   final Widget? trailing;
 
+  /// Replaces the headline/specialty line (e.g. why a doctor is suggested).
+  final String? subtitle;
+
   const PersonCardRow({
     super.key,
     required this.person,
     this.onTap,
     this.onLongPress,
     this.trailing,
+    this.subtitle,
   });
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = _firstNonEmpty([person.headline, person.specialty]);
+    final subtitle =
+        this.subtitle ?? _firstNonEmpty([person.headline, person.specialty]);
     final row = MemberRow(
       avatar: DoctorAvatar(
         initials: person.initials,

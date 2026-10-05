@@ -152,6 +152,10 @@ class PersonCard {
   final ConnectionDegree degree;
   final int mutualCount;
 
+  /// Suggestions only: why they're suggested (colleague, mutual,
+  /// specialty_nearby, specialty, nearby, new_member).
+  final String? reason;
+
   const PersonCard({
     required this.id,
     required this.fullName,
@@ -163,6 +167,7 @@ class PersonCard {
     required this.avatarPresignedUrl,
     required this.degree,
     required this.mutualCount,
+    this.reason,
   });
 
   factory PersonCard.fromJson(Map<String, dynamic> j) => PersonCard(
@@ -178,6 +183,7 @@ class PersonCard {
         avatarPresignedUrl: j['avatar_presigned_url'] as String?,
         degree: ConnectionDegree.fromWire(j['degree'] as String?),
         mutualCount: (j['mutual_count'] as num?)?.toInt() ?? 0,
+        reason: j['reason'] as String?,
       );
 
   String get initials => initialsOf(fullName);

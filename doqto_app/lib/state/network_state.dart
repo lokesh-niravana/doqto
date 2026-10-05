@@ -294,3 +294,34 @@ final invitablePeopleProvider =
     ..sort((a, b) => a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()));
   return all;
 });
+
+/// "Recommended for you": doctors you probably know, best first. One fetch of
+/// up to 50 serves both the Network tab preview and the See all screen.
+class SuggestionsNotifier extends AsyncNotifier<List<PersonCard>> {
+  static const limit = 50;
+
+  @override
+  Future<List<PersonCard>> build() async =>
+      (await ref.read(networkRepositoryProvider).suggestions(limit: limit)).data;
+
+  Future<void> refresh() async {
+    state = await AsyncValue.guard(build);
+  }
+
+  /// Hide for good. Optimistic: the card goes now, and comes back if the
+  /// server refuses.
+  Future<void> dismiss(String userId) async {
+    final before = state.value ?? const <PersonCard>[];
+    state = AsyncData([for (final p in before) if (p.id != userId) p]);
+    try {
+      await ref.read(networkRepositoryProvider).dismissSuggestion(userId);
+    } catch (_) {
+      state = AsyncData(before);
+      rethrow;
+    }
+  }
+}
+
+final suggestionsProvider =
+    AsyncNotifierProvider<SuggestionsNotifier, List<PersonCard>>(
+        SuggestionsNotifier.new);

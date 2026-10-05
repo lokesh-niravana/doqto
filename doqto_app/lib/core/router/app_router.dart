@@ -18,6 +18,7 @@ import '../../ui/screens/groups/groups_tab_screen.dart';
 import '../../ui/screens/home/main_shell.dart';
 import '../../ui/screens/my_org/my_org_screen.dart';
 import '../../ui/screens/network/connections_screen.dart';
+import '../../ui/screens/network/suggestions_screen.dart';
 import '../../ui/screens/network/invitations_screen.dart';
 import '../../ui/screens/network/network_tab_screen.dart';
 import '../../ui/screens/org/create_org_screen.dart';
@@ -59,6 +60,7 @@ class AppRoutes {
   static const network = '/network';
   static const networkInvitations = '/network/invitations';
   static const networkConnections = '/network/connections';
+  static const networkSuggestions = '/network/suggestions';
   // People search (M3) — pushed full-screen over the shell.
   static const peopleSearch = '/people/search';
   // Groups branch (M5). Detail/create/requests live INSIDE the branch so tab
@@ -211,6 +213,10 @@ final routerProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: AppRoutes.networkConnections,
                 builder: (_, s) => const ConnectionsScreen(),
+              ),
+              GoRoute(
+                path: AppRoutes.networkSuggestions,
+                builder: (_, s) => const SuggestionsScreen(),
               ),
             ],
           ),

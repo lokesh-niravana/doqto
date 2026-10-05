@@ -79,6 +79,9 @@ class ApiRoutes {
   static String block(String userId) => '$apiV1/network/blocks/$userId';
   static const String blocks = '$apiV1/network/blocks';
   static const String reports = '$apiV1/network/reports';
+  static const String suggestions = '$apiV1/network/suggestions';
+  static String suggestionDismiss(String userId) =>
+      '$apiV1/network/suggestions/$userId/dismiss';
 
   // Privacy settings (M1)
   static const String usersMePrivacy = '$apiV1/users/me/privacy';

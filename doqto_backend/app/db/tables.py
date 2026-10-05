@@ -25,6 +25,7 @@ class Tables:
     CONNECTION_REMOVALS = "connection_removals"
     BLOCKS = "blocks"
     MUTES = "mutes"
+    SUGGESTION_DISMISSALS = "suggestion_dismissals"
     REPORTS = "reports"
     USER_PRIVACY_SETTINGS = "user_privacy_settings"
     NOTIFICATIONS = "notifications"

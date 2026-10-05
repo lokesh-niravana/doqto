@@ -47,6 +47,9 @@ class PersonCardOut(BaseModel):
     avatar_presigned_url: str | None = None
     degree: DegreeLabel
     mutual_count: int = 0
+    # Suggestions only: why this doctor is suggested. colleague | mutual |
+    # specialty_nearby | specialty | nearby | new_member.
+    reason: str | None = None
 
 
 class PeopleSearchPage(BaseModel):

@@ -60,6 +60,8 @@ class ApiRoutes:
     NETWORK_MUTES = "/mutes"
     NETWORK_MUTE_DETAIL = "/mutes/{user_id}"
     NETWORK_REPORTS = "/reports"
+    NETWORK_SUGGESTIONS = "/suggestions"
+    NETWORK_SUGGESTION_DISMISS = "/suggestions/{user_id}/dismiss"
 
     # Notifications (M1)
     NOTIFICATIONS_LIST = ""

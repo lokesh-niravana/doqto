@@ -9,6 +9,7 @@ from app.models.network import (
     ConnectionInvitation,
     ConnectionRemoval,
     Mute,
+    SuggestionDismissal,
     Report,
 )
 from app.models.notification import Notification
@@ -36,6 +37,7 @@ __all__ = [
     "MessageReceipt",
     "ScheduledMessage",
     "Mute",
+    "SuggestionDismissal",
     "Notification",
     "Organization",
     "OrgDirectoryEntry",

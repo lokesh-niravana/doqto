@@ -162,6 +162,26 @@ class Mute(Base):
     )
 
 
+class SuggestionDismissal(Base):
+    """A doctor the viewer hid from "Recommended for you", for good."""
+
+    __tablename__ = Tables.SUGGESTION_DISMISSALS
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.USERS}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    dismissed_user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.USERS}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class Report(Base):
     __tablename__ = Tables.REPORTS
     __table_args__ = (

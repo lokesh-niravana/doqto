@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -60,7 +61,9 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('phone and the sign-in providers are the only ways in', (tester) async {
+  testWidgets('phone and the sign-in providers are the only ways in', (
+    tester,
+  ) async {
     await pump(tester);
 
     expect(find.byType(PhoneField), findsOneWidget);
@@ -71,9 +74,10 @@ void main() {
     expect(find.text('New to Doqto?'), findsNothing);
     expect(find.text(Strings.authSendOtp), findsWidgets);
 
+    // Tests run as Android: Google only (Apple is iOS-only, see below).
     expect(
       find.byType(SocialButton),
-      findsNWidgets(kFacebookSignInEnabled ? 3 : 2),
+      findsNWidgets(kFacebookSignInEnabled ? 2 : 1),
     );
     expect(find.text(Strings.loginGoogle), findsOneWidget);
     expect(
@@ -113,8 +117,10 @@ void main() {
     expect(find.byType(InlineError), findsOneWidget);
   });
 
-  testWidgets('Apple is offered alongside Google', (tester) async {
+  testWidgets('Apple is offered alongside Google on iOS', (tester) async {
     // App Store guideline 4.8 requires it wherever a social login is offered.
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     await pump(tester);
     await tester.pumpAndSettle();
 
@@ -123,5 +129,17 @@ void main() {
       find.byType(SocialButton),
       findsNWidgets(kFacebookSignInEnabled ? 3 : 2),
     );
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('no Apple button on Android', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    await pump(tester);
+    await tester.pumpAndSettle();
+
+    expect(find.text(Strings.loginApple), findsNothing);
+    expect(find.text(Strings.loginGoogle), findsOneWidget);
+    debugDefaultTargetPlatformOverride = null;
   });
 }

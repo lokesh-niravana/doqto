@@ -156,16 +156,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                     ),
                   ],
-                  const SizedBox(height: AppSpacing.md),
-                  FadeSlideIn.staggered(
-                    6,
-                    SocialButton.apple(
-                      label: Strings.loginApple,
-                      onPressed: _loading
-                          ? null
-                          : () => _social(SocialProvider.apple),
+                  // Apple only where it's native. Guideline 4.8 is an App
+                  // Store rule; on Android it opens a web page and looks odd.
+                  if (Theme.of(context).platform == TargetPlatform.iOS) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    FadeSlideIn.staggered(
+                      6,
+                      SocialButton.apple(
+                        label: Strings.loginApple,
+                        onPressed: _loading
+                            ? null
+                            : () => _social(SocialProvider.apple),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),

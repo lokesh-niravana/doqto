@@ -92,7 +92,7 @@ class AuthService:
         if user.deleted_at is not None:
             raise AuthError("account_deleted")
 
-        is_registered = bool(user.full_name and not user.npi_number.startswith("PENDING"))
+        is_registered = bool(user.full_name and user.npi_number.isdigit())
         user.last_seen_at = datetime.now(tz=timezone.utc)
         await AuditService.log(
             db,
@@ -128,7 +128,9 @@ class AuthService:
                 phone=identity.phone,
                 email=identity.email,
                 full_name="",
-                npi_number=f"PENDING{secrets.randbelow(100):02d}",
+                # Placeholder until registration: unique column, so a billion
+                # values (was PENDING00-99, which collided). Real NPIs are all digits.
+                npi_number=f"P{secrets.randbelow(10**9):09d}",
                 role=UserRole.DOCTOR,
             )
             db.add(user)

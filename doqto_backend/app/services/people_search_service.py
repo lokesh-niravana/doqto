@@ -331,6 +331,10 @@ def _visibility(
         User.id != viewer_id,
         User.role == UserRole.DOCTOR.value,
         User.deleted_at.is_(None),
+        # Finished registration: a name and a real (all-digit) NPI, not the
+        # sign-up placeholder.
+        User.full_name != "",
+        User.npi_number.regexp_match("^[0-9]{10}$"),
         # Privacy: exclude discoverability='nobody'; 'connections' needs 1st-degree.
         disc != Discoverability.NOBODY.value,
         or_(disc != Discoverability.CONNECTIONS.value, in_fd),

@@ -113,3 +113,21 @@ async def test_pages_with_a_cursor(client, db):
         await client.get(URL, params={"limit": 2, "cursor": "2"}, headers=h)
     ).json()
     assert len(rest["data"]) == 1 and rest["next_cursor"] is None
+
+
+async def test_unfinished_sign_ups_are_never_suggested_or_found(client, db):
+    # Verified a phone, never filled in their details: no name, PENDING NPI.
+    me = await helpers.create_user(db, full_name="Dr Me", specialty="Cardiology")
+    ghost = await helpers.create_user(db, full_name="", specialty="Cardiology")
+    ghost.npi_number = "PENDING01"
+    half = await helpers.create_user(db, full_name="Dr Half Done", specialty="Cardiology")
+    half.npi_number = "PENDING02"
+    await helpers.create_user(db, full_name="Dr Real", specialty="Cardiology")
+    await db.commit()
+
+    assert [n for n, _ in await _names(client, me)] == ["Dr Real"]
+    r = await client.get(
+        "/api/v1/people/search", params={"q": "Dr"},
+        headers=await helpers.auth_headers(me.id),
+    )
+    assert [c["full_name"] for c in r.json()["data"]] == ["Dr Real"]

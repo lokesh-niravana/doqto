@@ -39,7 +39,7 @@ async def test_unknown_token_creates_a_pending_user(client, db, firebase):
     user = await db.scalar(select(User).where(User.firebase_uid == UID))
     assert user is not None
     assert user.phone == "+13125339656"
-    assert user.npi_number.startswith("PENDING")
+    assert not user.npi_number.isdigit()  # placeholder, not a real NPI
 
 
 async def test_returning_user_is_registered(client, db, firebase):

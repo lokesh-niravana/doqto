@@ -193,6 +193,20 @@ class PushService:
         )
 
     @staticmethod
+    def notify_invite_joined(
+        *, recipient_id: uuid.UUID, actor_name: str, user_id: uuid.UUID | None
+    ) -> None:
+        asyncio.create_task(
+            PushService._dispatch_simple(
+                recipient_id=recipient_id,
+                title=PUSH_TITLE,
+                body=f"{actor_name} joined from your invite. You're connected.",
+                data={"type": "invite_joined", "user_id": str(user_id or "")},
+                collapse_key=f"joined:{user_id}",
+            )
+        )
+
+    @staticmethod
     async def _dispatch_simple(
         *,
         recipient_id: uuid.UUID,

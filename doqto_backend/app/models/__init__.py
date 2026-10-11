@@ -4,6 +4,7 @@ from app.models.device_token import DeviceToken
 from app.models.group import Group, GroupInvite, GroupMember
 from app.models.message import Message, MessageEdit, MessageHide, MessageReceipt, ScheduledMessage
 from app.models.network import (
+    AppInvite,
     Block,
     Connection,
     ConnectionInvitation,
@@ -19,6 +20,7 @@ from app.models.privacy import UserPrivacySettings
 from app.models.user import User
 
 __all__ = [
+    "AppInvite",
     "AuditLog",
     "Block",
     "Connection",

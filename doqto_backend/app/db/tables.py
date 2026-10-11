@@ -26,6 +26,8 @@ class Tables:
     BLOCKS = "blocks"
     MUTES = "mutes"
     SUGGESTION_DISMISSALS = "suggestion_dismissals"
+    # "Invite a colleague": who invited which NPI to join Doqto
+    APP_INVITES = "app_invites"
     REPORTS = "reports"
     USER_PRIVACY_SETTINGS = "user_privacy_settings"
     NOTIFICATIONS = "notifications"

@@ -46,6 +46,8 @@ class ApiRoutes:
 
     # People search (M2) — cross-org directory surface
     PEOPLE_SEARCH = "/search"
+    PEOPLE_NPI_LOOKUP = "/npi-lookup"
+    PEOPLE_INVITES = "/invites"
 
     # Network (M1)
     NETWORK_INVITATIONS = "/invitations"

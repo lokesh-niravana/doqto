@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 DegreeLabel = Literal["1st", "2nd", "3rd", "out"]
 ConnectionState = Literal["none", "pending_outgoing", "pending_incoming", "connected"]
@@ -83,3 +83,19 @@ class PublicProfileOut(BaseModel):
     # alone can't stand in for this — an org with dm_policy 'everyone' also
     # yields open, and there a Connect prompt is still meaningful.
     is_colleague: bool = False
+
+
+class NpiHitOut(BaseModel):
+    """An NPI Registry result for "Invite a colleague". The NPI is public
+    registry data the viewer searched for; it is the invite's key."""
+
+    npi: str
+    name: str
+    specialty: str | None = None
+    location: str | None = None
+    status: Literal["message", "requested", "connect", "invite"]
+    user_id: uuid.UUID | None = None
+
+
+class AppInviteIn(BaseModel):
+    npi: str = Field(pattern=r"^[0-9]{10}$")

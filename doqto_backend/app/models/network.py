@@ -182,6 +182,25 @@ class SuggestionDismissal(Base):
     )
 
 
+class AppInvite(Base):
+    """A doctor invited someone not yet on Doqto, by NPI. When that NPI
+    finishes registering, the two are connected (InviteService)."""
+
+    __tablename__ = Tables.APP_INVITES
+    __table_args__ = (Index("ix_app_invites_npi", "npi"),)
+
+    inviter_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.USERS}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    npi: Mapped[str] = mapped_column(String(10), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Report(Base):
     __tablename__ = Tables.REPORTS
     __table_args__ = (

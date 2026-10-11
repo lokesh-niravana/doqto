@@ -19,6 +19,7 @@ from app.schemas.common import OkResponse
 from app.schemas.user import UserOut, build_user_out
 from app.services.audit_service import request_meta
 from app.services.auth_service import AuthError, AuthService, RateLimited
+from app.services.invite_service import InviteService
 
 router = APIRouter()
 
@@ -82,4 +83,5 @@ async def register(
         )
     except AuthError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await InviteService.connect_inviters(user=updated, db=db)
     return await build_user_out(updated)

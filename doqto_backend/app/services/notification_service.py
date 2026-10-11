@@ -27,7 +27,10 @@ TYPE_INVITATION_ACCEPTED = "invitation_accepted"
 # event itself, so these stay out of _PUSH_WORTHY (no push in M5).
 TYPE_GROUP_INVITE_RECEIVED = "group_invite_received"
 
-_PUSH_WORTHY = {TYPE_INVITATION_RECEIVED, TYPE_INVITATION_ACCEPTED}
+# Someone you invited by NPI finished registering; you are now connected.
+TYPE_INVITE_JOINED = "invite_joined"
+
+_PUSH_WORTHY = {TYPE_INVITATION_RECEIVED, TYPE_INVITATION_ACCEPTED, TYPE_INVITE_JOINED}
 
 
 class NotificationService:
@@ -82,6 +85,12 @@ class NotificationService:
         elif notification.type == TYPE_INVITATION_ACCEPTED:
             PushService.notify_invitation_accepted(
                 recipient_id=notification.user_id, actor_name=actor_name
+            )
+        elif notification.type == TYPE_INVITE_JOINED:
+            PushService.notify_invite_joined(
+                recipient_id=notification.user_id,
+                actor_name=actor_name,
+                user_id=notification.subject_id,
             )
 
     @staticmethod

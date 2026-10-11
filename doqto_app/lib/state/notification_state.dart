@@ -51,6 +51,11 @@ String? routePathForPushData(Map<String, dynamic> data) {
   if (conv != null && conv.isNotEmpty) return AppRoutes.chat(conv);
   return switch (data['type']) {
     'invitation_received' || 'invitation_accepted' => AppRoutes.network,
+    // Someone we invited joined and is now connected: open their profile.
+    'invite_joined' => switch (data['user_id']) {
+        final String id when id.isNotEmpty => AppRoutes.person(id),
+        _ => AppRoutes.network,
+      },
     _ => null,
   };
 }

@@ -295,6 +295,44 @@ class PrivacySettings {
 }
 
 /// A cursor-paginated list page — `{data, next_cursor}`.
+/// "Invite a colleague": an NPI Registry result and whether they're on Doqto.
+enum NpiStatus { message, requested, connect, invite }
+
+class NpiHit {
+  final String npi;
+  final String name;
+  final String? specialty;
+  final String? location;
+  final NpiStatus status;
+
+  /// Set when they're on Doqto (every status but invite).
+  final String? userId;
+
+  const NpiHit({
+    required this.npi,
+    required this.name,
+    this.specialty,
+    this.location,
+    required this.status,
+    this.userId,
+  });
+
+  factory NpiHit.fromJson(Map<String, dynamic> j) => NpiHit(
+        npi: j['npi'] as String,
+        name: j['name'] as String,
+        specialty: j['specialty'] as String?,
+        location: j['location'] as String?,
+        status: NpiStatus.values.asNameMap()[j['status']] ?? NpiStatus.invite,
+        userId: j['user_id'] as String?,
+      );
+
+  /// "Neel Patel, MD" → "Dr. Patel" for the invite message.
+  String get greeting {
+    final last = name.split(',').first.trim().split(' ').last;
+    return 'Dr. $last';
+  }
+}
+
 class CursorPage<T> {
   final List<T> data;
   final String? nextCursor;

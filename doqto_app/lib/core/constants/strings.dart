@@ -244,6 +244,33 @@ class Strings {
   static const String netEmptyConnections =
       'No connections yet. Search for colleagues to get started.';
   static const String netEmptySearch = 'No people found. Try a different name.';
+  // -- Invite a colleague
+  static const String inviteTitle = 'Invite a colleague';
+  static const String inviteSettingsSubtitle = 'Find a doctor by name or NPI';
+  static const String inviteSearchHint = 'Name or NPI';
+  static const String inviteAnyState = 'Any';
+  static const String inviteStateLabel = 'State';
+  static const String inviteButton = 'Invite';
+  static const String inviteRequested = 'Requested';
+  static const String inviteOnDoqto = 'On Doqto';
+  static const String inviteIntro =
+      'Search the NPI Registry. Colleagues already on Doqto show Connect or Message.';
+  static const String inviteNoResults =
+      'No match yet. Add a first name or pick a state: common last names need one.';
+  static String inviteResultCount(int n) =>
+      '$n ${n == 1 ? 'doctor' : 'doctors'} in the NPI Registry';
+  static const String inviteCantFind = "Can't find them?";
+  static const String inviteCantFindBody =
+      'Residents, doctors outside the US, or anyone else: send them the app link directly.';
+  static const String inviteShareLink = 'Share invite link';
+  static const String inviteLink = 'https://doqto.ai/get';
+  static String inviteMessage(String? greeting) =>
+      "${greeting == null ? '' : '$greeting, '}I'm on Doqto, secure messaging for doctors. "
+      "Join me and let's message there: $inviteLink";
+  static String inviteFromSearch(String q) => 'Invite "$q"';
+  static String inviteNobodyNamed(String q) => 'No one named "$q" on Doqto yet';
+  static const String inviteNobodyBody =
+      'Look them up in the NPI Registry and send them an invite.';
   static const String netEmptyNetwork =
       'Grow your network. Search for colleagues to connect.';
   static const String netEmptySent = 'No pending sent invitations';

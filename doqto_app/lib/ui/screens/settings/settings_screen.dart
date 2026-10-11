@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/router/app_router.dart';
+import '../../../core/tokens/colors.dart';
+import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../data/models/billing.dart';
@@ -130,12 +132,36 @@ class SettingsScreen extends ConsumerWidget {
               );
             }),
           ),
+          FadeSlideIn.staggered(
+            5,
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.lg, vertical: AppSpacing.sm),
+              child: ListTile(
+                tileColor: AppColors.medBlueLight,
+                shape: RoundedRectangleBorder(
+                  borderRadius: AppRadii.rLg,
+                  side: const BorderSide(color: AppColors.medBlue, width: 1.5),
+                ),
+                leading: const CircleAvatar(
+                  backgroundColor: AppColors.medBlue,
+                  foregroundColor: AppColors.white,
+                  child: Icon(Icons.person_add_alt_1, size: 20),
+                ),
+                title: const Text(Strings.inviteTitle,
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: const Text(Strings.inviteSettingsSubtitle),
+                trailing: const Icon(Icons.chevron_right, color: AppColors.medBlue),
+                onTap: () => context.push(AppRoutes.invite),
+              ),
+            ),
+          ),
           // Destructive zone: visually separated from the info rows above,
           // rendered in red via the danger variant.
           const SizedBox(height: AppSpacing.sm),
           const Divider(),
           FadeSlideIn.staggered(
-            5,
+            6,
             Padding(
               padding: const EdgeInsets.all(AppSpacing.lg),
               child: AppButton(
@@ -151,7 +177,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           FadeSlideIn.staggered(
-            6,
+            7,
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg)
                   .copyWith(bottom: AppSpacing.lg),

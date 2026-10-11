@@ -56,11 +56,13 @@ class _Body extends StatelessWidget {
           icon: Icons.wifi_off_rounded,
           text: ErrorMessages.forApi(error),
         ),
-      PeopleSearchResults(:final people) => people.isEmpty
-          ? const _Message(
-              icon: Icons.search_off_rounded,
-              text: Strings.netEmptySearch,
-            )
+      PeopleSearchResults(:final people, :final query) => people.isEmpty
+          ? query.isEmpty
+              ? const _Message(
+                  icon: Icons.search_off_rounded,
+                  text: Strings.netEmptySearch,
+                )
+              : _InviteInstead(query: query)
           : _ResultsList(results: state as PeopleSearchResults),
     };
   }
@@ -161,6 +163,37 @@ class _Message extends StatelessWidget {
             Icon(icon, size: 48, color: AppColors.gray400),
             const SizedBox(height: AppSpacing.md),
             Text(text, style: AppText.body, textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A search that finds nobody on Doqto: offer to invite them instead.
+class _InviteInstead extends StatelessWidget {
+  final String query;
+  const _InviteInstead({required this.query});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.person_add_alt_1, size: 48, color: AppColors.medBlue),
+            const SizedBox(height: AppSpacing.md),
+            Text(Strings.inviteNobodyNamed(query),
+                style: AppText.heading, textAlign: TextAlign.center),
+            const SizedBox(height: AppSpacing.sm),
+            Text(Strings.inviteNobodyBody, style: AppText.body, textAlign: TextAlign.center),
+            const SizedBox(height: AppSpacing.lg),
+            FilledButton(
+              onPressed: () => context.push(AppRoutes.inviteFor(query)),
+              child: Text(Strings.inviteFromSearch(query)),
+            ),
           ],
         ),
       ),

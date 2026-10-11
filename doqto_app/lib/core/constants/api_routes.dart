@@ -63,6 +63,8 @@ class ApiRoutes {
   // People / profiles (networking M1/M2)
   static String userProfile(String userId) => '$apiV1/users/$userId/profile';
   static const String peopleSearch = '$apiV1/people/search';
+  static const String npiLookup = '$apiV1/people/npi-lookup';
+  static const String appInvites = '$apiV1/people/invites';
 
   // Network graph (M1)
   static const String invitations = '$apiV1/network/invitations';

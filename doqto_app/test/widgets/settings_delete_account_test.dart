@@ -44,19 +44,24 @@ Widget _app() => ProviderScope(
       child: const MaterialApp(home: SettingsScreen()),
     );
 
+/// Settings is a lazy list taller than the test screen: scroll to the end.
+Future<void> _open(WidgetTester tester) async {
+  await tester.pumpWidget(_app());
+  await tester.pumpAndSettle();
+  await tester.scrollUntilVisible(find.text('Delete account'), 200);
+}
+
 void main() {
   setUp(() => _repo = _SpyUserRepo());
 
   testWidgets('Delete account is reachable from Settings', (tester) async {
-    await tester.pumpWidget(_app());
-    await tester.pumpAndSettle();
+    await _open(tester);
     expect(find.text('Delete account'), findsOneWidget);
   });
 
   testWidgets('confirm stays disabled until DELETE is typed exactly',
       (tester) async {
-    await tester.pumpWidget(_app());
-    await tester.pumpAndSettle();
+    await _open(tester);
     await tester.tap(find.text('Delete account'));
     await tester.pumpAndSettle();
 
@@ -75,8 +80,7 @@ void main() {
   });
 
   testWidgets('cancelling never calls the API', (tester) async {
-    await tester.pumpWidget(_app());
-    await tester.pumpAndSettle();
+    await _open(tester);
     await tester.tap(find.text('Delete account'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'DELETE');

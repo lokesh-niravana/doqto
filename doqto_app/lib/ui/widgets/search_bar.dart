@@ -13,9 +13,13 @@ class AppSearchBar extends StatefulWidget {
   final String hint;
   final Duration debounce;
 
+  /// Text already in the box when it opens (not reported via [onChanged]).
+  final String? initialValue;
+
   const AppSearchBar({
     super.key,
     required this.onChanged,
+    this.initialValue,
     this.hint = 'Search…',
     this.debounce = const Duration(milliseconds: 200),
   });
@@ -25,7 +29,7 @@ class AppSearchBar extends StatefulWidget {
 }
 
 class _AppSearchBarState extends State<AppSearchBar> {
-  final _controller = TextEditingController();
+  late final _controller = TextEditingController(text: widget.initialValue);
   final _focus = FocusNode();
   Timer? _debounceTimer;
 

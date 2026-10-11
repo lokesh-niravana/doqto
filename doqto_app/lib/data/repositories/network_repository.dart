@@ -34,6 +34,22 @@ class NetworkRepository {
     return _page(j, PersonCard.fromJson);
   }
 
+  // --- Invite a colleague ---
+
+  Future<List<NpiHit>> npiLookup(String q, {String? state}) async {
+    final j = await _api.getList(ApiRoutes.npiLookup, query: {
+      'q': q,
+      if (state != null && state.isNotEmpty) 'state': state,
+    });
+    return j
+        .map((e) => NpiHit.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Remembered so they're connected to us when they register with this NPI.
+  Future<void> recordInvite(String npi) =>
+      _api.post(ApiRoutes.appInvites, body: {'npi': npi});
+
   // --- Recommended for you ---
 
   Future<CursorPage<PersonCard>> suggestions({String? cursor, int? limit}) async {

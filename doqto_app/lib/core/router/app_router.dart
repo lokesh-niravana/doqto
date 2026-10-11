@@ -29,6 +29,7 @@ import '../../ui/screens/people/people_search_screen.dart';
 import '../../ui/screens/people/person_profile_screen.dart';
 import '../../ui/screens/profile/profile_edit_screen.dart';
 import '../../ui/screens/profile/profile_screen.dart';
+import '../../ui/screens/people/invite_screen.dart';
 import '../../ui/screens/settings/settings_screen.dart';
 import '../../ui/screens/voice_broadcast/voice_broadcast_screen.dart';
 import '../../ui/screens/payments/payments_screen.dart';
@@ -63,6 +64,10 @@ class AppRoutes {
   static const networkSuggestions = '/network/suggestions';
   // People search (M3) — pushed full-screen over the shell.
   static const peopleSearch = '/people/search';
+  // Invite a colleague (NPI lookup + share sheet). Root-level, like search.
+  static const invite = '/invite';
+  static String inviteFor(String q) =>
+      Uri(path: invite, queryParameters: {'q': q}).toString();
   // Groups branch (M5). Detail/create/requests live INSIDE the branch so tab
   // state is preserved. `/groups/create` MUST precede `/groups/:id` (the colon
   // segment would otherwise swallow "create").
@@ -283,6 +288,12 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.record,
         parentNavigatorKey: rootNavigatorKey,
         builder: (_, s) => const VoiceBroadcastScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.invite,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) =>
+            InviteScreen(initialQuery: s.uri.queryParameters['q'] ?? ''),
       ),
       // `/people/search` MUST precede `/people/:userId` — the colon segment
       // would otherwise swallow "search".

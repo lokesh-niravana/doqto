@@ -8,6 +8,7 @@ when people search would show that doctor to this viewer anyway
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from dataclasses import dataclass
@@ -55,22 +56,23 @@ async def fetch_nppes_people(params: dict[str, str]) -> list[dict]:
         return []
 
 
-def _params(query: str, state: str | None) -> dict[str, str] | None:
+def _params(query: str, state: str | None) -> list[dict[str, str]]:
     q = _TITLE.sub("", query.strip()).replace(",", " ")
     if re.fullmatch(r"\d{10}", q):
-        return {"number": q}
+        return [{"number": q}]
     words = [w for w in q.split() if w]
     if not words or len(words[-1]) < 2:
-        return None
-    # "Patel" → last name; "Neel Patel" → first + last. NPPES wildcards
-    # need two characters before the *.
+        return []
+    # "Patel" → last name or first name; "Neel Patel" → first + last.
+    # NPPES wildcards need two characters before the *.
     # Over-fetch: former names and non-physicians are dropped below.
-    p = {"last_name": f"{words[-1]}*", "limit": "200"}
-    if len(words) > 1 and len(words[0]) >= 2:
+    base = {"limit": "200", **({"state": state.upper()} if state else {})}
+    if len(words) == 1:
+        return [{"last_name": f"{words[0]}*", **base}, {"first_name": f"{words[0]}*", **base}]
+    p = {"last_name": f"{words[-1]}*", **base}
+    if len(words[0]) >= 2:
         p["first_name"] = f"{words[0]}*"
-    if state:
-        p["state"] = state.upper()
-    return p
+    return [p]
 
 
 def _parse(r: dict) -> tuple[str, str, str | None, str | None] | None:
@@ -96,20 +98,28 @@ class InviteService:
     async def lookup(
         *, viewer_id: uuid.UUID, query: str, state: str | None, db: AsyncSession
     ) -> list[NpiHit]:
-        params = _params(query, state)
-        if params is None:
+        queries = _params(query, state)
+        if not queries:
             return []
-        raw = await fetch_nppes_people(params)
         # NPPES also matches former names and lists A→Z, so "Patel" alone
         # returns hundreds of people once named Patel before any current one.
         # Keep current names only; a first name or state narrows the rest.
-        def current(r: dict) -> bool:
+        def current(params: dict, r: dict) -> bool:
             b = r.get("basic") or {}
             return all(
                 (b.get(k) or "").lower().startswith(params[k].rstrip("*").lower())
                 for k in ("first_name", "last_name") if k in params
             )
-        rows = [p for p in map(_parse, filter(current, raw)) if p][:MAX_HITS]
+        results = await asyncio.gather(*(fetch_nppes_people(p) for p in queries))
+        seen_npis: set[str] = set()
+        rows = []
+        for params, raw in zip(queries, results):
+            for r in raw:
+                hit = current(params, r) and _parse(r)
+                if hit and hit[0] not in seen_npis:
+                    seen_npis.add(hit[0])
+                    rows.append(hit)
+        rows = rows[:MAX_HITS]
         npis = [r[0] for r in rows]
 
         viewer = await db.get(User, viewer_id)

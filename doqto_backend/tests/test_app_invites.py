@@ -54,9 +54,11 @@ async def test_lookup_marks_who_is_on_doqto(client, db, monkeypatch):
     )
     assert r.status_code == 200, r.text
     got = {h["name"]: (h["status"], h["user_id"]) for h in r.json()}
-    assert seen[0] == {
-        "last_name": "Patel*", "limit": "200", "state": "MA"
-    }
+    # One word: last name or first name.
+    assert seen == [
+        {"last_name": "Patel*", "limit": "200", "state": "MA"},
+        {"first_name": "Patel*", "limit": "200", "state": "MA"},
+    ]
     assert got == {
         "Friend Patel, MD": ("message", str(friend.id)),
         "Asked Patel, MD": ("requested", str(asked.id)),
@@ -136,8 +138,11 @@ async def test_only_physicians_under_their_current_name(client, db, monkeypatch)
     now = _nppes("1000000003", "NOW")
 
     async def fake(params):
+        if "first_name" in params:
+            # First-name search for "Patel": Patel Shah is current, so kept.
+            return [_nppes("1000000004", "PATEL", last="SHAH"), now]
         return [pt, formerly, now]
 
     monkeypatch.setattr(invite_service, "fetch_nppes_people", fake)
     r = await client.get(LOOKUP, params={"q": "Patel"}, headers=await helpers.auth_headers(me.id))
-    assert [h["name"] for h in r.json()] == ["Now Patel, MD"]
+    assert [h["name"] for h in r.json()] == ["Now Patel, MD", "Patel Shah, MD"]

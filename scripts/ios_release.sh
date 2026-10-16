@@ -25,8 +25,11 @@ APP="$ROOT/doqto_app"
 ARCHIVE="$APP/build/ios/archive/Runner.xcarchive"
 STAMP=25G83                # last release macOS build id
 XCODE_DEV=$(xcode-select -p)
-# App Store Connect API key (DOQTO LLC, Admin) signs and uploads, so Xcode
-# needs no Apple account. The .p8 lives outside the repo.
+# Release signs manually: "Apple Distribution: DOQTO LLC" (key and cert in the
+# login keychain, copies in ~/.doqto/ios-dist) + profile "Doqto iOS App Store",
+# both made through the API because the team has no devices for automatic
+# development signing. The App Store Connect API key (DOQTO LLC, Admin) uploads,
+# so Xcode needs no Apple account. The .p8 lives outside the repo.
 ASC_KEY_ID=${ASC_KEY_ID:-F9YBMB25H4}
 ASC_ISSUER=${ASC_ISSUER:-29aa5d08-657f-4a5f-b51f-c2f746bc71d6}
 AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$HOME/.doqto/AuthKey_${ASC_KEY_ID}.p8"
@@ -78,7 +81,9 @@ cat > build/ios/ExportUpload.plist <<'EOF'
 <plist version="1.0"><dict>
   <key>destination</key><string>upload</string>
   <key>method</key><string>app-store-connect</string>
-  <key>signingStyle</key><string>automatic</string>
+  <key>signingStyle</key><string>manual</string>
+  <key>signingCertificate</key><string>Apple Distribution</string>
+  <key>provisioningProfiles</key><dict><key>com.doqto.ios</key><string>Doqto iOS App Store</string></dict>
   <key>teamID</key><string>3N7394B3B9</string>
   <key>manageAppVersionAndBuildNumber</key><false/>
   <key>uploadSymbols</key><true/>

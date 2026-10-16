@@ -11,20 +11,26 @@
 #   * The export re-signs, sealing the plist edits. Upload the export's IPA,
 #     never the one `flutter build ipa` writes to build/ios/ipa.
 #   * Signing and upload use whichever Xcode is selected (xcode-select -p) and
-#     need lokesh@doqto.ai signed in under Settings > Accounts. Until 2026-09-22
+#     the ASC API key below (no Xcode account needed since the DOQTO LLC move). Until 2026-09-22
 #     this was Xcode-beta; the Mac now runs release macOS 27 + Xcode 27, so the
 #     stamp patch below is belt-and-braces rather than required.
 #
 # Usage:  scripts/ios_release.sh [build-number]
 #   No arg = current pubspec build number + 1. Commits the bump.
 # After it prints EXPORT SUCCEEDED: wait for TestFlight "Complete", then attach
-# the build to the version in App Store Connect and submit (no ASC API key).
+# the build to the version in App Store Connect and submit.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/doqto_app"
 ARCHIVE="$APP/build/ios/archive/Runner.xcarchive"
 STAMP=25G83                # last release macOS build id
 XCODE_DEV=$(xcode-select -p)
+# App Store Connect API key (DOQTO LLC, Admin) signs and uploads, so Xcode
+# needs no Apple account. The .p8 lives outside the repo.
+ASC_KEY_ID=${ASC_KEY_ID:-F9YBMB25H4}
+ASC_ISSUER=${ASC_ISSUER:-29aa5d08-657f-4a5f-b51f-c2f746bc71d6}
+AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$HOME/.doqto/AuthKey_${ASC_KEY_ID}.p8"
+      -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER")
 cd "$APP"
 
 # 1. build number
@@ -44,7 +50,10 @@ rm -rf ios/Pods ios/Podfile.lock build/ios
 flutter pub get >/dev/null
 (cd ios && pod install >/dev/null)
 echo "== archive (5-10 min)"
-flutter build ipa --release 2>&1 | grep -E "Built|error" || true
+flutter build ios --release --config-only >/dev/null
+DEVELOPER_DIR=$XCODE_DEV xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner \
+  -configuration Release -destination 'generic/platform=iOS' \
+  -archivePath "$ARCHIVE" archive "${AUTH[@]}" 2>&1 | grep -E "error:|ARCHIVE (SUCCEEDED|FAILED)" || true
 [ -d "$ARCHIVE" ] || { echo "archive missing" >&2; exit 1; }
 
 # 3. verify archive
@@ -70,7 +79,7 @@ cat > build/ios/ExportUpload.plist <<'EOF'
   <key>destination</key><string>upload</string>
   <key>method</key><string>app-store-connect</string>
   <key>signingStyle</key><string>automatic</string>
-  <key>teamID</key><string>GBM6D48UJZ</string>
+  <key>teamID</key><string>3N7394B3B9</string>
   <key>manageAppVersionAndBuildNumber</key><false/>
   <key>uploadSymbols</key><true/>
   <key>stripSwiftSymbols</key><true/>
@@ -80,7 +89,7 @@ EOF
 echo "== export + upload"
 DEVELOPER_DIR=$XCODE_DEV xcodebuild -exportArchive \
   -archivePath "$ARCHIVE" -exportOptionsPlist build/ios/ExportUpload.plist \
-  -exportPath build/ios/upload -allowProvisioningUpdates 2>&1 \
+  -exportPath build/ios/upload "${AUTH[@]}" 2>&1 \
   | grep -iE "error|succeeded|failed|Upload succeeded"
 
 # Also keep a local copy of exactly what was uploaded, and verify it.
@@ -88,7 +97,7 @@ sed 's|<string>upload</string>|<string>export</string>|' build/ios/ExportUpload.
 rm -rf build/ios/ipa-clean
 if DEVELOPER_DIR=$XCODE_DEV xcodebuild -exportArchive \
   -archivePath "$ARCHIVE" -exportOptionsPlist build/ios/ExportLocal.plist \
-  -exportPath build/ios/ipa-clean -allowProvisioningUpdates > build/ios/export-local.log 2>&1; then
+  -exportPath build/ios/ipa-clean "${AUTH[@]}" > build/ios/export-local.log 2>&1; then
   echo "== verify build/ios/ipa-clean/doqto_app.ipa"
   unzip -p build/ios/ipa-clean/doqto_app.ipa Payload/Runner.app/Info.plist > build/ios/ipa-clean/Info.plist
   plutil -p build/ios/ipa-clean/Info.plist | grep -E "CFBundleVersion|CFBundleShortVersionString|BuildMachineOSBuild"

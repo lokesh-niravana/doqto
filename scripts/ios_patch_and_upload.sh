@@ -34,7 +34,7 @@ cat > build/ios/ExportUpload.plist <<'EOF'
   <key>destination</key><string>upload</string>
   <key>method</key><string>app-store-connect</string>
   <key>signingStyle</key><string>automatic</string>
-  <key>teamID</key><string>GBM6D48UJZ</string>
+  <key>teamID</key><string>3N7394B3B9</string>
   <key>manageAppVersionAndBuildNumber</key><false/>
   <key>uploadSymbols</key><true/>
   <key>stripSwiftSymbols</key><true/>

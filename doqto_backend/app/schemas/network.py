@@ -85,7 +85,8 @@ class MuteOut(BaseModel):
 
 
 class ReportCreateIn(BaseModel):
-    subject_type: str = Field(max_length=20)
+    # The app reports people from their profile and omits this.
+    subject_type: str = Field(default="user", max_length=20)
     subject_id: uuid.UUID
     reason: str = Field(max_length=50)
     details: str | None = Field(default=None, max_length=REPORT_DETAILS_MAX_LEN)

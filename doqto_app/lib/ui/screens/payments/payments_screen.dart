@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
 
 import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
@@ -12,6 +13,7 @@ import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../data/api/api_client.dart';
 import '../../../data/models/billing.dart';
+import '../../../state/apple_iap.dart';
 import '../../../state/auth_state.dart';
 import '../../../state/billing_state.dart';
 import '../../widgets/app_pressable.dart';
@@ -24,13 +26,17 @@ enum PaymentsMode {
 
   /// The trial is over. No way past this screen except paying.
   paywall,
+
+  /// From Settings, mid-trial: subscribe now, or back out.
+  upgrade,
 }
 
 /// Plan picker. After registration it offers the free trial or a subscription;
 /// once the trial is over it is the paywall, with only a subscription.
 ///
-/// Subscribing opens Stripe Checkout in the real browser (Apple's link-out
-/// rule for web payments) and polls until the webhook has landed.
+/// On iOS, subscribing is an In-App Purchase (Apple 3.1.1) with Stripe as a
+/// link-out beside it. Elsewhere it opens Stripe Checkout in the real browser
+/// and polls until the webhook has landed.
 class PaymentsScreen extends ConsumerStatefulWidget {
   final PaymentsMode mode;
   const PaymentsScreen({super.key, this.mode = PaymentsMode.onboarding});
@@ -61,12 +67,20 @@ const _fallback = Billing(
 /// that happens in Stripe's portal, not a second checkout.
 const _cardProblem = {'past_due', 'unpaid', 'incomplete'};
 
-List<_Plan> _plansFor(Billing b) => [
-      _Plan('monthly', Strings.planMonthly, b.monthlyLabel),
+/// Apple's localized price wins when the store answered: it is what the
+/// purchase sheet will charge.
+List<_Plan> _plansFor(Billing b, Map<String, ProductDetails> apple) => [
+      _Plan(
+        'monthly',
+        Strings.planMonthly,
+        apple['monthly'] != null
+            ? '${apple['monthly']!.price}/mo'
+            : b.monthlyLabel,
+      ),
       _Plan(
         'yearly',
         Strings.planYearly,
-        b.yearlyLabel,
+        apple['yearly'] != null ? '${apple['yearly']!.price}/yr' : b.yearlyLabel,
         Strings.planSaving(b.yearlySavingPercent, b.yearlyPerMonthLabel),
       ),
     ];
@@ -78,10 +92,59 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   bool _subscribing = false;
   bool _updating = false;
   bool _checking = false;
+  bool _restoring = false;
   String? _error;
+  Map<String, ProductDetails> _apple = const {};
 
   bool get _paywall => widget.mode == PaymentsMode.paywall;
-  bool get _busy => _loading || _subscribing || _updating || _checking;
+  bool get _upgrade => widget.mode == PaymentsMode.upgrade;
+  bool get _busy =>
+      _loading || _subscribing || _updating || _checking || _restoring;
+
+  @override
+  void initState() {
+    super.initState();
+    if (ref.read(appleIapProvider)) {
+      ref.read(appleIapServiceProvider).products().then((p) {
+        if (mounted) setState(() => _apple = p);
+      }, onError: (_) {});
+    }
+  }
+
+  /// In-App Purchase. The listener posts the transaction to the server and
+  /// re-resolves the auth stage, so the router moves a paid doctor on.
+  Future<void> _buyApple() async {
+    final product = _apple[_selected];
+    if (product == null) {
+      setState(() => _error = Strings.iapUnavailable);
+      return;
+    }
+    setState(() {
+      _subscribing = true;
+      _error = null;
+    });
+    final error = await ref.read(appleIapServiceProvider).buy(product);
+    if (!mounted) return;
+    setState(() {
+      _subscribing = false;
+      _error = error;
+    });
+    if (error == null && _upgrade) context.pop();
+  }
+
+  Future<void> _restore() async {
+    setState(() {
+      _restoring = true;
+      _error = null;
+    });
+    final error = await ref.read(appleIapServiceProvider).restore();
+    if (!mounted) return;
+    setState(() {
+      _restoring = false;
+      _error = error;
+    });
+    if (error == null && _upgrade) context.pop();
+  }
 
   Future<void> _leave() async {
     setState(() => _loading = true);
@@ -194,8 +257,27 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     final billing = ref.watch(billingProvider).value ?? _fallback;
     // Android: no plans, no prices, no way to pay (see webCheckoutProvider).
     final web = ref.watch(webCheckoutProvider);
-    final plans = web ? _plansFor(billing) : const <_Plan>[];
+    final iap = ref.watch(appleIapProvider);
+    final plans = web || iap ? _plansFor(billing, _apple) : const <_Plan>[];
     final cardProblem = _cardProblem.contains(billing.status);
+    // iOS: Apple's purchase is the button; Stripe is a link beside it.
+    final subscribe = iap ? _buyApple : _subscribe;
+    final appleExtras = <Widget>[
+      if (iap) ...[
+        if (web) _textButton(Strings.iapPayOnWeb, _subscribe),
+        _restoring
+            ? const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(AppSpacing.md),
+                  child: SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              )
+            : _textButton(Strings.iapRestore, _restore),
+      ],
+    ];
 
     final actions = <Widget>[
       if (_paywall) ...[
@@ -208,17 +290,18 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
           ),
           const SizedBox(height: AppSpacing.md),
         ],
-        if (web) ...[
+        if (web || iap) ...[
           AppButton(
             label: Strings.planSubscribe,
             variant: cardProblem
                 ? AppButtonVariant.secondary
                 : AppButtonVariant.primary,
-            onPressed: _busy ? null : _subscribe,
+            onPressed: _busy ? null : subscribe,
             loading: _subscribing,
             expand: true,
           ),
           const SizedBox(height: AppSpacing.sm),
+          ...appleExtras,
         ],
         _checking
             ? const Center(
@@ -237,6 +320,15 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         // Never disabled: the ways off the paywall must not wait on a poll.
         _textButton(Strings.paywallReadMessages, _read, always: true),
         _textButton(Strings.paywallSignOut, _signOut, always: true),
+      ] else if (_upgrade) ...[
+        AppButton(
+          label: Strings.planSubscribe,
+          onPressed: _busy ? null : subscribe,
+          loading: _subscribing,
+          expand: true,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        ...appleExtras,
       ] else ...[
         AppButton(
           label: Strings.planStartTrial,
@@ -244,16 +336,17 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
           loading: _loading,
           expand: true,
         ),
-        if (web) ...[
+        if (web || iap) ...[
           const SizedBox(height: AppSpacing.md),
           AppButton(
             label: Strings.planSubscribe,
             variant: AppButtonVariant.secondary,
-            onPressed: _busy ? null : _subscribe,
+            onPressed: _busy ? null : subscribe,
             loading: _subscribing,
             expand: true,
           ),
           const SizedBox(height: AppSpacing.sm),
+          ...appleExtras,
           _textButton(Strings.planSkip, _leave),
         ],
       ],
@@ -263,7 +356,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       appBar: AppBar(
         title: Text(!_paywall
             ? Strings.planTitle
-            : web
+            : web || iap
                 ? Strings.paywallTitle
                 : Strings.paywallTitleNoCheckout),
         // The paywall is a stage, not a page: there is nothing to go back to.
@@ -283,7 +376,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                     FadeSlideIn.staggered(
                       0,
                       Text(
-                        switch ((_paywall, web, cardProblem)) {
+                        switch ((_paywall, web || iap, cardProblem)) {
                           (false, true, _) => Strings.planSubtitle,
                           (false, false, _) => Strings.planTrialStarts,
                           (true, true, true) => Strings.paywallCardBody,
@@ -323,6 +416,10 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                         children: actions,
                       ),
                     ),
+                    if (iap) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      const _AppleTerms(),
+                    ],
                     const SizedBox(height: AppSpacing.lg),
                   ],
                 ),
@@ -385,6 +482,46 @@ class _PlanCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Apple 3.1.2: what renews, how to cancel, and links to the terms and
+/// privacy policy, next to the purchase button.
+class _AppleTerms extends ConsumerWidget {
+  const _AppleTerms();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    Widget link(String label, String url) => AppPressable(
+          onTap: () => ref.read(urlOpenerProvider).open(url),
+          minTarget: true,
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.xs),
+            child: Text(
+              label,
+              style: AppText.caption.copyWith(
+                color: AppColors.textSecondary,
+                decoration: TextDecoration.underline,
+              ),
+            ),
+          ),
+        );
+    return Column(
+      children: [
+        Text(
+          Strings.iapTerms,
+          textAlign: TextAlign.center,
+          style: AppText.caption.copyWith(color: AppColors.textSecondary),
+        ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            link(Strings.termsOfUse, Strings.termsUrl),
+            link(Strings.privacyPolicy, Strings.privacyUrl),
+          ],
+        ),
+      ],
     );
   }
 }

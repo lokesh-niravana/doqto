@@ -20,8 +20,20 @@ from app.core.config import settings
 from app.core.dependencies import get_current_user, get_db
 from app.core.routes import ApiRoutes
 from app.models import User
-from app.schemas.billing import BillingOut, CheckoutIn, UrlOut
-from app.services.billing_service import entitlement
+from app.schemas.billing import (
+    AppleNotificationIn,
+    AppleTransactionIn,
+    BillingOut,
+    CheckoutIn,
+    UrlOut,
+)
+from app.services.apple_store import (
+    AppleGateway,
+    AppleSignatureError,
+    AppleTransaction,
+    get_apple,
+)
+from app.services.billing_service import apple_active, entitlement
 from app.services.stripe_client import StripeGateway, Subscription, get_stripe
 
 logger = logging.getLogger(__name__)
@@ -34,6 +46,21 @@ SUBSCRIBED_STATUSES = frozenset({"active", "trialing", "past_due"})
 
 def _billing_out(user: User) -> BillingOut:
     decision = entitlement(user)
+    prices = dict(
+        monthly_cents=settings.BILLING_PRICE_MONTHLY_CENTS,
+        yearly_cents=settings.BILLING_PRICE_YEARLY_CENTS,
+    )
+    if apple_active(user):
+        return BillingOut(
+            entitled=decision.entitled,
+            reason=decision.reason,
+            trial_ends_at=user.trial_ends_at,
+            plan=user.apple_plan,
+            status="active",
+            current_period_end=user.apple_expires_at,
+            store="apple",
+            **prices,
+        )
     return BillingOut(
         entitled=decision.entitled,
         reason=decision.reason,
@@ -41,8 +68,8 @@ def _billing_out(user: User) -> BillingOut:
         plan=user.billing_plan,
         status=user.billing_status,
         current_period_end=user.current_period_end,
-        monthly_cents=settings.BILLING_PRICE_MONTHLY_CENTS,
-        yearly_cents=settings.BILLING_PRICE_YEARLY_CENTS,
+        store="stripe" if user.stripe_customer_id else None,
+        **prices,
     )
 
 
@@ -58,7 +85,7 @@ async def create_checkout(
     db: AsyncSession = Depends(get_db),
     stripe: StripeGateway = Depends(get_stripe),
 ) -> UrlOut:
-    if user.billing_status in SUBSCRIBED_STATUSES:
+    if user.billing_status in SUBSCRIBED_STATUSES or apple_active(user):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="already_subscribed")
 
     price_id = (
@@ -217,4 +244,95 @@ async def webhook(
         logger.warning("billing %s user=%s: customer id already in use", event_type, user_id)
         return {"ok": True}
     logger.info("billing %s user=%s status=%s", event_type, user_id, user.billing_status)
+    return {"ok": True}
+
+
+def _apple_plan(product_id: str) -> str | None:
+    # com.doqto.ios.monthly / com.doqto.ios.yearly
+    plan = product_id.rsplit(".", 1)[-1]
+    return plan if plan in ("monthly", "yearly") else None
+
+
+def _apply_apple(user: User, txn: AppleTransaction) -> None:
+    """Apple's word on one subscription. A refund or revocation ends access
+    now; otherwise the later expiry wins, so a restore that replays an old
+    renewal can't shorten a newer one."""
+    same = user.apple_original_transaction_id == txn.original_id
+    user.apple_original_transaction_id = txn.original_id
+    user.apple_plan = _apple_plan(txn.product_id) or user.apple_plan
+    if txn.revoked:
+        user.apple_expires_at = None
+    elif same and user.apple_expires_at and txn.expires_at:
+        user.apple_expires_at = max(user.apple_expires_at, txn.expires_at)
+    else:
+        user.apple_expires_at = txn.expires_at
+
+
+@router.post(ApiRoutes.BILLING_APPLE, response_model=BillingOut)
+async def apple_purchase(
+    body: AppleTransactionIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    apple: AppleGateway = Depends(get_apple),
+) -> BillingOut:
+    """The app sends every StoreKit transaction it sees (purchase, renewal,
+    restore). Only a verified one changes anything."""
+    try:
+        txn = await run_in_threadpool(apple.transaction, body.transaction)
+    except AppleSignatureError as e:
+        logger.warning("billing apple user=%s: rejected transaction (%s)", user.id, e)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="bad_transaction")
+
+    # Bought in this app by someone else: the Apple ID is shared, the
+    # subscription isn't.
+    if txn.account_token and txn.account_token.lower() != str(user.id):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="apple_subscription_in_use")
+    owner = await db.scalar(
+        select(User).where(User.apple_original_transaction_id == txn.original_id)
+    )
+    if owner is not None and owner.id != user.id:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="apple_subscription_in_use")
+
+    _apply_apple(user, txn)
+    await db.commit()
+    logger.info(
+        "billing apple user=%s product=%s expires=%s", user.id, txn.product_id, txn.expires_at
+    )
+    return _billing_out(user)
+
+
+@router.post(ApiRoutes.BILLING_APPLE_NOTIFICATIONS)
+async def apple_notification(
+    body: AppleNotificationIn,
+    db: AsyncSession = Depends(get_db),
+    apple: AppleGateway = Depends(get_apple),
+) -> dict[str, bool]:
+    """App Store Server Notifications V2: renewals, expiries, refunds. Apple
+    retries on anything but 200, so only a bad signature is refused."""
+    try:
+        txn = await run_in_threadpool(apple.notification, body.signedPayload)
+    except AppleSignatureError as e:
+        logger.warning("billing apple notification rejected (%s)", e)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="bad_signature")
+    if txn is None:
+        return {"ok": True}
+
+    user = await db.scalar(
+        select(User).where(User.apple_original_transaction_id == txn.original_id)
+    )
+    if user is None and txn.account_token:
+        try:
+            user = await db.scalar(select(User).where(User.id == uuid.UUID(txn.account_token)))
+        except ValueError:
+            user = None
+        if user is not None and user.apple_original_transaction_id not in (None, txn.original_id):
+            # They hold another Apple subscription; leave it to /apple.
+            user = None
+    if user is None:
+        logger.warning("billing apple notification for an unknown subscription")
+        return {"ok": True}
+
+    _apply_apple(user, txn)
+    await db.commit()
+    logger.info("billing apple notification user=%s expires=%s", user.id, user.apple_expires_at)
     return {"ok": True}

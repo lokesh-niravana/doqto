@@ -23,6 +23,14 @@ class Entitlement(NamedTuple):
     reason: str  # staff | trial | subscribed | grace | expired
 
 
+def apple_active(user: User, now: datetime | None = None) -> bool:
+    """An In-App Purchase subscription that hasn't lapsed. Apple sends the
+    renewal's new expiry before the old one passes. ponytail: no grace period
+    for a failed Apple renewal; read gracePeriodExpiresDate if it matters."""
+    now = now or datetime.now(timezone.utc)
+    return user.apple_expires_at is not None and user.apple_expires_at > now
+
+
 def entitlement(user: User, now: datetime | None = None) -> Entitlement:
     """First matching rule wins."""
     now = now or datetime.now(timezone.utc)
@@ -33,7 +41,7 @@ def entitlement(user: User, now: datetime | None = None) -> Entitlement:
     if user.trial_ends_at is not None and user.trial_ends_at > now:
         return Entitlement(True, "trial")
 
-    if user.billing_status in LIVE_STATUSES:
+    if user.billing_status in LIVE_STATUSES or apple_active(user, now):
         return Entitlement(True, "subscribed")
 
     # A failed renewal keeps the door open briefly: cards expire, people are

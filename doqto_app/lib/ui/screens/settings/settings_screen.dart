@@ -11,6 +11,7 @@ import '../../../core/tokens/spacing.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../data/models/billing.dart';
 import '../../../state/auth_state.dart';
+import '../../../state/apple_iap.dart';
 import '../../../state/billing_state.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
@@ -44,15 +45,23 @@ class SettingsScreen extends ConsumerWidget {
   }
 
   /// Someone with no Stripe customer yet (still on the trial) goes to
-  /// checkout; the portal would 409 for them.
+  /// checkout; the portal would 409 for them. On iOS they get the plan screen
+  /// (In-App Purchase), and an Apple subscriber gets Apple's own page.
   Future<void> _openBilling(
       BuildContext context, WidgetRef ref, Billing? billing) async {
     final repo = ref.read(billingRepositoryProvider);
+    final iap = ref.read(appleIapProvider);
+    if (iap && billing?.store != 'apple' && billing?.status == null) {
+      context.push(AppRoutes.subscribe);
+      return;
+    }
     String? error;
     try {
-      final url = billing?.status == null
-          ? await repo.checkoutUrl('yearly')
-          : await repo.portalUrl();
+      final url = billing?.store == 'apple'
+          ? Strings.appleSubscriptionsUrl
+          : billing?.status == null
+              ? await repo.checkoutUrl('yearly')
+              : await repo.portalUrl();
       if (!await ref.read(urlOpenerProvider).open(url)) {
         error = Strings.checkoutOpenFailed;
       }
@@ -102,7 +111,8 @@ class SettingsScreen extends ConsumerWidget {
               // Staff never pay: there is nothing to open for them. Nor on
               // Android, which has no in-app way to pay (webCheckoutProvider).
               final tappable = billing?.reason != 'staff' &&
-                  ref.watch(webCheckoutProvider);
+                  (ref.watch(webCheckoutProvider) ||
+                      ref.watch(appleIapProvider));
               final plan = billing?.plan == 'yearly'
                   ? Strings.planYearly
                   : Strings.planMonthly;

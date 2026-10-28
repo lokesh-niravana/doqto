@@ -119,6 +119,7 @@ class ApiRoutes {
   static const String billing = '$apiV1/billing';
   static const String billingCheckout = '$apiV1/billing/checkout';
   static const String billingPortal = '$apiV1/billing/portal';
+  static const String billingApple = '$apiV1/billing/apple';
 
   // Admin endpoints live in the separate Next.js admin panel — not in the mobile app.
 

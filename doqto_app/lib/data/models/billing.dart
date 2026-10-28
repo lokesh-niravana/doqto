@@ -15,6 +15,9 @@ class Billing {
   final int monthlyCents;
   final int yearlyCents;
 
+  /// Where the live subscription is managed: `apple` or `stripe`.
+  final String? store;
+
   const Billing({
     required this.entitled,
     required this.reason,
@@ -24,6 +27,7 @@ class Billing {
     this.plan,
     this.status,
     this.currentPeriodEnd,
+    this.store,
   });
 
   factory Billing.fromJson(Map<String, dynamic> j) => Billing(
@@ -36,6 +40,7 @@ class Billing {
             DateTime.tryParse((j['current_period_end'] ?? '') as String)?.toUtc(),
         monthlyCents: (j['monthly_cents'] ?? 0) as int,
         yearlyCents: (j['yearly_cents'] ?? 0) as int,
+        store: j['store'] as String?,
       );
 
   /// Whole days remaining, rounded up: a trial with five hours left still has
@@ -55,7 +60,9 @@ class Billing {
   }
 
   String get monthlyLabel => '\$${(monthlyCents / 100).toStringAsFixed(2)}/mo';
-  String get yearlyLabel => '\$${(yearlyCents / 100).toStringAsFixed(0)}/yr';
+  String get yearlyLabel => yearlyCents % 100 == 0
+      ? '\$${yearlyCents ~/ 100}/yr'
+      : '\$${(yearlyCents / 100).toStringAsFixed(2)}/yr';
 
   /// "$6.67/mo" — the yearly price spread over twelve months.
   String get yearlyPerMonthLabel =>

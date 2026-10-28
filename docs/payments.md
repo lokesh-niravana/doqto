@@ -151,16 +151,33 @@ The Stripe test-mode account is already configured:
 
 ## App Store
 
-iOS purchases go through Stripe Checkout in the external browser, not
-StoreKit. Apple allows linking out to an external payment flow for digital
-goods only on the **US storefront** (the "reader"/external link-out
-exception), so App Store availability must be set to United States only
-before any build that ships this flow goes to review — this is not
-deferred billing, it's the storefront rule this app now depends on. It
-should be re-checked at every App Store submission. Google Play's policy on
-linking out to web payments has been changing and needs its own check
-before a production Play release; the app uses the same external-browser
-flow on Android.
+Apple rejected 1.0 (37) under 3.1.1 on 2026-10-28: on the US storefront a
+link out to Stripe is allowed only *beside* In-App Purchase, never instead.
+So iOS sells through StoreKit 2 first and keeps "Or pay on doqto.ai" as the
+link-out.
+
+- Products (group "Doqto", US only): `com.doqto.ios.monthly` $8.99 and
+  `com.doqto.ios.yearly` $79.99 ($80 is not an Apple price point). No Apple
+  intro offer: our own 14-day trial already covers it.
+- The app buys with `appAccountToken` = our user id and posts every
+  transaction's JWS to `POST /api/v1/billing/apple`. The server verifies it
+  against Apple's root CA (`app/certs/AppleRootCA-G3.cer`, Apple's
+  `app-store-server-library`) and stores `apple_original_transaction_id`,
+  `apple_plan`, `apple_expires_at`. An unexpired `apple_expires_at` entitles
+  (`subscribed`), same as a live Stripe status.
+- Renewals, expiries and refunds arrive at
+  `POST /api/v1/billing/apple/notifications` (App Store Server Notifications
+  V2, set on the app for production and sandbox).
+- Sandbox transactions are accepted in prod: App Review and TestFlight buy
+  in the sandbox against the production build.
+- Settings > Subscription: an Apple subscriber goes to Apple's subscriptions
+  page, a Stripe subscriber to the portal, anyone else on iOS to the plan
+  screen (`/subscribe`), which also has Restore purchases.
+- In-App Purchase needs the Paid Apps Agreement active in App Store Connect
+  (Business), signed by the Account Holder.
+
+Google Play's policy on linking out to web payments is separate; Android
+shows billing status only (`webCheckoutProvider`).
 
 ## Testing
 

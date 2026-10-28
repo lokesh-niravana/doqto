@@ -16,6 +16,11 @@ class BillingRepository {
     return res['url'] as String;
   }
 
+  /// A StoreKit 2 transaction (its JWS). The server verifies Apple's
+  /// signature and answers with the new billing status.
+  Future<Billing> appleTransaction(String jws) async => Billing.fromJson(
+      await _api.post(ApiRoutes.billingApple, body: {'transaction': jws}));
+
   /// Stripe's hosted portal: cancel, switch plan, change card.
   Future<String> portalUrl() async {
     final res = await _api.post(ApiRoutes.billingPortal);

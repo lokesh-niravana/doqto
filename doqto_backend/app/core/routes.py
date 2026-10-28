@@ -120,3 +120,5 @@ class ApiRoutes:
     BILLING_CHECKOUT = "/checkout"
     BILLING_PORTAL = "/portal"
     BILLING_WEBHOOK = "/webhook"
+    BILLING_APPLE = "/apple"
+    BILLING_APPLE_NOTIFICATIONS = "/apple/notifications"

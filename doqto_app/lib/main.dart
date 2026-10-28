@@ -18,6 +18,7 @@ import 'data/services/chat_cache.dart';
 import 'data/services/groups_cache.dart';
 import 'data/services/network_cache.dart';
 import 'data/services/outbox.dart';
+import 'state/apple_iap.dart';
 import 'state/auth_state.dart';
 import 'state/chat_state.dart';
 import 'state/notification_state.dart';
@@ -118,6 +119,8 @@ class _DoqtoAppState extends ConsumerState<DoqtoApp>
     ref.watch(notificationListenerProvider);
     // Resend queued messages on start + every reconnect.
     ref.watch(outboxDrainerProvider);
+    // iOS: pick up renewals and interrupted purchases from launch.
+    ref.watch(appleIapListenerProvider);
     return MaterialApp.router(
       title: Strings.appName,
       debugShowCheckedModeBanner: false,

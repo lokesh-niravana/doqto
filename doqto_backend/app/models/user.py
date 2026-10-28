@@ -51,6 +51,16 @@ class User(Base):
     current_period_end: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # In-App Purchase, set from verified StoreKit transactions and Apple's
+    # server notifications. Separate from the Stripe mirror: a doctor could
+    # have both, and either one entitles.
+    apple_original_transaction_id: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True
+    )
+    apple_plan: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    apple_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     # Public handle (nullable, generated lazily on first profile edit) + headline.
     handle: Mapped[str | None] = mapped_column(String(30), unique=True, nullable=True)

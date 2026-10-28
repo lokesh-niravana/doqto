@@ -87,6 +87,29 @@ class Strings {
   static const String subscriptionGraceNoCheckout = 'Payment problem';
   static const String subscriptionStaff = 'Staff account';
   static const String subscriptionNone = 'No subscription';
+  // In-App Purchase (iOS)
+  static const String iapPayOnWeb = 'Or pay on doqto.ai';
+  static const String iapRestore = 'Restore purchases';
+  static const String iapNothingToRestore =
+      'No subscription found for this Apple ID.';
+  static const String iapCancelled = 'Purchase cancelled.';
+  static const String iapFailed = 'The purchase didn\'t go through.';
+  static const String iapInUse =
+      'This Apple ID\'s subscription belongs to another Doqto account.';
+  static const String iapUnavailable =
+      'The App Store isn\'t reachable right now. Please try again.';
+  // Apple 3.1.2: price, length and auto-renewal shown before purchase.
+  static const String iapTerms =
+      'Payment is charged to your Apple ID at confirmation. The subscription '
+      'renews automatically at the same price each month or year unless you '
+      'cancel at least 24 hours before the period ends. Manage or cancel in '
+      'your Apple ID settings.';
+  static const String termsOfUse = 'Terms of Use';
+  static const String privacyPolicy = 'Privacy Policy';
+  static const String termsUrl = 'https://doqto.ai/terms';
+  static const String privacyUrl = 'https://doqto.ai/privacy';
+  static const String appleSubscriptionsUrl =
+      'https://apps.apple.com/account/subscriptions';
   static String planSaving(int percent, String perMonth) =>
       'Save $percent% · $perMonth';
   static String trialDaysLeft(int days) =>

@@ -145,6 +145,10 @@ class AccountDeletionService:
         # Must be cleared, or the provider account still resolves to this
         # tombstone and signing in again would adopt a deleted user.
         user.firebase_uid = None
+        # Apple can't be told to cancel; the doctor does that in iPhone
+        # Settings. Release the subscription so a new account can claim it.
+        user.apple_original_transaction_id = None
+        user.apple_expires_at = None
         user.full_name = "Deleted user"
         user.handle = None
         user.headline = None

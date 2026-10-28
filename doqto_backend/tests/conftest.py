@@ -221,3 +221,31 @@ def stripe_gateway(monkeypatch):
     yield fake
     app.dependency_overrides.pop(get_stripe, None)
     app.dependency_overrides.pop(get_optional_stripe, None)
+
+
+class FakeApple:
+    """Stands in for Apple's signature checks. The JWS strings in tests are
+    keys into `transactions`; anything else is a bad signature."""
+
+    def __init__(self) -> None:
+        self.transactions: dict = {}
+
+    def transaction(self, signed_transaction: str):
+        from app.services.apple_store import AppleSignatureError
+
+        if signed_transaction not in self.transactions:
+            raise AppleSignatureError("INVALID_CHAIN")
+        return self.transactions[signed_transaction]
+
+    def notification(self, signed_payload: str):
+        return self.transaction(signed_payload)
+
+
+@pytest.fixture
+def apple_gateway():
+    from app.services.apple_store import get_apple
+
+    fake = FakeApple()
+    app.dependency_overrides[get_apple] = lambda: fake
+    yield fake
+    app.dependency_overrides.pop(get_apple, None)

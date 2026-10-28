@@ -8,6 +8,7 @@ import 'package:doqto_app/data/api/api_client.dart';
 import 'package:doqto_app/data/models/billing.dart';
 import 'package:doqto_app/data/repositories/billing_repository.dart';
 import 'package:doqto_app/data/services/url_opener.dart';
+import 'package:doqto_app/state/apple_iap.dart';
 import 'package:doqto_app/state/billing_state.dart';
 import 'package:doqto_app/ui/screens/payments/payments_screen.dart';
 import 'package:doqto_app/ui/screens/settings/settings_screen.dart';
@@ -77,7 +78,9 @@ void main() {
   });
 
   Future<void> pump(WidgetTester tester,
-      {PaymentsMode mode = PaymentsMode.paywall, bool web = true}) async {
+      {PaymentsMode mode = PaymentsMode.paywall,
+      bool web = true,
+      bool iap = false}) async {
     await tester.binding.setSurfaceSize(const Size(800, 1600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(ProviderScope(
@@ -85,6 +88,7 @@ void main() {
         billingRepositoryProvider.overrideWithValue(billing),
         urlOpenerProvider.overrideWithValue(opener),
         webCheckoutProvider.overrideWithValue(web),
+        appleIapProvider.overrideWithValue(iap),
       ],
       child: MaterialApp(home: PaymentsScreen(mode: mode)),
     ));
@@ -111,6 +115,29 @@ void main() {
     expect(find.textContaining('still readable'), findsOneWidget);
     expect(find.text(Strings.planMonthly), findsOneWidget);
     expect(find.text(Strings.planYearly), findsOneWidget);
+  });
+
+  testWidgets('iOS sells through Apple, with Stripe, restore and terms beside it',
+      (tester) async {
+    await pump(tester, iap: true);
+
+    expect(find.widgetWithText(AppButton, Strings.planSubscribe), findsWidgets);
+    expect(find.text(Strings.iapPayOnWeb), findsOneWidget);
+    expect(find.text(Strings.iapRestore), findsOneWidget);
+    expect(find.text(Strings.iapTerms), findsOneWidget);
+    expect(find.text(Strings.termsOfUse), findsOneWidget);
+
+    // The store isn't reachable in a test: Subscribe says so, and never
+    // falls through to Stripe.
+    await tester.tap(find.widgetWithText(AppButton, Strings.planSubscribe).first);
+    await tester.pumpAndSettle();
+    expect(find.text(Strings.iapUnavailable), findsOneWidget);
+    expect(billing.checkouts, isEmpty);
+
+    // The web link is still Stripe.
+    await tester.tap(find.text(Strings.iapPayOnWeb));
+    await tester.pumpAndSettle();
+    expect(billing.checkouts, ['yearly']);
   });
 
   testWidgets('prices and the saving come from the server', (tester) async {

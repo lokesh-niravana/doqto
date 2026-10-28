@@ -43,6 +43,8 @@ class AppRoutes {
   static const registration = '/auth/registration';
   static const payments = '/payments';
   static const paywall = '/paywall';
+  // Subscribe mid-trial, from Settings (iOS In-App Purchase).
+  static const subscribe = '/subscribe';
   // Where Stripe sends the browser back (`doqto:///billing`). Not a page.
   static const billing = '/billing';
   static const orgSelection = '/org/select';
@@ -138,6 +140,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.payments,
         parentNavigatorKey: rootNavigatorKey,
         builder: (_, s) => const PaymentsScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.subscribe,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const PaymentsScreen(mode: PaymentsMode.upgrade),
       ),
       GoRoute(
         path: AppRoutes.paywall,

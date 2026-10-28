@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     BILLING_PRICE_MONTHLY_CENTS: int = 899
     BILLING_PRICE_YEARLY_CENTS: int = 8000
     BILLING_RETURN_URL: str = "https://doqto.ai/billing/done"
+    # In-App Purchase on iOS (Apple requires it next to the Stripe link-out).
+    APPLE_BUNDLE_ID: str = "com.doqto.ios"
+    APPLE_APP_ID: int = 6823733882
 
     JWT_SECRET: str
     MESSAGE_ENCRYPTION_KEY: str

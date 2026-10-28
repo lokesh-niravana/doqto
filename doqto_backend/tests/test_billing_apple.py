@@ -42,7 +42,8 @@ async def test_an_unverified_transaction_changes_nothing(client, db, apple_gatew
     r = await client.post("/api/v1/billing/apple", json={"transaction": "forged"}, headers=headers)
 
     assert r.status_code == 400
-    assert (await client.get("/api/v1/billing", headers=headers)).json()["entitled"] is False
+    await db.refresh(user)
+    assert user.apple_expires_at is None
 
 
 async def test_another_doctors_subscription_is_refused(client, db, apple_gateway):
@@ -80,12 +81,13 @@ async def test_notifications_renew_and_refund(client, db, apple_gateway):
     for payload in ("renew", "old"):
         r = await client.post("/api/v1/billing/apple/notifications", json={"signedPayload": payload})
         assert r.status_code == 200
-    body = (await client.get("/api/v1/billing", headers=headers)).json()
-    assert body["current_period_end"][:10] == (NOW + timedelta(days=60)).date().isoformat()
+    await db.refresh(user)
+    assert user.apple_expires_at.date() == (NOW + timedelta(days=60)).date()
 
     apple_gateway.transactions["refund"] = txn(days=60, revoked=True)
     await client.post("/api/v1/billing/apple/notifications", json={"signedPayload": "refund"})
-    assert (await client.get("/api/v1/billing", headers=headers)).json()["entitled"] is False
+    await db.refresh(user)
+    assert user.apple_expires_at is None
 
 
 async def test_a_notification_finds_the_doctor_by_account_token(client, db, apple_gateway):
@@ -94,8 +96,8 @@ async def test_a_notification_finds_the_doctor_by_account_token(client, db, appl
 
     await client.post("/api/v1/billing/apple/notifications", json={"signedPayload": "n"})
 
-    body = (await client.get("/api/v1/billing", headers=await helpers.auth_headers(user.id))).json()
-    assert body["entitled"] is True
+    await db.refresh(user)
+    assert user.apple_expires_at is not None
 
 
 async def test_bad_or_unknown_notifications(client, db, apple_gateway):

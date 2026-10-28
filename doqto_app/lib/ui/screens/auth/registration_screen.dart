@@ -268,7 +268,8 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
             practiceState: _state,
           );
       if (!mounted) return;
-      context.go(AppRoutes.payments);
+      // The router's redirect corrects this if the stage says otherwise.
+      context.go(AppRoutes.chats);
     } catch (e) {
       setState(() => _submitError = ErrorMessages.forApi(e));
     } finally {

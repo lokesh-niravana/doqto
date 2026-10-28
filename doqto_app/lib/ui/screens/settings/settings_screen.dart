@@ -8,11 +8,7 @@ import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/spacing.dart';
-import '../../../core/utils/error_messages.dart';
-import '../../../data/models/billing.dart';
 import '../../../state/auth_state.dart';
-import '../../../state/apple_iap.dart';
-import '../../../state/billing_state.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
 
@@ -42,36 +38,6 @@ class SettingsScreen extends ConsumerWidget {
     // signOut also wipes the local encrypted PHI caches.
     await ref.read(authProvider.notifier).signOut();
     if (context.mounted) context.go(AppRoutes.login);
-  }
-
-  /// Someone with no Stripe customer yet (still on the trial) goes to
-  /// checkout; the portal would 409 for them. On iOS they get the plan screen
-  /// (In-App Purchase), and an Apple subscriber gets Apple's own page.
-  Future<void> _openBilling(
-      BuildContext context, WidgetRef ref, Billing? billing) async {
-    final repo = ref.read(billingRepositoryProvider);
-    final iap = ref.read(appleIapProvider);
-    if (iap && billing?.store != 'apple' && billing?.status == null) {
-      context.push(AppRoutes.subscribe);
-      return;
-    }
-    String? error;
-    try {
-      final url = billing?.store == 'apple'
-          ? Strings.appleSubscriptionsUrl
-          : billing?.status == null
-              ? await repo.checkoutUrl('yearly')
-              : await repo.portalUrl();
-      if (!await ref.read(urlOpenerProvider).open(url)) {
-        error = Strings.checkoutOpenFailed;
-      }
-    } catch (e) {
-      error = ErrorMessages.forApi(e);
-    }
-    if (error != null && context.mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
-    }
   }
 
   @override
@@ -106,44 +72,6 @@ class SettingsScreen extends ConsumerWidget {
           ),
           FadeSlideIn.staggered(
             4,
-            Consumer(builder: (context, ref, _) {
-              final billing = ref.watch(billingProvider).value;
-              // Staff never pay: there is nothing to open for them. Nor on
-              // Android, which has no in-app way to pay (webCheckoutProvider).
-              final tappable = billing?.reason != 'staff' &&
-                  (ref.watch(webCheckoutProvider) ||
-                      ref.watch(appleIapProvider));
-              final plan = billing?.plan == 'yearly'
-                  ? Strings.planYearly
-                  : Strings.planMonthly;
-              return ListTile(
-                title: const Text(Strings.subscriptionRow),
-                subtitle: Text(switch (billing?.reason) {
-                  // Paid before the trial ran out: the plan is what matters
-                  // now, not a countdown to nothing.
-                  'trial' when const {'active', 'trialing'}
-                          .contains(billing!.status) =>
-                    plan,
-                  'trial' => Strings.trialDaysLeft(billing!.trialDaysLeft),
-                  'subscribed' => plan,
-                  'grace' => tappable
-                      ? Strings.subscriptionGrace
-                      : Strings.subscriptionGraceNoCheckout,
-                  'staff' => Strings.subscriptionStaff,
-                  'expired' => Strings.subscriptionNone,
-                  _ => '—',
-                }),
-                trailing: tappable
-                    ? const Icon(Icons.open_in_new, size: 18)
-                    : null,
-                onTap: tappable
-                    ? () => _openBilling(context, ref, billing)
-                    : null,
-              );
-            }),
-          ),
-          FadeSlideIn.staggered(
-            5,
             Padding(
               padding: const EdgeInsets.symmetric(
                   horizontal: AppSpacing.lg, vertical: AppSpacing.sm),
@@ -171,7 +99,7 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: AppSpacing.sm),
           const Divider(),
           FadeSlideIn.staggered(
-            6,
+            5,
             Padding(
               padding: const EdgeInsets.all(AppSpacing.lg),
               child: AppButton(
@@ -187,7 +115,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           FadeSlideIn.staggered(
-            7,
+            6,
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg)
                   .copyWith(bottom: AppSpacing.lg),

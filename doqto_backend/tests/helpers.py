@@ -47,7 +47,7 @@ async def create_user(
         headline=headline,
         handle=handle,
         # Every test user is a normal, entitled doctor unless a test says
-        # otherwise. Without this the 402 gate would fail every suite.
+        # otherwise.
         trial_ends_at=(
             None if trial_days is None
             else datetime.now(timezone.utc) + timedelta(days=trial_days)

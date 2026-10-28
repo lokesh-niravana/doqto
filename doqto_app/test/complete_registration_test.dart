@@ -5,7 +5,9 @@ import 'package:doqto_app/core/di/providers.dart';
 import 'package:doqto_app/data/api/api_client.dart';
 import 'package:doqto_app/data/api/token_storage.dart';
 import 'package:doqto_app/data/models/user.dart';
+import 'package:doqto_app/data/models/organization.dart';
 import 'package:doqto_app/data/repositories/auth_repository.dart';
+import 'package:doqto_app/data/repositories/org_repository.dart';
 import 'package:doqto_app/data/repositories/user_repository.dart';
 import 'package:doqto_app/state/auth_state.dart';
 
@@ -34,6 +36,13 @@ class _Auth extends AuthRepository {
       _user();
 }
 
+/// No org yet: registration ends straight in the app.
+class _Orgs extends OrgRepository {
+  _Orgs() : super(ApiClient());
+  @override
+  Future<List<Organization>> listMine() async => [];
+}
+
 class _Users extends UserRepository {
   _Users({this.fail = false}) : super(ApiClient());
   final bool fail;
@@ -51,6 +60,7 @@ ProviderContainer _container(_Users users) {
   final c = ProviderContainer(overrides: [
     authRepositoryProvider.overrideWithValue(_Auth()),
     userRepositoryProvider.overrideWithValue(users),
+    orgRepositoryProvider.overrideWithValue(_Orgs()),
   ]);
   addTearDown(c.dispose);
   return c;
@@ -70,7 +80,7 @@ void main() {
 
     expect(users.patches.single, {'city': 'Bonita', 'state': 'CA'});
     expect(c.read(authProvider).user?.city, 'Bonita');
-    expect(c.read(authProvider).stage, AuthStage.needsPayment);
+    expect(c.read(authProvider).stage, AuthStage.signedIn);
   });
 
   test('no location, no profile call', () async {
@@ -83,7 +93,7 @@ void main() {
         );
 
     expect(users.patches, isEmpty);
-    expect(c.read(authProvider).stage, AuthStage.needsPayment);
+    expect(c.read(authProvider).stage, AuthStage.signedIn);
   });
 
   test('a failed location save still completes registration', () async {
@@ -98,7 +108,7 @@ void main() {
         );
 
     expect(users.patches, hasLength(1));
-    expect(c.read(authProvider).stage, AuthStage.needsPayment);
+    expect(c.read(authProvider).stage, AuthStage.signedIn);
     expect(c.read(authProvider).user?.fullName, 'Vimal Nanavati');
   });
 }

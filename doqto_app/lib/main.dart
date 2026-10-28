@@ -18,8 +18,6 @@ import 'data/services/chat_cache.dart';
 import 'data/services/groups_cache.dart';
 import 'data/services/network_cache.dart';
 import 'data/services/outbox.dart';
-import 'state/apple_iap.dart';
-import 'state/auth_state.dart';
 import 'state/chat_state.dart';
 import 'state/notification_state.dart';
 
@@ -107,9 +105,6 @@ class _DoqtoAppState extends ConsumerState<DoqtoApp>
     // catch-up, and outbox drain. Nothing on pause — the server's idle
     // deadline reaps dead sockets, so brief app-switches survive.
     ref.read(websocketClientProvider).ensureConnected();
-    // Stripe Checkout and the portal happen in the browser, so coming back is
-    // the only reliable signal the subscription may have changed.
-    unawaited(ref.read(authProvider.notifier).refreshBilling());
   }
 
   @override
@@ -119,8 +114,6 @@ class _DoqtoAppState extends ConsumerState<DoqtoApp>
     ref.watch(notificationListenerProvider);
     // Resend queued messages on start + every reconnect.
     ref.watch(outboxDrainerProvider);
-    // iOS: pick up renewals and interrupted purchases from launch.
-    ref.watch(appleIapListenerProvider);
     return MaterialApp.router(
       title: Strings.appName,
       debugShowCheckedModeBanner: false,

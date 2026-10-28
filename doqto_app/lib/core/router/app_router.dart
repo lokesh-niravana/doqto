@@ -32,7 +32,6 @@ import '../../ui/screens/profile/profile_screen.dart';
 import '../../ui/screens/people/invite_screen.dart';
 import '../../ui/screens/settings/settings_screen.dart';
 import '../../ui/screens/voice_broadcast/voice_broadcast_screen.dart';
-import '../../ui/screens/payments/payments_screen.dart';
 import '../../ui/screens/splash/splash_screen.dart';
 
 class AppRoutes {
@@ -41,12 +40,6 @@ class AppRoutes {
   static const login = '/auth/login';
   static const otp = '/auth/otp';
   static const registration = '/auth/registration';
-  static const payments = '/payments';
-  static const paywall = '/paywall';
-  // Subscribe mid-trial, from Settings (iOS In-App Purchase).
-  static const subscribe = '/subscribe';
-  // Where Stripe sends the browser back (`doqto:///billing`). Not a page.
-  static const billing = '/billing';
   static const orgSelection = '/org/select';
   static const createOrg = '/org/create';
   static const joinOrg = '/org/join';
@@ -94,9 +87,9 @@ void openConversation(BuildContext context, String conversationId) {
   context.push(AppRoutes.chat(conversationId));
 }
 
-/// Re-evaluates redirects whenever AuthStage (or read-only) changes.
+/// Re-evaluates redirects whenever AuthStage changes.
 Listenable _authListenable(Ref ref) {
-  (AuthStage, bool) key(AuthState s) => (s.stage, s.readOnly);
+  AuthStage key(AuthState s) => s.stage;
   final notifier = ValueNotifier(key(ref.read(authProvider)));
   ref.listen(authProvider.select(key), (_, next) => notifier.value = next);
   return notifier;
@@ -135,28 +128,6 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.registration,
         parentNavigatorKey: rootNavigatorKey,
         builder: (_, s) => const RegistrationScreen(),
-      ),
-      GoRoute(
-        path: AppRoutes.payments,
-        parentNavigatorKey: rootNavigatorKey,
-        builder: (_, s) => const PaymentsScreen(),
-      ),
-      GoRoute(
-        path: AppRoutes.subscribe,
-        parentNavigatorKey: rootNavigatorKey,
-        builder: (_, s) => const PaymentsScreen(mode: PaymentsMode.upgrade),
-      ),
-      GoRoute(
-        path: AppRoutes.paywall,
-        parentNavigatorKey: rootNavigatorKey,
-        builder: (_, s) => const PaymentsScreen(mode: PaymentsMode.paywall),
-      ),
-      // The resume hook already re-checks billing; the link only needs to land
-      // somewhere real. A doctor still unpaid is sent on to the paywall by the
-      // top-level redirect before this one runs.
-      GoRoute(
-        path: AppRoutes.billing,
-        redirect: (_, _) => AppRoutes.chats,
       ),
       GoRoute(
         path: AppRoutes.orgSelection,
@@ -342,20 +313,6 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (auth.stage == AuthStage.needsRegistration && loc != AppRoutes.registration) {
         return AppRoutes.registration;
       }
-      if (auth.stage == AuthStage.needsPayment && loc != AppRoutes.payments) {
-        return AppRoutes.payments;
-      }
-      // "Read my messages": a lapsed doctor may go anywhere past onboarding.
-      // Sending still 402s, and the 402 clears read-only.
-      final reading = auth.readOnly &&
-          !inAuthFlow &&
-          !inOrgFlow &&
-          loc != AppRoutes.payments;
-      if (auth.stage == AuthStage.needsSubscription &&
-          loc != AppRoutes.paywall &&
-          !reading) {
-        return AppRoutes.paywall;
-      }
       if (auth.stage == AuthStage.needsOrg && !inOrgFlow) {
         return AppRoutes.orgSelection;
       }
@@ -368,10 +325,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       // two stay open.
       final orgAction = loc == AppRoutes.createOrg || loc == AppRoutes.joinOrg;
       if (auth.stage == AuthStage.signedIn &&
-          (inAuthFlow ||
-              (inOrgFlow && !orgAction) ||
-              loc == AppRoutes.payments ||
-              loc == AppRoutes.paywall)) {
+          (inAuthFlow || (inOrgFlow && !orgAction))) {
         return AppRoutes.chats;
       }
       return null;

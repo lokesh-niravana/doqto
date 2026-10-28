@@ -75,7 +75,9 @@ def _billing_out(user: User) -> BillingOut:
 
 @router.get(ApiRoutes.BILLING_STATUS, response_model=BillingOut)
 async def billing_status(user: User = Depends(get_current_user)) -> BillingOut:
-    return _billing_out(user)
+    # Doqto is free for now: nothing is gated. Installed app builds that still
+    # ask (Android 35) must never be shown a paywall, so everyone is entitled.
+    return _billing_out(user).model_copy(update={"entitled": True, "reason": "free"})
 
 
 @router.post(ApiRoutes.BILLING_CHECKOUT, response_model=UrlOut)

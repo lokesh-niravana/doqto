@@ -10,7 +10,7 @@ from tests import helpers
 pytestmark = pytest.mark.asyncio
 
 
-async def test_status_reports_a_running_trial(client, db):
+async def test_status_says_everyone_is_entitled_while_doqto_is_free(client, db):
     user = await helpers.create_user(db)
     headers = await helpers.auth_headers(user.id)
 
@@ -19,7 +19,7 @@ async def test_status_reports_a_running_trial(client, db):
     assert r.status_code == 200
     body = r.json()
     assert body["entitled"] is True
-    assert body["reason"] == "trial"
+    assert body["reason"] == "free"
     assert body["trial_ends_at"] is not None
     assert body["plan"] is None
     # The app computes the yearly saving from these, never from typed-in copy.
@@ -27,14 +27,19 @@ async def test_status_reports_a_running_trial(client, db):
     assert body["yearly_cents"] == 8000
 
 
-async def test_status_reports_an_expired_user(client, db):
-    user = await helpers.create_user(db, trial_days=None)
-    headers = await helpers.auth_headers(user.id)
+async def test_an_expired_trial_still_sends_messages(client, db, chat):
+    # Free: no endpoint is gated, and old app builds see no paywall.
+    chat.alice.trial_ends_at = None
+    await db.commit()
 
-    r = await client.get("/api/v1/billing", headers=headers)
-
-    assert r.json()["entitled"] is False
-    assert r.json()["reason"] == "expired"
+    r = await client.post(
+        f"/api/v1/conversations/{chat.conv.id}/messages",
+        json={"content": "are you there"},
+        headers=chat.alice_headers,
+    )
+    assert r.status_code == 200, r.text
+    r = await client.get("/api/v1/billing", headers=chat.alice_headers)
+    assert r.json()["entitled"] is True
 
 
 async def test_checkout_returns_a_stripe_url_and_remembers_the_customer(
@@ -136,7 +141,6 @@ async def test_registering_starts_the_trial(client, db):
 
     body = (await client.get("/api/v1/billing", headers=headers)).json()
     assert body["entitled"] is True
-    assert body["reason"] == "trial"
     trial_ends_at = datetime.fromisoformat(body["trial_ends_at"])
     assert trial_ends_at > datetime.now(timezone.utc) + timedelta(days=13)
 

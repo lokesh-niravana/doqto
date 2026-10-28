@@ -34,8 +34,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       AuthStage.pendingVerification => AppRoutes.pending,
       AuthStage.needsOrg => AppRoutes.orgSelection,
       AuthStage.needsRegistration => AppRoutes.registration,
-      AuthStage.needsPayment => AppRoutes.payments,
-      AuthStage.needsSubscription => AppRoutes.paywall,
       _ => AppRoutes.login,
     });
   }

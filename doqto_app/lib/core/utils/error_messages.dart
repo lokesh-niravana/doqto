@@ -112,13 +112,6 @@ class ErrorMessages {
     'conversation_not_open':
         'You can\'t schedule messages in this conversation yet.',
 
-    // Billing
-    'subscription_required':
-        'Your free trial has ended. Subscribe to keep sending messages.',
-    'already_subscribed': 'You already have a subscription. Manage it in Settings.',
-    'no_billing_account': 'There is no subscription to manage yet.',
-    'billing_unavailable':
-        'Payments are temporarily unavailable. Please try again shortly.',
   };
 
   /// Translate any thrown error into a physician-friendly single-line message.

@@ -267,7 +267,7 @@ class _MemberRowState extends ConsumerState<_MemberRow> {
   }
 }
 
-/// Onboarding no longer forces anyone into an org (see docs/payments.md), so
+/// Onboarding no longer forces anyone into an org, so
 /// this is the normal state for a new user — not an error. It offers the same
 /// two doors the old org-selection step did.
 class _NoOrg extends StatelessWidget {

@@ -4,11 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:doqto_app/core/di/providers.dart';
 import 'package:doqto_app/data/api/api_client.dart';
 import 'package:doqto_app/data/api/token_storage.dart';
-import 'package:doqto_app/data/models/billing.dart';
 import 'package:doqto_app/data/models/user.dart';
 import 'package:doqto_app/data/models/organization.dart';
 import 'package:doqto_app/data/repositories/auth_repository.dart';
-import 'package:doqto_app/data/repositories/billing_repository.dart';
 import 'package:doqto_app/data/repositories/org_repository.dart';
 import 'package:doqto_app/data/services/auth_broker.dart';
 import 'package:doqto_app/state/auth_state.dart';
@@ -52,17 +50,6 @@ class _Orgs extends OrgRepository {
   Future<List<Organization>> listMine() async => [];
 }
 
-/// The stage resolver asks billing first; an entitled doctor passes through.
-class _Billing extends BillingRepository {
-  _Billing() : super(ApiClient());
-  @override
-  Future<Billing> status() async => const Billing(
-        entitled: true,
-        reason: 'trial',
-        monthlyCents: 899,
-        yearlyCents: 8000,
-      );
-}
 
 void main() {
   test('a Google token is exchanged for a Doqto session', () async {
@@ -71,7 +58,6 @@ void main() {
       authRepositoryProvider.overrideWithValue(auth),
       authBrokerProvider.overrideWithValue(FakeAuthBroker(idToken: 'google-tok')),
       orgRepositoryProvider.overrideWithValue(_Orgs()),
-      billingRepositoryProvider.overrideWithValue(_Billing()),
     ]);
     addTearDown(c.dispose);
 
@@ -99,7 +85,6 @@ void main() {
       authRepositoryProvider.overrideWithValue(auth),
       authBrokerProvider.overrideWithValue(FakeAuthBroker(idToken: null)),
       orgRepositoryProvider.overrideWithValue(_Orgs()),
-      billingRepositoryProvider.overrideWithValue(_Billing()),
     ]);
     addTearDown(c.dispose);
 
@@ -118,7 +103,6 @@ void main() {
       authRepositoryProvider.overrideWithValue(auth),
       authBrokerProvider.overrideWithValue(broker),
       orgRepositoryProvider.overrideWithValue(_Orgs()),
-      billingRepositoryProvider.overrideWithValue(_Billing()),
     ]);
     addTearDown(c.dispose);
 

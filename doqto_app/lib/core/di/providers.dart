@@ -4,7 +4,6 @@ import '../../data/api/api_client.dart';
 import '../../data/api/token_storage.dart';
 import '../../data/api/websocket_client.dart';
 import '../../data/repositories/auth_repository.dart';
-import '../../data/repositories/billing_repository.dart';
 import '../../data/services/auth_broker.dart';
 import '../../data/services/firebase_auth_broker.dart';
 import '../../data/repositories/chat_repository.dart';
@@ -81,9 +80,5 @@ final npiLookupProvider = Provider<NpiLookup>((ref) => NpiLookup());
 final networkCacheProvider = Provider<NetworkCache>((ref) => NetworkCache());
 
 final groupsCacheProvider = Provider<GroupsCache>((ref) => GroupsCache());
-
-final billingRepositoryProvider = Provider<BillingRepository>(
-  (ref) => BillingRepository(ref.watch(apiClientProvider)),
-);
 
 final urlOpenerProvider = Provider<UrlOpener>((ref) => const ExternalUrlOpener());

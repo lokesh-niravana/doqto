@@ -8,20 +8,12 @@ import '../core/enums/app_enums.dart';
 import '../data/models/user.dart';
 import '../data/services/auth_broker.dart';
 import '../data/repositories/user_repository.dart';
-import 'billing_state.dart';
 import 'org_state.dart';
 
 enum AuthStage {
   unknown,
   signedOut,
   needsRegistration,
-  /// Straight after registration: pick a plan. Only ever set by
-  /// [AuthNotifier.completeRegistration] — there is no server-side record of a
-  /// plan yet, so a returning user is never sent back here.
-  needsPayment,
-  /// The trial is over and there is no live subscription. The server decides
-  /// this (`GET /billing`); the app never infers it from dates.
-  needsSubscription,
   needsOrg,
   pendingVerification,
   signedIn,
@@ -30,23 +22,14 @@ enum AuthStage {
 class AuthState {
   final AuthStage stage;
   final User? user;
+  const AuthState(this.stage, this.user);
 
-  /// On the paywall, the doctor chose "Read my messages": the router lets
-  /// them past it, since reading never needs a subscription. The next 402
-  /// clears it. Deliberately not persisted — a restart shows the paywall.
-  final bool readOnly;
-  const AuthState(this.stage, this.user, {this.readOnly = false});
-
-  AuthState copyWith({AuthStage? stage, User? user, bool? readOnly}) => AuthState(
-        stage ?? this.stage,
-        user ?? this.user,
-        readOnly: readOnly ?? this.readOnly,
-      );
+  AuthState copyWith({AuthStage? stage, User? user}) =>
+      AuthState(stage ?? this.stage, user ?? this.user);
 }
 
 class AuthNotifier extends Notifier<AuthState> {
   StreamSubscription<String>? _tokenRefreshSub;
-  Future<void>? _billingRefresh;
 
   @override
   AuthState build() {
@@ -55,13 +38,6 @@ class AuthNotifier extends Notifier<AuthState> {
     // token expired, revoked, or backend returns session_revoked), drop
     // straight to signedOut. The router redirect fires automatically.
     ref.read(apiClientProvider).onSessionEnded = _onSessionEnded;
-    // A 402 means the server thinks the subscription lapsed: re-check and let
-    // the router move the doctor to the paywall. Read-only ends here too: they
-    // tried something that needs paying for.
-    ref.read(apiClientProvider).onPaymentRequired = () {
-      if (state.readOnly) state = state.copyWith(readOnly: false);
-      unawaited(refreshBilling());
-    };
     return const AuthState(AuthStage.unknown, null);
   }
 
@@ -119,14 +95,9 @@ class AuthNotifier extends Notifier<AuthState> {
   /// or can go straight to chats. Also hydrates [orgProvider] as a side effect
   /// so downstream screens have the active org available.
   Future<AuthStage> _resolveStageForRegisteredUser() async {
-    // The server is the authority. A failed check lets the user in: the
-    // endpoints still return 402, so failing open costs nothing and avoids
-    // locking someone out over a flaky network.
-    final billing = await ref.read(billingProvider.notifier).refresh();
-    if (billing != null && !billing.entitled) return AuthStage.needsSubscription;
     try {
       final orgs = await ref.read(orgRepositoryProvider).listMine();
-      // No org is no longer a blocker: onboarding ends at the plan picker and
+      // No org is no longer a blocker: onboarding ends at registration and
       // chats loads without one. Joining an org later comes back through here
       // and connects the socket then.
       if (orgs.isEmpty) return AuthStage.signedIn;
@@ -161,8 +132,8 @@ class AuthNotifier extends Notifier<AuthState> {
     final user = state.user;
     if (user == null) return;
     final nextStage = await _resolveStageForRegisteredUser();
-    // Same guard as [_refreshBilling]: a sign-out (or another doctor signing
-    // in) while this was in flight wins.
+    // A sign-out (or another doctor signing in) while this was in flight
+    // wins.
     if (state.user?.id != user.id || state.stage == AuthStage.signedOut) return;
     state = AuthState(nextStage, user);
   }
@@ -261,59 +232,7 @@ class AuthNotifier extends Notifier<AuthState> {
             .updateMe(UserPatchBody(city: city, state: practiceState));
       } catch (_) {}
     }
-    // Details are in — next stop is the plan picker.
-    state = AuthState(AuthStage.needsPayment, user);
-  }
-
-  /// Leaves the plan picker, whether they chose a plan or skipped. Nothing is
-  /// charged or persisted yet — see docs/payments.md.
-  Future<void> completePayment() async {
-    final user = state.user;
-    if (user == null) return;
     state = AuthState(await _resolveStageForRegisteredUser(), user);
-  }
-
-  /// "Read my messages" on the paywall. Only there: everyone else can already
-  /// read.
-  void enterReadOnly() {
-    if (state.stage != AuthStage.needsSubscription) return;
-    state = state.copyWith(readOnly: true);
-  }
-
-  /// Re-checks billing (and everything after it) once the doctor says they
-  /// have paid. Leaves the paywall only when the server agrees.
-  Future<void> recheckSubscription() => refreshOrgStatus();
-
-  /// Re-checks billing on resume (the browser may have taken a payment) and
-  /// on a 402. Re-resolves the stage only when the answer disagrees with where
-  /// the doctor is: entitled on the paywall, or lapsed anywhere past it.
-  ///
-  /// One at a time: a burst of 402s shares the re-check already in flight.
-  Future<void> refreshBilling() => _billingRefresh ??=
-      _refreshBilling().whenComplete(() => _billingRefresh = null);
-
-  static const _billingGated = {
-    AuthStage.needsSubscription,
-    AuthStage.needsOrg,
-    AuthStage.pendingVerification,
-    AuthStage.signedIn,
-  };
-
-  Future<void> _refreshBilling() async {
-    final user = state.user;
-    if (user == null || !_billingGated.contains(state.stage)) return;
-    // After every await: if the doctor signed out (or someone else signed in)
-    // meanwhile, this answer belongs to a session that no longer exists.
-    bool stale() =>
-        state.user?.id != user.id || !_billingGated.contains(state.stage);
-    final billing = await ref.read(billingProvider.notifier).refresh();
-    // Unreachable server: fail open, change nothing.
-    if (billing == null || stale()) return;
-    final onPaywall = state.stage == AuthStage.needsSubscription;
-    if (billing.entitled != onPaywall) return;
-    final next = await _resolveStageForRegisteredUser();
-    if (stale()) return;
-    state = AuthState(next, state.user);
   }
 
   /// Replace the cached user (e.g. after a profile update). Keeps the current
@@ -342,8 +261,6 @@ class AuthNotifier extends Notifier<AuthState> {
     await ref.read(websocketClientProvider).close();
     await _wipeLocalPhi();
     ref.read(orgProvider.notifier).clear();
-    // The next doctor on this device must never see this one's subscription.
-    ref.read(billingProvider.notifier).reset();
     state = const AuthState(AuthStage.signedOut, null);
   }
 }

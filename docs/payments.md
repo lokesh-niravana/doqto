@@ -1,5 +1,13 @@
 # Billing
 
+> **Doqto 1.0 is free (2026-10-28).** The app has no plan picker, paywall,
+> subscription row or In-App Purchase, and the backend gates nothing (no
+> 402). `GET /billing` answers `entitled: true, reason: "free"` so older
+> installed builds never show a paywall. The Stripe and Apple routes and
+> columns below stay in the backend, unused, for when paid plans return; the
+> app side lives in git history (9e67bf8) and must ship with In-App Purchase
+> on iOS (App Review 3.1.1).
+
 Doqto is a paid subscription: $8.99/month or $80/year, billed through Stripe.
 Every doctor gets a 14-day free trial with no card required. Reading existing
 messages never locks; sending does once the trial and any subscription have

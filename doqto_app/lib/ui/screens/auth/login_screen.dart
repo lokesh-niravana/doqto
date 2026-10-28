@@ -60,8 +60,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       if (stage == AuthStage.unknown || stage == AuthStage.signedOut) return;
       context.go(switch (stage) {
         AuthStage.needsRegistration => AppRoutes.registration,
-        AuthStage.needsPayment => AppRoutes.payments,
-        AuthStage.needsSubscription => AppRoutes.paywall,
         AuthStage.needsOrg => AppRoutes.orgSelection,
         AuthStage.pendingVerification => AppRoutes.pending,
         _ => AppRoutes.chats,

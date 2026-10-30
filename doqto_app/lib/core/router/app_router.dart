@@ -14,6 +14,7 @@ import '../../ui/screens/chat/chat_thread_screen.dart';
 import '../../ui/screens/chat/new_message_screen.dart';
 import '../../ui/screens/groups/create_group_flow_screen.dart';
 import '../../ui/screens/groups/group_detail_screen.dart';
+import '../../ui/screens/groups/group_info_screen.dart';
 import '../../ui/screens/groups/groups_tab_screen.dart';
 import '../../ui/screens/home/main_shell.dart';
 import '../../ui/screens/my_org/my_org_screen.dart';
@@ -63,12 +64,13 @@ class AppRoutes {
   static const invite = '/invite';
   static String inviteFor(String q) =>
       Uri(path: invite, queryParameters: {'q': q}).toString();
-  // Groups branch (M5). Detail/create/requests live INSIDE the branch so tab
-  // state is preserved. `/groups/create` MUST precede `/groups/:id` (the colon
-  // segment would otherwise swallow "create").
+  // Groups branch (M5). A group itself opens full screen, above the tabs.
+  // `/groups/create` MUST precede `/groups/:id` (the colon segment would
+  // otherwise swallow "create").
   static const groups = '/groups';
   static const groupsCreate = '/groups/create';
   static String group(String id) => '/groups/$id';
+  static String groupInfo(String id) => '/groups/$id/info';
   static const settings = '/settings';
   static const profile = '/profile';
   static const profileEdit = '/profile/edit';
@@ -151,12 +153,26 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
 
       // --- Full-screen creation flows (root navigator, no tab bar) ---
-      // `/groups/create` MUST be declared before the shell: the shell's
-      // `/groups/:id` would otherwise swallow "create".
+      // `/groups/create` MUST be declared before `/groups/:id` below, which
+      // would otherwise swallow "create".
       GoRoute(
         path: AppRoutes.groupsCreate,
         parentNavigatorKey: rootNavigatorKey,
         builder: (_, s) => const CreateGroupFlowScreen(),
+      ),
+      // A group is a chat: full screen like `/chat/:id`, no tab bar. Info
+      // precedes the bare id so ":id" never swallows "info".
+      GoRoute(
+        path: '/groups/:id/info',
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, state) =>
+            GroupInfoScreen(groupId: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/groups/:id',
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, state) =>
+            GroupDetailScreen(groupId: state.pathParameters['id']!),
       ),
       GoRoute(
         path: AppRoutes.newMessage,
@@ -203,19 +219,14 @@ final routerProvider = Provider<GoRouter>((ref) {
               ),
             ],
           ),
-          // Branch 2 — Groups (M5). The detail lives inside the branch so tab
-          // state is preserved; creation is full-screen above the shell.
+          // Branch 2 — Groups (M5). A group and its info open full screen above
+          // the shell, like a chat.
           StatefulShellBranch(
             navigatorKey: _groupsNavKey,
             routes: [
               GoRoute(
                 path: AppRoutes.groups,
                 builder: (_, s) => const GroupsTabScreen(),
-              ),
-              GoRoute(
-                path: '/groups/:id',
-                builder: (_, state) =>
-                    GroupDetailScreen(groupId: state.pathParameters['id']!),
               ),
             ],
           ),

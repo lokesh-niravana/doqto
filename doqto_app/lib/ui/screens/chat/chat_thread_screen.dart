@@ -20,11 +20,13 @@ import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../data/models/conversation.dart';
+import '../../../data/models/group.dart';
 import '../../../data/models/message.dart';
 import '../../../data/models/message_edit.dart';
 import '../../../data/models/organization.dart';
 import '../../../state/auth_state.dart';
 import '../../../state/chat_state.dart';
+import '../../../state/groups_state.dart';
 import '../../../state/notification_state.dart';
 import '../../../state/org_state.dart';
 import '../../widgets/app_pressable.dart';
@@ -40,16 +42,14 @@ import 'voice_recorder_panel.dart';
 class ChatThreadScreen extends ConsumerStatefulWidget {
   final String conversationId;
 
-  /// When false, the screen renders without its own AppBar — used when the
-  /// thread is embedded inside another screen's segment (e.g. a group detail's
-  /// Chat tab, which already shows the group header). All message plumbing
-  /// (MessagesNotifier, composer, receipts) is reused unchanged.
-  final bool showAppBar;
+  /// The network group this thread belongs to, when the caller already knows
+  /// it (the group route). Otherwise it comes from the conversation.
+  final String? groupId;
 
   const ChatThreadScreen({
     super.key,
     required this.conversationId,
-    this.showAppBar = true,
+    this.groupId,
   });
 
   @override
@@ -751,11 +751,27 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen> {
   /// Per-type bubble (logic unchanged from the pre-revamp itemBuilder);
   /// failed bubbles get press feedback via AppPressable but keep the exact
   /// same tap → retry/discard sheet flow.
+  /// In a group, who sent what: user id → member. Empty in a 1:1 chat.
+  Map<String, GroupMember> _members = const {};
+
+  /// "Dr Ravi Patel, Dr Sarah Kim, You": the header's member line.
+  static String _memberLine(List<GroupMember> members, String? meId) {
+    final others = [
+      for (final m in members)
+        if (m.userId != meId) m.fullName,
+    ];
+    return [...others, if (members.any((m) => m.userId == meId)) 'You']
+        .join(', ');
+  }
+
   Widget _buildBubble(Message m, bool isMine, List<Message> msgs, int i) {
     if (m.type == MessageType.system) {
       return SystemMessageBubble(text: m.content ?? '');
     }
     final grouped = _isGrouped(msgs, i);
+    // Groups name the sender above the first bubble of each run, like
+    // WhatsApp. Text bubbles carry it inside; media gets a label above.
+    final sender = isMine || grouped ? null : _members[m.senderId];
     // Sender deleted it: same tombstone for every type, no menu, no ticks.
     if (m.isDeleted) {
       return MessageBubble(
@@ -764,9 +780,32 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen> {
         timestamp: m.createdAt.toLocal(),
         grouped: grouped,
         deleted: true,
+        senderName: sender?.fullName,
+        senderColorIndex: sender?.avatarIndex ?? 0,
       );
     }
-    return _buildLiveBubble(m, isMine, msgs, i, grouped);
+    final bubble = _buildLiveBubble(m, isMine, msgs, i, grouped, sender);
+    if (sender == null || m.type == MessageType.text) return bubble;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(
+            left: AppSpacing.screenHorizontal + AppSpacing.xs,
+            bottom: 2,
+          ),
+          child: Text(
+            sender.fullName,
+            style: AppText.timestamp.copyWith(
+              color: AppColors.avatarColorFor(sender.avatarIndex),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        bubble,
+      ],
+    );
   }
 
   /// Any non-system row: long-press starts selection, taps toggle while
@@ -794,6 +833,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen> {
     List<Message> msgs,
     int i,
     bool grouped,
+    GroupMember? sender,
   ) {
     // Local outbox media/voice (sending or failed): the file isn't on the
     // server yet, so the URL-backed bubbles can't render it — show a labeled
@@ -883,6 +923,8 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen> {
       grouped: grouped,
       edited: m.editedAt != null,
       onEditedTap: () => _showEditHistory(m),
+      senderName: sender?.fullName,
+      senderColorIndex: sender?.avatarIndex ?? 0,
     );
     if (m.status == MessageStatus.failed && m.clientId != null) {
       return AppPressable(
@@ -949,6 +991,20 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen> {
             fallbackColorIndex: 0,
           );
 
+    // A group thread: members name the senders and fill the subtitle, and the
+    // header opens Group info instead of chat details.
+    final groupId = widget.groupId ?? conv?.groupId;
+    final members = groupId == null
+        ? const <GroupMember>[]
+        : (ref.watch(groupMembersProvider(groupId)).asData?.value ??
+              const <GroupMember>[]);
+    _members = {for (final m in members) m.userId: m};
+    final subtitle = otherTyping
+        ? null
+        : groupId == null
+        ? null
+        : _memberLine(members, me?.id);
+
     return PopScope(
       canPop: !_selecting,
       onPopInvokedWithResult: (didPop, _) {
@@ -957,15 +1013,15 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen> {
       child: Scaffold(
         appBar: _selecting
             ? _selectionBar()
-            : !widget.showAppBar
-            ? null
             : AppBar(
                 titleSpacing: 0,
                 title: display == null
                     ? const Text('Chat')
                     : InkWell(
                         onTap: () => context.push(
-                          AppRoutes.chatDetails(widget.conversationId),
+                          groupId == null
+                              ? AppRoutes.chatDetails(widget.conversationId)
+                              : AppRoutes.groupInfo(groupId),
                         ),
                         child: Row(
                           children: [
@@ -984,6 +1040,12 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen> {
                                     display.title,
                                     overflow: TextOverflow.ellipsis,
                                   ),
+                                  if (subtitle != null)
+                                    Text(
+                                      subtitle,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: AppText.caption,
+                                    ),
                                   if (otherTyping)
                                     Text(
                                       'typing…',

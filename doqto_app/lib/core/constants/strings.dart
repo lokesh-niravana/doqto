@@ -240,7 +240,8 @@ class Strings {
   static const String groupRequestToJoin = 'Request to join';
   static const String groupRequested = 'Requested';
   static const String groupInvited = 'Invited';
-  static const String groupMembersLabel = 'Members';
+  static const String groupYou = 'You';
+  static String groupMemberCount(int n) => n == 1 ? '1 member' : '$n members';
   static const String groupAboutLabel = 'About';
   static const String groupJoinedToast = 'You joined the group';
   static const String groupLeftToast = 'You left the group';
@@ -248,7 +249,6 @@ class Strings {
   static const String groupsMyGroups = 'My groups';
   static const String groupsDiscover = 'Discover';
   static const String groupsCreate = 'Create group';
-  static const String groupsChatLabel = 'Chat';
   static const String groupsOpenChat = 'Open chat';
   static const String groupsView = 'View';
   static const String groupsAdmins = 'Admins';

@@ -20,6 +20,7 @@
 # After it prints EXPORT SUCCEEDED: wait for TestFlight "Complete", then attach
 # the build to the version in App Store Connect and submit.
 set -euo pipefail
+export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8   # CocoaPods crashes under a C/POSIX locale (non-interactive shells)
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/doqto_app"
 ARCHIVE="$APP/build/ios/archive/Runner.xcarchive"

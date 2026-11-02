@@ -7,6 +7,7 @@ import '../core/di/providers.dart';
 import '../core/enums/app_enums.dart';
 import '../data/models/user.dart';
 import '../data/services/auth_broker.dart';
+import '../data/services/push_token_provider.dart';
 import '../data/repositories/user_repository.dart';
 import 'org_state.dart';
 
@@ -97,9 +98,14 @@ class AuthNotifier extends Notifier<AuthState> {
   Future<AuthStage> _resolveStageForRegisteredUser() async {
     try {
       final orgs = await ref.read(orgRepositoryProvider).listMine();
+      // Fire-and-forget: push registration must never block sign-in. It runs
+      // for every registered doctor, org or not — an org-less account still
+      // gets messages and connection requests.
+      unawaited(_syncPushToken());
       // No org is no longer a blocker: onboarding ends at registration and
-      // chats loads without one. Joining an org later comes back through here
-      // and connects the socket then.
+      // chats loads without one. The realtime socket is owned by
+      // realtimeSessionProvider, keyed on the auth stage, so it is live here
+      // too (it used to open only inside the org branch below).
       if (orgs.isEmpty) return AuthStage.signedIn;
       // An org adds to an account; it never gates it. A pending org (just
       // created, waiting for review) shows as pending on My Org, and chats
@@ -114,9 +120,6 @@ class AuthNotifier extends Notifier<AuthState> {
         ),
       );
       ref.read(orgProvider.notifier).setCurrent(org);
-      await _connectWs(org.id);
-      // Fire-and-forget: push registration must never block sign-in.
-      unawaited(_syncPushToken());
       return AuthStage.signedIn;
     } catch (_) {
       // If we can't reach the backend right now, assume needs-org so the user
@@ -138,17 +141,6 @@ class AuthNotifier extends Notifier<AuthState> {
     state = AuthState(nextStage, user);
   }
 
-  /// Open the realtime socket for the signed-in user's org. Drives instant
-  /// message delivery, read receipts, and typing indicators.
-  Future<void> _connectWs(String orgId) async {
-    // Token is read per reconnect attempt, so a token refreshed by the Dio
-    // interceptor is picked up automatically instead of fail-looping.
-    await ref.read(websocketClientProvider).connect(
-          orgId: orgId,
-          tokenProvider: () => ref.read(tokenStorageProvider).accessToken,
-        );
-  }
-
   DevicePlatform get _devicePlatform =>
       Platform.isIOS ? DevicePlatform.ios : DevicePlatform.android;
 
@@ -156,7 +148,14 @@ class AuthNotifier extends Notifier<AuthState> {
   /// and keep it registered across platform token rotations. Called after
   /// login and on every authed app start; the backend upsert is idempotent.
   Future<void> _syncPushToken() async {
-    final provider = ref.read(pushTokenProviderProvider);
+    // Everything here is best-effort: no Firebase binding (tests, a broken
+    // plugin) must never surface as an error out of sign-in.
+    final PushTokenProvider provider;
+    try {
+      provider = ref.read(pushTokenProviderProvider);
+    } catch (_) {
+      return;
+    }
     try {
       final token = await provider.getToken();
       if (token != null && token.isNotEmpty) {
@@ -168,13 +167,15 @@ class AuthNotifier extends Notifier<AuthState> {
       // Best-effort — retried on next app start / login.
     }
     await _tokenRefreshSub?.cancel();
-    _tokenRefreshSub = provider.onTokenRefresh.listen((token) async {
-      try {
-        await ref
-            .read(userRepositoryProvider)
-            .registerPushToken(token: token, platform: _devicePlatform);
-      } catch (_) {}
-    });
+    try {
+      _tokenRefreshSub = provider.onTokenRefresh.listen((token) async {
+        try {
+          await ref
+              .read(userRepositoryProvider)
+              .registerPushToken(token: token, platform: _devicePlatform);
+        } catch (_) {}
+      });
+    } catch (_) {}
   }
 
   /// Start phone verification. Firebase sends the SMS; the returned challenge
@@ -258,9 +259,9 @@ class AuthNotifier extends Notifier<AuthState> {
     try {
       await ref.read(authBrokerProvider).signOut();
     } catch (_) {}
-    await ref.read(websocketClientProvider).close();
     await _wipeLocalPhi();
     ref.read(orgProvider.notifier).clear();
+    // realtimeSessionProvider closes the socket on this transition.
     state = const AuthState(AuthStage.signedOut, null);
   }
 }

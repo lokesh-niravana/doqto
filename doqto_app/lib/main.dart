@@ -20,6 +20,7 @@ import 'data/services/network_cache.dart';
 import 'data/services/outbox.dart';
 import 'state/chat_state.dart';
 import 'state/notification_state.dart';
+import 'state/realtime_state.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -100,16 +101,19 @@ class _DoqtoAppState extends ConsumerState<DoqtoApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
-    // Resume = instant reconnect (skipping any pending backoff). The
-    // WsConnState.connected stream then drives conversation refresh, message
-    // catch-up, and outbox drain. Nothing on pause — the server's idle
-    // deadline reaps dead sockets, so brief app-switches survive.
-    ref.read(websocketClientProvider).ensureConnected();
+    // Resume = prove the socket is alive or redial now (skipping any pending
+    // backoff). The WsConnState.connected stream then drives conversation
+    // refresh, message catch-up, and outbox drain. Nothing on pause — the
+    // server's idle deadline reaps dead sockets, so brief app-switches survive.
+    ref.read(websocketClientProvider).onAppResumed();
   }
 
   @override
   Widget build(BuildContext context) {
     final router = ref.watch(routerProvider);
+    // Open the realtime socket for any signed-in doctor (org or not); close
+    // it on sign-out.
+    ref.watch(realtimeSessionProvider);
     // Activate WS → banner notifications for incoming messages.
     ref.watch(notificationListenerProvider);
     // Resend queued messages on start + every reconnect.

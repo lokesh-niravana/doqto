@@ -118,6 +118,6 @@ class ApiRoutes {
 
   // Admin endpoints live in the separate Next.js admin panel — not in the mobile app.
 
-  // WebSocket
-  static String wsOrg(String orgId) => '/ws/$orgId';
+  // WebSocket — user-scoped (A1): one socket per signed-in user, org or not.
+  static const String ws = '/ws';
 }

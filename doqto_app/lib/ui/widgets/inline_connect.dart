@@ -3,16 +3,17 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants/strings.dart';
-import '../../core/di/providers.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/utils/error_messages.dart';
+import '../../state/network_state.dart';
 import 'primary_button.dart';
 
 /// A minimal connect affordance for a person row (search, suggestions). PersonCard carries only a
 /// degree (not the full relationship), so this tracks invite state locally:
-/// idle → optimistic Pending on tap, calling [NetworkRepository.sendInvitation];
-/// rolls back + error-haptics on failure. The full state machine (accept /
-/// withdraw) lives on the profile screen via ConnectButton.
+/// idle → optimistic Pending on tap, sending through
+/// [SentInvitationsNotifier.send] so the Sent list, suggestions and any open
+/// profile update too; rolls back + error-haptics on failure. The full state
+/// machine (accept / withdraw) lives on the profile screen via ConnectButton.
 class InlineConnect extends ConsumerStatefulWidget {
   final String userId;
   const InlineConnect({
@@ -44,7 +45,7 @@ class InlineConnectState extends ConsumerState<InlineConnect> {
       _busy = true;
     });
     try {
-      await ref.read(networkRepositoryProvider).sendInvitation(widget.userId);
+      await ref.read(sentInvitationsProvider.notifier).send(widget.userId);
       widget.onSent?.call();
       if (mounted) {
         setState(() => _busy = false);

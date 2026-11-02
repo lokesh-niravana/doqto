@@ -365,6 +365,12 @@ class ConnectionService:
             db=db,
         )
         await db.commit()
+        # Sync the recipient's inbox (no notification/push — silent).
+        await ws_manager.publish_to_users(
+            [invitation.recipient_id],
+            WsEventServer.INVITATION_WITHDRAWN,
+            {"invitation_id": str(invitation.id), "sender_id": str(user.id)},
+        )
 
     # ------------------------------------------------------------------ #
     # Connections
@@ -455,8 +461,16 @@ class ConnectionService:
                 )
             )
 
-        # Withdraw/ignore pending invitations in both directions.
+        # Withdraw/ignore pending invitations in both directions. The outgoing
+        # one is read first: the target sees it vanish exactly as a withdraw.
         now = _now()
+        withdrawn_invitation_id = await db.scalar(
+            select(ConnectionInvitation.id).where(
+                ConnectionInvitation.sender_id == user.id,
+                ConnectionInvitation.recipient_id == target_id,
+                ConnectionInvitation.status == InvitationStatus.PENDING,
+            )
+        )
         await db.execute(
             ConnectionInvitation.__table__.update()
             .where(
@@ -489,7 +503,19 @@ class ConnectionService:
             await RelationshipService.remove_edge_cache(user.id, target_id)
         else:
             await RelationshipService.invalidate_second_degree(user.id, target_id)
-        # SILENT: no WS/notification to the blocked user.
+        # SILENT about the block itself: the target only sees what a removal
+        # or a withdraw would have shown them (identical frames), never that
+        # they were blocked. The ignored incoming invitation publishes nothing.
+        if had_connection:
+            await ws_manager.publish_to_users(
+                [target_id], WsEventServer.CONNECTION_REMOVED, {"user_id": str(user.id)}
+            )
+        if withdrawn_invitation_id is not None:
+            await ws_manager.publish_to_users(
+                [target_id],
+                WsEventServer.INVITATION_WITHDRAWN,
+                {"invitation_id": str(withdrawn_invitation_id), "sender_id": str(user.id)},
+            )
 
     @staticmethod
     async def unblock(

@@ -179,8 +179,7 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
     );
     if (ok != true) return;
     try {
-      await ref.read(networkRepositoryProvider).removeConnection(p.id);
-      await ref.read(connectionsProvider.notifier).refresh();
+      await ref.read(connectionsProvider.notifier).remove(p.id);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text(Strings.netConnectionRemovedToast)),
@@ -205,8 +204,7 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
     );
     if (ok != true) return;
     try {
-      await ref.read(networkRepositoryProvider).block(p.id);
-      await ref.read(connectionsProvider.notifier).refresh();
+      await ref.read(connectionsProvider.notifier).block(p.id);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text(Strings.netBlockedToast)),

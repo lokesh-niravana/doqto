@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -623,25 +624,22 @@ class MessageService:
         ).scalars().all()
         if not msg_ids:
             return False
-        receipts = (
-            await db.execute(
-                select(MessageReceipt).where(
-                    MessageReceipt.message_id.in_(msg_ids),
-                    MessageReceipt.user_id == user_id,
-                )
+        # One idempotent upsert (same reason as mark_conversation_read: the
+        # client stamps delivered on open and per live message, so calls
+        # overlap). Rows already delivered are left alone and not returned.
+        receipts = MessageReceipt.__table__.c
+        stmt = (
+            pg_insert(MessageReceipt)
+            .values([{"message_id": mid, "user_id": user_id, "delivered_at": now} for mid in msg_ids])
+            .on_conflict_do_update(
+                index_elements=[receipts.message_id, receipts.user_id],
+                set_={"delivered_at": now},
+                where=receipts.delivered_at.is_(None),
             )
-        ).scalars().all()
-        by_msg = {r.message_id: r for r in receipts}
-        changed = False
-        for mid in msg_ids:
-            r = by_msg.get(mid)
-            if r is None:
-                db.add(MessageReceipt(message_id=mid, user_id=user_id, delivered_at=now))
-                changed = True
-            elif r.delivered_at is None:
-                r.delivered_at = now
-                changed = True
-        return changed
+            .returning(receipts.message_id)
+        )
+        touched = (await db.execute(stmt)).scalars().all()
+        return bool(touched)
 
     @staticmethod
     async def delivered_message_ids(
@@ -764,21 +762,28 @@ class MessageService:
                 Message.is_deleted.is_(False),
             )
         )
-        for (message_id,) in unread.all():
-            existing = await db.scalar(
-                select(MessageReceipt).where(
-                    MessageReceipt.message_id == message_id,
-                    MessageReceipt.user_id == user_id,
-                )
+        message_ids = [message_id for (message_id,) in unread.all()]
+        if not message_ids:
+            return
+        # One idempotent upsert. The thread screen marks read on open and
+        # again as each live message lands, so two of these overlap routinely;
+        # a select-then-insert raced itself into a duplicate-key 500.
+        stmt = pg_insert(MessageReceipt).values(
+            [
+                {"message_id": mid, "user_id": user_id, "delivered_at": now, "read_at": now}
+                for mid in message_ids
+            ]
+        )
+        receipts = MessageReceipt.__table__.c
+        await db.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[receipts.message_id, receipts.user_id],
+                set_={
+                    "delivered_at": func.coalesce(receipts.delivered_at, now),
+                    "read_at": func.coalesce(receipts.read_at, now),
+                },
             )
-            if existing is None:
-                db.add(
-                    MessageReceipt(
-                        message_id=message_id, user_id=user_id, delivered_at=now, read_at=now
-                    )
-                )
-            elif existing.read_at is None:
-                existing.read_at = now
+        )
 
     @staticmethod
     async def mark_read(

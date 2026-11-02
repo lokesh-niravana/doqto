@@ -4,6 +4,8 @@ import '../core/di/providers.dart';
 import '../core/enums/app_enums.dart';
 import '../data/api/websocket_client.dart';
 import '../data/models/group.dart';
+import 'auth_state.dart';
+import 'realtime_state.dart';
 
 /// The two "My groups" buckets, tagged by which /me/groups query produced each
 /// entry so the tab can render an Invited chip. Groups are invite-only, so
@@ -17,26 +19,49 @@ class MyGroupsData {
   bool get isEmpty => member.isEmpty && invited.isEmpty;
 }
 
+/// True when [event] is about group [groupId] — either by `group_id` or, for
+/// the conversation-keyed member events, by the group's conversation id.
+bool _isAboutGroup(WsEvent event, {required String groupId, String? conversationId}) {
+  switch (event.type) {
+    case WsEventServer.groupUpdated:
+    case WsEventServer.groupMemberJoined:
+    case WsEventServer.groupInviteReceived:
+      return event.data['group_id'] == groupId;
+    case WsEventServer.memberAdded:
+    case WsEventServer.memberRemoved:
+      return conversationId != null &&
+          event.data['conversation_id'] == conversationId;
+    default:
+      return false;
+  }
+}
+
 /// The signed-in user's groups. Cache-first (Hive) for the member list so a
-/// cold start offline still paints; live-refreshes on group_member_joined /
-/// group_invite_received WS events and on reconnect — same idiom as
-/// [ConnectionsNotifier].
+/// cold start offline still paints; live-refreshes on every group event that
+/// can change the buckets (joined, invited, updated, removed) and on
+/// reconnect — same idiom as [ConnectionsNotifier].
 class MyGroupsNotifier extends AsyncNotifier<MyGroupsData> {
   @override
   Future<MyGroupsData> build() async {
-    final ws = ref.read(websocketClientProvider);
-    final sub = ws.events.listen((event) {
-      if (event.type == WsEventServer.groupMemberJoined ||
-          event.type == WsEventServer.groupInviteReceived) {
-        refresh();
-      }
-    });
-    // Gap recovery: a reconnect means events were missed — refetch.
-    final stateSub = ws.states.listen((s) {
-      if (s == WsConnState.connected) refresh();
-    });
-    ref.onDispose(sub.cancel);
-    ref.onDispose(stateSub.cancel);
+    listenRealtime(
+      ref,
+      refresh: refresh,
+      onEvent: (event, refresh) {
+        switch (event.type) {
+          case WsEventServer.groupMemberJoined:
+          case WsEventServer.groupInviteReceived:
+          case WsEventServer.groupUpdated:
+            refresh();
+          case WsEventServer.memberRemoved:
+            // Only my own removal changes which groups I'm in.
+            if (event.data['user_id'] == ref.read(authProvider).user?.id) {
+              refresh();
+            }
+          default:
+            break;
+        }
+      },
+    );
 
     final cache = ref.read(groupsCacheProvider);
     final cachedMembers = cache.myGroups();
@@ -84,15 +109,36 @@ class MyGroupsNotifier extends AsyncNotifier<MyGroupsData> {
 final myGroupsProvider =
     AsyncNotifierProvider<MyGroupsNotifier, MyGroupsData>(MyGroupsNotifier.new);
 
-/// Self-loading detail for one group, keyed by id. Carries the leave flow with
-/// an optimistic flip; every mutation invalidates [myGroupsProvider] so the tab
-/// stays truthful. There is no join flow — groups are invite-only.
+/// Self-loading detail for one group, keyed by id. Refetches in place when the
+/// group changes under us (name/policies edited, a member joined or left,
+/// roles moved) and on reconnect. Carries the leave flow with an optimistic
+/// flip; every mutation invalidates [myGroupsProvider] so the tab stays
+/// truthful. There is no join flow — groups are invite-only.
 class GroupDetailNotifier extends FamilyAsyncNotifier<Group, String> {
   @override
-  Future<Group> build(String groupId) =>
-      ref.read(groupsRepositoryProvider).getGroup(groupId);
+  Future<Group> build(String groupId) async {
+    listenRealtime(
+      ref,
+      refresh: refresh,
+      onEvent: (event, refresh) {
+        final convId = state.valueOrNull?.conversationId;
+        if (_isAboutGroup(event, groupId: groupId, conversationId: convId)) {
+          refresh();
+        }
+      },
+    );
+    return ref.read(groupsRepositoryProvider).getGroup(groupId);
+  }
 
   Group? get _g => state.valueOrNull;
+
+  Future<void> refresh() async {
+    try {
+      state = AsyncData(await ref.read(groupsRepositoryProvider).getGroup(arg));
+    } catch (_) {
+      // Keep showing what we have.
+    }
+  }
 
   Future<void> leave(String myUserId) async {
     final g = _g;
@@ -111,16 +157,44 @@ class GroupDetailNotifier extends FamilyAsyncNotifier<Group, String> {
       rethrow;
     }
   }
-
 }
 
 final groupDetailProvider =
     AsyncNotifierProvider.family<GroupDetailNotifier, Group, String>(
         GroupDetailNotifier.new);
 
-/// Active members of a group (auto-disposed; refetched when the segment mounts).
-final groupMembersProvider =
-    FutureProvider.autoDispose.family<List<GroupMember>, String>((ref, groupId) {
-  return ref.read(groupsRepositoryProvider).members(groupId);
-});
+/// Active members of a group (auto-disposed with the screen). Refetches in
+/// place on joins, removals, role changes and reconnect.
+class GroupMembersNotifier
+    extends AutoDisposeFamilyAsyncNotifier<List<GroupMember>, String> {
+  @override
+  Future<List<GroupMember>> build(String groupId) async {
+    listenRealtime(
+      ref,
+      refresh: refresh,
+      onEvent: (event, refresh) {
+        // The detail provider (if built) knows the conversation id that the
+        // member_added/removed events are keyed by.
+        final convId = ref.exists(groupDetailProvider(groupId))
+            ? ref.read(groupDetailProvider(groupId)).valueOrNull?.conversationId
+            : null;
+        if (_isAboutGroup(event, groupId: groupId, conversationId: convId)) {
+          refresh();
+        }
+      },
+    );
+    return ref.read(groupsRepositoryProvider).members(groupId);
+  }
 
+  Future<void> refresh() async {
+    try {
+      state = AsyncData(await ref.read(groupsRepositoryProvider).members(arg));
+    } catch (_) {
+      // Keep showing what we have.
+    }
+  }
+}
+
+final groupMembersProvider = AsyncNotifierProvider.autoDispose
+    .family<GroupMembersNotifier, List<GroupMember>, String>(
+        GroupMembersNotifier.new);

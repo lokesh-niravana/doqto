@@ -138,7 +138,7 @@ class PersonProfileScreen extends ConsumerWidget {
     );
     if (confirmed != true || !context.mounted) return;
     try {
-      await ref.read(networkRepositoryProvider).block(userId);
+      await ref.read(connectionsProvider.notifier).block(userId);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text(Strings.netBlockedToast)),

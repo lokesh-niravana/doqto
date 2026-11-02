@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from redis.asyncio import Redis
@@ -9,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RATE_LIMIT_READS_PER_MINUTE
 from app.core.dependencies import get_current_user, require_org_admin, require_org_member
-from app.core.enums import AuditAction
+from app.api.ws_manager import ws_manager
+from app.core.enums import AuditAction, OrgStatus, WsEventServer
 from app.core.rate_limit import enforce_rate_limit
 from app.core.redis_keys import presence_key
 from app.core.routes import ApiRoutes
@@ -61,6 +63,26 @@ def _hit_out(hit: DirectoryHit) -> DirectoryEntryOut:
     )
 
 
+async def publish_org_updated(
+    org_id: uuid.UUID, db: AsyncSession, *, extra_user_ids: Iterable[uuid.UUID] = ()
+) -> None:
+    """Tell every current member (plus `extra_user_ids`, e.g. a just-removed
+    member) that the org changed. Call strictly AFTER the commit — the
+    recipients and status are read back from the committed state."""
+    org = await db.scalar(select(Organization).where(Organization.id == org_id))
+    if org is None:
+        return
+    rows = await db.scalars(select(OrgMember.user_id).where(OrgMember.org_id == org_id))
+    recipients = {*rows.all(), *extra_user_ids}
+    if not recipients:
+        return
+    await ws_manager.publish_to_users(
+        list(recipients),
+        WsEventServer.ORG_UPDATED,
+        {"org_id": str(org.id), "status": OrgStatus(org.status).value},
+    )
+
+
 async def _to_out(org: Organization, db: AsyncSession) -> OrgOut:
     count = await OrgService.member_count(org_id=org.id, db=db)
     out = OrgOut.model_validate(org)
@@ -89,6 +111,8 @@ async def create_org(
     except OrgError as e:
         await db.rollback()
         raise _org_http_error(e) from e
+    await db.commit()
+    await publish_org_updated(org.id, db)
     return await _to_out(org, db)
 
 
@@ -129,6 +153,8 @@ async def join_by_directory(
         )
     except OrgError as e:
         raise _org_http_error(e) from e
+    await db.commit()
+    await publish_org_updated(org.id, db)
     return await _to_out(org, db)
 
 
@@ -157,6 +183,8 @@ async def join_org(
         org = await OrgService.join(user=user, invite_code=body.invite_code, db=db)
     except OrgError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await db.commit()
+    await publish_org_updated(org.id, db)
     return await _to_out(org, db)
 
 
@@ -218,6 +246,9 @@ async def remove_member(
         )
     except OrgError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await db.commit()
+    # The removed user is no longer a member — include them explicitly.
+    await publish_org_updated(org_id, db, extra_user_ids=[user_id])
     return OkResponse()
 
 
@@ -255,6 +286,7 @@ async def update_networking_settings(
         )
         await db.commit()
         await db.refresh(org)
+        await publish_org_updated(org_id, db)
     return OrgNetworkingSettingsOut.model_validate(org)
 
 

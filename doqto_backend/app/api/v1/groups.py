@@ -202,6 +202,7 @@ async def update_group(
         setattr(group, field, value)
     await db.commit()
     await db.refresh(group)
+    await GroupService.publish_group_updated(group, db)
     return _detail_out(group, membership)
 
 

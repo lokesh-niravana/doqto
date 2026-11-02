@@ -193,6 +193,13 @@ class WsEventServer(StrEnum):
     # Groups (M5) — recipient-scoped. SHARED (client renders them).
     GROUP_INVITE_RECEIVED = "group_invite_received"
     GROUP_MEMBER_JOINED = "group_member_joined"
+    # Realtime sync — recipient-scoped. Sent for every mutation another user
+    # can observe so the client never has to poll.
+    CONNECTED = "connected"
+    INVITATION_WITHDRAWN = "invitation_withdrawn"
+    ORG_UPDATED = "org_updated"
+    GROUP_UPDATED = "group_updated"
+    PROFILE_UPDATED = "profile_updated"
 
 
 class WsEventClient(StrEnum):

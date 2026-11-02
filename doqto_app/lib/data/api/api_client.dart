@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
 
@@ -13,6 +14,22 @@ class ApiException implements Exception {
 
   @override
   String toString() => 'ApiException($status): $detail';
+}
+
+/// `exp` claim of a JWT as a UTC instant, or null when the token is not a
+/// readable JWT. No signature check — this is only for deciding whether to
+/// refresh before the server would reject it.
+DateTime? jwtExpiry(String token) {
+  final parts = token.split('.');
+  if (parts.length < 2) return null;
+  try {
+    final payload = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+    final exp = (jsonDecode(payload) as Map<String, dynamic>)['exp'];
+    if (exp is! num) return null;
+    return DateTime.fromMillisecondsSinceEpoch(exp.toInt() * 1000, isUtc: true);
+  } catch (_) {
+    return null;
+  }
 }
 
 /// Called by the interceptor when the refresh attempt itself is unrecoverable
@@ -82,6 +99,38 @@ class ApiClient {
       },
     ));
   }
+
+  /// Access token that will still be valid in a minute, refreshing first if
+  /// needed. The socket dials with this: a token that expired while the app
+  /// was backgrounded would otherwise bounce off the server (4401) until some
+  /// REST call happened to trigger the interceptor's refresh. A refresh the
+  /// server rejects ends the session exactly like the interceptor does; a
+  /// network failure returns the token we have and lets the caller retry.
+  Future<String?> freshAccessToken() async {
+    final token = await _tokens.accessToken;
+    if (token == null || token.isEmpty) return null;
+    final exp = jwtExpiry(token);
+    if (exp == null ||
+        exp.isAfter(DateTime.now().toUtc().add(tokenRefreshLeeway))) {
+      return token;
+    }
+    try {
+      await _refreshOnce();
+    } on ApiException catch (e) {
+      if (e.status == 401 || e.status == 403) {
+        await _tokens.clear();
+        onSessionEnded?.call();
+        return null;
+      }
+      return token;
+    } catch (_) {
+      return token;
+    }
+    return _tokens.accessToken;
+  }
+
+  /// Refresh when the access token expires within this window.
+  static const Duration tokenRefreshLeeway = Duration(seconds: 60);
 
   bool _isAuthEndpoint(String path) =>
       path.contains(ApiRoutes.authFirebase) ||

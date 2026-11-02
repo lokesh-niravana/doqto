@@ -11,12 +11,13 @@ from app.core.constants import (
     AVATAR_ALLOWED_MIME,
     AVATAR_MAX_BYTES,
 )
+from app.api.ws_manager import ws_manager
 from app.core.dependencies import get_current_user
-from app.core.enums import InvitationStatus
+from app.core.enums import InvitationStatus, WsEventServer
 from app.core.permissions import can_message, can_view_profile
 from app.core.routes import ApiRoutes
 from app.db.postgres import get_db
-from app.models import ConnectionInvitation, User, UserPrivacySettings
+from app.models import ConnectionInvitation, OrgMember, User, UserPrivacySettings
 from app.schemas.auth import LinkPhoneIn
 from app.schemas.common import OkResponse
 from app.schemas.people import PublicProfileOut, location_label
@@ -34,6 +35,30 @@ from sqlalchemy import and_, or_, select
 router = APIRouter()
 
 _DEGREE_LABEL = {1: "1st", 2: "2nd", "3+": "3rd", "out": "out"}
+
+
+async def _profile_audience(user_id: uuid.UUID, db: AsyncSession) -> list[uuid.UUID]:
+    """Everyone who renders this user's profile from a cache: first-degree
+    connections ∪ members of every org the user belongs to, minus the user."""
+    first_degree = await RelationshipService.first_degree_ids(user_id, db)
+    my_orgs = select(OrgMember.org_id).where(OrgMember.user_id == user_id)
+    colleagues = await db.scalars(
+        select(OrgMember.user_id).where(OrgMember.org_id.in_(my_orgs)).distinct()
+    )
+    audience = {*first_degree, *colleagues.all()}
+    audience.discard(user_id)
+    return list(audience)
+
+
+async def _commit_and_publish_profile_updated(user: User, db: AsyncSession) -> None:
+    """Commit the profile mutation, then fan `profile_updated` out to the
+    audience. Strictly post-commit so nobody refetches a stale row."""
+    await db.commit()
+    recipients = await _profile_audience(user.id, db)
+    if recipients:
+        await ws_manager.publish_to_users(
+            recipients, WsEventServer.PROFILE_UPDATED, {"user_id": str(user.id)}
+        )
 
 
 async def _get_or_create_privacy(user_id, db: AsyncSession) -> UserPrivacySettings:
@@ -131,6 +156,7 @@ async def update_me(
             setattr(user, field, data[field])
     await db.flush()
     await db.refresh(user)
+    await _commit_and_publish_profile_updated(user, db)
     return await build_user_out(user)
 
 
@@ -237,6 +263,7 @@ async def upload_avatar(
     user.avatar_url = key
     await db.flush()
     await db.refresh(user)
+    await _commit_and_publish_profile_updated(user, db)
     return await build_user_out(user)
 
 
@@ -297,4 +324,5 @@ async def delete_avatar(
     user.avatar_url = None
     await db.flush()
     await db.refresh(user)
+    await _commit_and_publish_profile_updated(user, db)
     return await build_user_out(user)

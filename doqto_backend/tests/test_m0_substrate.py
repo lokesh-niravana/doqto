@@ -168,6 +168,10 @@ async def test_ws_authenticates_user_with_no_org_membership(ws_env):
     client = TestClient(app)
     with client.websocket_connect("/ws") as ws:
         ws.send_json({"type": "auth", "token": helpers.access_token(lone.id)})
+        assert ws.receive_json() == {
+            "type": WsEventServer.CONNECTED.value,
+            "data": {"user_id": str(lone.id)},
+        }
         ws.send_json({"type": "heartbeat"})
         frame = ws.receive_json()
         assert frame == {"type": WsEventServer.HEARTBEAT_ACK.value, "data": {}}
@@ -178,6 +182,10 @@ async def test_ws_org_alias_registers_user_in_flat_registry(ws_env):
     client = TestClient(app)
     with client.websocket_connect(f"/ws/{org_a.id}") as ws:
         ws.send_json({"type": "auth", "token": helpers.access_token(multi.id)})
+        assert ws.receive_json() == {
+            "type": WsEventServer.CONNECTED.value,
+            "data": {"user_id": str(multi.id)},
+        }
         ws.send_json({"type": "heartbeat"})
         frame = ws.receive_json()
         assert frame == {"type": WsEventServer.HEARTBEAT_ACK.value, "data": {}}
@@ -199,6 +207,7 @@ async def test_ws_connect_publishes_presence_per_org(ws_env, monkeypatch):
     client = TestClient(app)
     with client.websocket_connect("/ws") as ws:
         ws.send_json({"type": "auth", "token": helpers.access_token(multi.id)})
+        ws.receive_json()  # connected
         ws.send_json({"type": "heartbeat"})
         ws.receive_json()  # ack — connect path fully ran
         online = [

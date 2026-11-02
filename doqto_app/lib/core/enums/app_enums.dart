@@ -209,7 +209,14 @@ enum WsEventServer {
   conversationRequestDeclined,
   // Groups (M5) — recipient-scoped, PHI-free.
   groupInviteReceived,
-  groupMemberJoined;
+  groupMemberJoined,
+  // Realtime coverage (R1) — recipient-scoped, PHI-free.
+  /// First frame after a successful auth frame: the socket is live.
+  connected,
+  invitationWithdrawn,
+  orgUpdated,
+  groupUpdated,
+  profileUpdated;
 
   String get wire => switch (this) {
         WsEventServer.newMessage => 'new_message',
@@ -237,6 +244,11 @@ enum WsEventServer {
           'conversation_request_declined',
         WsEventServer.groupInviteReceived => 'group_invite_received',
         WsEventServer.groupMemberJoined => 'group_member_joined',
+        WsEventServer.connected => 'connected',
+        WsEventServer.invitationWithdrawn => 'invitation_withdrawn',
+        WsEventServer.orgUpdated => 'org_updated',
+        WsEventServer.groupUpdated => 'group_updated',
+        WsEventServer.profileUpdated => 'profile_updated',
       };
 
   static WsEventServer? fromWire(String s) => switch (s) {
@@ -265,6 +277,11 @@ enum WsEventServer {
           WsEventServer.conversationRequestDeclined,
         'group_invite_received' => WsEventServer.groupInviteReceived,
         'group_member_joined' => WsEventServer.groupMemberJoined,
+        'connected' => WsEventServer.connected,
+        'invitation_withdrawn' => WsEventServer.invitationWithdrawn,
+        'org_updated' => WsEventServer.orgUpdated,
+        'group_updated' => WsEventServer.groupUpdated,
+        'profile_updated' => WsEventServer.profileUpdated,
         _ => null,
       };
 }

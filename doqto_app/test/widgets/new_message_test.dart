@@ -71,6 +71,13 @@ class _Org extends OrgNotifier {
   OrgState build() => OrgState(current: org);
 }
 
+class _Members extends OrgMembersNotifier {
+  _Members(this.members);
+  final List<OrgMember> members;
+  @override
+  Future<List<OrgMember>> build(String orgId) async => members;
+}
+
 class _Chats extends ChatRepository {
   _Chats() : super(ApiClient());
   final opened = <String>[];
@@ -128,7 +135,7 @@ Future<void> _open(
     overrides: [
       connectionsProvider.overrideWith(() => _Conns(connections)),
       orgProvider.overrideWith(() => _Org(org)),
-      orgMembersProvider.overrideWith((ref, id) async => members),
+      orgMembersProvider.overrideWith(() => _Members(members)),
       chatRepositoryProvider.overrideWithValue(_chats),
     ],
     child: MaterialApp.router(routerConfig: router),

@@ -35,15 +35,51 @@ async def ws_user(db):
     redis_mod._redis = None
 
 
+def _connected(user) -> dict:
+    return {"type": WsEventServer.CONNECTED.value, "data": {"user_id": str(user.id)}}
+
+
 async def test_heartbeat_gets_ack(ws_user, monkeypatch):
     monkeypatch.setattr(ws_module, "WS_HEARTBEAT_TIMEOUT_SECONDS", 2)
     org, user, token = ws_user
     client = TestClient(app)
     with client.websocket_connect(f"/ws/{org.id}") as ws:
         ws.send_json({"type": "auth", "token": token})
+        assert ws.receive_json() == _connected(user)
         ws.send_json({"type": "heartbeat"})
         frame = ws.receive_json()
         assert frame == {"type": WsEventServer.HEARTBEAT_ACK.value, "data": {}}
+
+
+# ------------------------------------------------ `connected` is the first frame
+async def test_connected_is_first_frame_on_ws(ws_user):
+    _, user, token = ws_user
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "auth", "token": token})
+        assert ws.receive_json() == _connected(user)
+
+
+async def test_connected_is_first_frame_on_org_alias(ws_user):
+    org, user, token = ws_user
+    client = TestClient(app)
+    with client.websocket_connect(f"/ws/{org.id}") as ws:
+        ws.send_json({"type": "auth", "token": token})
+        assert ws.receive_json() == _connected(user)
+
+
+async def test_connected_arrives_for_user_with_no_org(db):
+    lone = await helpers.create_user(db, full_name="Dr Lone")
+    token = helpers.access_token(lone.id)
+    redis_mod._redis = None
+    try:
+        client = TestClient(app)
+        with client.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "auth", "token": token})
+            # No org → no presence broadcast; this is the only frame they get.
+            assert ws.receive_json() == _connected(lone)
+    finally:
+        redis_mod._redis = None
 
 
 async def test_silent_socket_is_reaped_and_presence_goes_away(ws_user, monkeypatch):
@@ -52,6 +88,7 @@ async def test_silent_socket_is_reaped_and_presence_goes_away(ws_user, monkeypat
     client = TestClient(app)
     with client.websocket_connect(f"/ws/{org.id}") as ws:
         ws.send_json({"type": "auth", "token": token})
+        assert ws.receive_json() == _connected(user)
         # Send nothing more: server must close the connection after the timeout.
         with pytest.raises(WebSocketDisconnect):
             ws.receive_json()
@@ -72,6 +109,7 @@ async def test_heartbeats_keep_socket_alive_past_timeout(ws_user, monkeypatch):
     start = time.monotonic()
     with client.websocket_connect(f"/ws/{org.id}") as ws:
         ws.send_json({"type": "auth", "token": token})
+        assert ws.receive_json() == _connected(user)
         # Heartbeat every ~0.3s until well past 1× the timeout.
         while time.monotonic() - start < 1.5:
             ws.send_json({"type": "heartbeat"})

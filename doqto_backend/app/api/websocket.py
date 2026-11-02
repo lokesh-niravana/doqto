@@ -79,6 +79,11 @@ async def _run_socket(websocket: WebSocket) -> None:
         await websocket.close(code=4401)
         return
     await ws_manager.connect(user_id, websocket, org_ids)
+    # Direct (no fanout): tells the client auth succeeded and the socket is
+    # registered — the only frame an org-less user would otherwise never get.
+    await websocket.send_json(
+        {"type": WsEventServer.CONNECTED.value, "data": {"user_id": str(user_id)}}
+    )
     redis: Redis = await get_redis()
     await redis.setex(presence_key(user_id), PRESENCE_ONLINE_TTL_SECONDS, PresenceStatus.ONLINE.value)
     # One presence broadcast per org the user belongs to (org-wide is

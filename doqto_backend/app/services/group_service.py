@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Request
@@ -177,6 +178,26 @@ class GroupService:
         await db.flush()
         await GroupService._sync_member(group, member.user_id, add=False, db=db)
         await GroupService._recount(group, db)
+
+    # ------------------------------------------------------------------ #
+    # Realtime sync
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    async def publish_group_updated(
+        group: Group, db: AsyncSession, *, extra_user_ids: Iterable[uuid.UUID] = ()
+    ) -> None:
+        """`group_updated` to every ACTIVE member plus `extra_user_ids` (a user
+        who just left the member set, or an invitee). Call strictly AFTER the
+        commit — recipients are read back from the committed state."""
+        members = await MessageService.member_ids(
+            conversation_id=group.conversation_id, db=db
+        )
+        recipients = {*members, *(u for u in extra_user_ids if u is not None)}
+        if not recipients:
+            return
+        await ws_manager.publish_to_users(
+            list(recipients), WsEventServer.GROUP_UPDATED, {"group_id": str(group.id)}
+        )
 
     # ------------------------------------------------------------------ #
     # Create
@@ -496,6 +517,8 @@ class GroupService:
             raise GroupError("invite_not_pending", status_code=409)
         invite.state = GroupInviteState.DECLINED
         await db.commit()
+        # Members see the pending invite disappear; the decliner already knows.
+        await GroupService.publish_group_updated(group, db)
 
     @staticmethod
     async def revoke_invite(
@@ -509,6 +532,10 @@ class GroupService:
             raise GroupError("invite_not_found", status_code=404)
         invite.state = GroupInviteState.REVOKED
         await db.commit()
+        # Members + the invitee (direct invites only; link invites have none).
+        await GroupService.publish_group_updated(
+            group, db, extra_user_ids=[invite.invitee_id]
+        )
 
     # ------------------------------------------------------------------ #
     # Roles, removal, ban, transfer (§9.3 capability matrix)
@@ -553,6 +580,7 @@ class GroupService:
             metadata={"member_id": str(target_id), "role": new_role.value},
         )
         await db.commit()
+        await GroupService.publish_group_updated(group, db)
 
     @staticmethod
     async def remove_member(
@@ -599,6 +627,7 @@ class GroupService:
             WsEventServer.MEMBER_REMOVED,
             {"conversation_id": str(group.conversation_id), "user_id": str(target_id)},
         )
+        await GroupService.publish_group_updated(group, db, extra_user_ids=[target_id])
 
     @staticmethod
     async def ban_member(
@@ -635,6 +664,7 @@ class GroupService:
             WsEventServer.MEMBER_REMOVED,
             {"conversation_id": str(group.conversation_id), "user_id": str(target_id)},
         )
+        await GroupService.publish_group_updated(group, db, extra_user_ids=[target_id])
 
     @staticmethod
     async def transfer_ownership(
@@ -661,6 +691,7 @@ class GroupService:
             metadata={"new_owner_id": str(new_owner_id)},
         )
         await db.commit()
+        await GroupService.publish_group_updated(group, db)
 
     # ------------------------------------------------------------------ #
     # Post-policy gate + member DM policy (wired from the send path / M6)

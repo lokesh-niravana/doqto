@@ -13,26 +13,34 @@ import '../data/models/message.dart';
 import '../data/repositories/chat_repository.dart';
 import '../data/services/outbox.dart';
 import 'auth_state.dart';
+import 'realtime_state.dart';
 
 /// Conversation list that live-updates: re-fetches in place (no loading flash)
-/// whenever a message is sent/received or read state changes. Cache-first so
-/// a cold start offline still shows the list.
+/// whenever anything that the list shows changes — a message sent/received,
+/// edited or deleted (preview), read state (unread badge), membership (a chat
+/// appears or disappears), a group rename. Bursts coalesce into one fetch.
+/// Cache-first so a cold start offline still shows the list.
 class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
+  static const _refreshOn = {
+    WsEventServer.newMessage,
+    WsEventServer.messageRead,
+    WsEventServer.messageEdited,
+    WsEventServer.messageDeleted,
+    WsEventServer.memberAdded,
+    WsEventServer.memberRemoved,
+    WsEventServer.groupUpdated,
+    WsEventServer.groupMemberJoined,
+  };
+
   @override
   Future<List<Conversation>> build() async {
-    final ws = ref.read(websocketClientProvider);
-    final sub = ws.events.listen((event) {
-      if (event.type == WsEventServer.newMessage ||
-          event.type == WsEventServer.messageRead) {
-        refresh();
-      }
-    });
-    // Gap recovery: a reconnect means events were missed — refetch.
-    final stateSub = ws.states.listen((s) {
-      if (s == WsConnState.connected) refresh();
-    });
-    ref.onDispose(sub.cancel);
-    ref.onDispose(stateSub.cancel);
+    listenRealtime(
+      ref,
+      refresh: refresh,
+      onEvent: (event, refresh) {
+        if (_refreshOn.contains(event.type)) refresh();
+      },
+    );
 
     final cache = ref.read(chatCacheProvider);
     final cached = cache.conversations();

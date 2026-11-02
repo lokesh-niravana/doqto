@@ -20,6 +20,7 @@ from app.schemas.admin_auth import AdminLoginIn
 from app.schemas.auth import TokenPair
 from app.schemas.organization import OrgApproveIn, OrgOut, OrgRejectIn
 from app.services.admin_auth_service import AdminAuthError, AdminAuthService
+from app.api.v1.orgs import publish_org_updated
 from app.services.org_service import OrgError, OrgService
 
 router = APIRouter()
@@ -92,6 +93,8 @@ async def verify_org(
         )
     except OrgError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await db.commit()
+    await publish_org_updated(org.id, db)
     return await _to_out(org, db)
 
 
@@ -108,4 +111,6 @@ async def reject_org(
         )
     except OrgError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await db.commit()
+    await publish_org_updated(org.id, db)
     return await _to_out(org, db)

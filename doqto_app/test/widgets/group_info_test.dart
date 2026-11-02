@@ -24,25 +24,30 @@ class _FakeDetail extends GroupDetailNotifier {
   Future<Group> build(String groupId) async => group;
 }
 
+class _FakeMembers extends GroupMembersNotifier {
+  @override
+  Future<List<GroupMember>> build(String groupId) async => [
+        GroupMember.fromJson({
+          'user_id': 'u1',
+          'full_name': 'Dr. Ravi Patel',
+          'specialty': 'Cardiology',
+          'role': 'admin',
+          'state': 'active',
+        }),
+        GroupMember.fromJson({
+          'user_id': 'u2',
+          'full_name': 'Dr. Sarah Kim',
+          'specialty': 'Heart Failure',
+          'role': 'member',
+          'state': 'active',
+        }),
+      ];
+}
+
 Widget _app(Group group) => ProviderScope(
       overrides: [
         groupDetailProvider.overrideWith(() => _FakeDetail(group)),
-        groupMembersProvider.overrideWith((ref, id) async => [
-              GroupMember.fromJson({
-                'user_id': 'u1',
-                'full_name': 'Dr. Ravi Patel',
-                'specialty': 'Cardiology',
-                'role': 'admin',
-                'state': 'active',
-              }),
-              GroupMember.fromJson({
-                'user_id': 'u2',
-                'full_name': 'Dr. Sarah Kim',
-                'specialty': 'Heart Failure',
-                'role': 'member',
-                'state': 'active',
-              }),
-            ]),
+        groupMembersProvider.overrideWith(_FakeMembers.new),
       ],
       child: const MaterialApp(home: GroupInfoScreen(groupId: 'g1')),
     );

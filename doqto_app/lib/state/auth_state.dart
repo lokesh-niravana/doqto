@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/painting.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/di/providers.dart';
@@ -63,6 +64,17 @@ class AuthNotifier extends Notifier<AuthState> {
     } catch (_) {}
     try {
       await ref.read(outboxMediaStoreProvider).deleteAll();
+    } catch (_) {}
+    // Chat photos kept on the phone (and, in production, whatever older
+    // builds cached by URL in the shared default cache).
+    try {
+      await ref.read(chatMediaCacheProvider).clear();
+    } catch (_) {}
+    // Decoded bitmaps held in memory.
+    try {
+      PaintingBinding.instance.imageCache
+        ..clear()
+        ..clearLiveImages();
     } catch (_) {}
   }
 

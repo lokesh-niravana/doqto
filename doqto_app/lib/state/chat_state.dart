@@ -11,6 +11,7 @@ import '../data/api/websocket_client.dart';
 import '../data/models/conversation.dart';
 import '../data/models/message.dart';
 import '../data/repositories/chat_repository.dart';
+import '../data/services/chat_media_cache.dart';
 import '../data/services/outbox.dart';
 import 'auth_state.dart';
 import 'realtime_state.dart';
@@ -100,6 +101,14 @@ Future<Message> deliverOutboxEntry(ChatRepository repo, OutboxEntry e) async {
         clientId: e.clientId,
       );
   }
+}
+
+/// The sender's own photo is already on disk: file it under the server id
+/// before the outbox copy is deleted, so the sent bubble never downloads it.
+Future<void> seedSentImage(
+    ChatMediaCache cache, OutboxEntry e, Message msg) async {
+  if (msg.type != MessageType.image || e.filePath == null) return;
+  await cache.seed(msg.id, File(e.filePath!));
 }
 
 /// True when the entry's media payload is gone from disk (nothing left to
@@ -212,6 +221,8 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
         case WsEventServer.messageDeleted:
           final msg = Message.fromJson(event.data);
           if (msg.conversationId == conversationId) _replace(msg);
+          // A deleted photo must not linger on this phone.
+          if (msg.isDeleted) ref.read(chatMediaCacheProvider).evict(msg.id);
           break;
         case WsEventServer.transcriptReady:
           final id = event.data['message_id'] as String;
@@ -358,6 +369,7 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
         ref.read(chatRepositoryProvider),
         entry,
       );
+      await seedSentImage(ref.read(chatMediaCacheProvider), entry, msg);
       await ref.read(outboxProvider).remove(entry.clientId);
       _insert(msg);
     } catch (_) {
@@ -506,11 +518,16 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
   /// Delete within 3 min of sending (server-enforced). Applies the tombstone.
   Future<void> delete(String messageId) async {
     _replace(await ref.read(chatRepositoryProvider).deleteMessage(messageId));
+    await ref.read(chatMediaCacheProvider).evict(messageId);
   }
 
   /// "Delete for me": drop the rows locally after the server hides them.
   Future<void> hide(List<String> messageIds) async {
     await ref.read(chatRepositoryProvider).hideMessages(messageIds);
+    final media = ref.read(chatMediaCacheProvider);
+    for (final id in messageIds) {
+      await media.evict(id);
+    }
     final ids = messageIds.toSet();
     state = AsyncData([
       for (final m in state.value ?? [])
@@ -570,7 +587,8 @@ final outboxDrainerProvider = Provider<void>((ref) {
         continue;
       }
       try {
-        await deliverOutboxEntry(repo, e);
+        final msg = await deliverOutboxEntry(repo, e);
+        await seedSentImage(ref.read(chatMediaCacheProvider), e, msg);
         await outbox.remove(e.clientId);
       } on ApiException catch (err) {
         // 413: payload too large — permanent for THIS entry, but the network

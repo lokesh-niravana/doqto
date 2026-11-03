@@ -28,6 +28,32 @@ production deployments MUST set:
    the app must never be reachable over plain `http://`/`ws://` outside local.
    WS auth is auth-frame only — tokens never appear in URLs or proxy logs.
 
+## PHI on the device
+
+Chat text lives in an encrypted Hive box; queued uploads live in the app's
+documents folder. Both are wiped when a session ends (sign-out, revoked
+session, account deletion).
+
+Chat photos are kept on the phone after the first view, as every clinical
+messenger does, under these safeguards (`lib/data/services/chat_media_cache.dart`):
+
+- **Keyed by message id.** Downloaded once through a 5-minute presigned URL,
+  then read from disk. A URL is only requested on a miss.
+- **App-private, not backed up.** The OS cache directory, which iCloud and
+  Android Auto Backup skip. Never written to the photo gallery.
+- **Locked-device protection.** On iOS the folder and every file carry
+  `NSFileProtectionComplete` (native channel `doqto/file_protection` in
+  `AppDelegate.swift`), so they are unreadable while the phone is locked.
+  Android keeps app-private files in credential-encrypted storage.
+- **Bounded.** Evicted after 30 days unused or past 500 photos. The OS may
+  also purge it under storage pressure; a purged photo downloads again.
+- **Wiped** with the rest of the session's PHI, and evicted when its message
+  is deleted or hidden. The wipe also empties the shared default image cache
+  where builds up to 41 stored chat photos by URL.
+
+Not done: app-level encryption of the cached files on top of OS encryption,
+and a remote wipe for a lost phone beyond revoking the session.
+
 ## Deferred items (documented, accepted for now)
 
 - **Audit rows share the request transaction**: a rolled-back request drops

@@ -29,6 +29,9 @@ dependencies:
   # Fonts + UI
   google_fonts: ^6.1.0
   cached_network_image: ^3.3.0
+  # Chat images keyed by message id (data/services/chat_media_cache.dart)
+  flutter_cache_manager: ^3.4.1
+  path: ^1.9.1
 
   # Media
   record: ^5.1.2

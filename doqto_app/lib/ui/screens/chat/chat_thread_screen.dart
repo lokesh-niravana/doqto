@@ -895,6 +895,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen> {
     if (m.type == MessageType.image) {
       return ImageBubble(
         key: ValueKey(m.id),
+        messageId: m.id,
         getFileUrl: () => ref.read(chatRepositoryProvider).fileUrl(m.id),
         isMine: isMine,
         timestamp: m.createdAt.toLocal(),

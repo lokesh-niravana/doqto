@@ -12,6 +12,7 @@ import '../../data/repositories/network_repository.dart';
 import '../../data/repositories/org_repository.dart';
 import '../../data/repositories/user_repository.dart';
 import '../../data/services/chat_cache.dart';
+import '../../data/services/chat_media_cache.dart';
 import '../../data/services/groups_cache.dart';
 import '../../data/services/network_cache.dart';
 import '../../data/services/npi_lookup.dart';
@@ -73,6 +74,12 @@ final pushTokenProviderProvider =
     Provider<PushTokenProvider>((ref) => FirebasePushTokenProvider());
 
 final chatCacheProvider = Provider<ChatCache>((ref) => ChatCache());
+
+/// Chat images on the phone, keyed by message id: downloaded once, wiped on
+/// sign-out. Overridden with a temp-dir backend in tests.
+final chatMediaCacheProvider = Provider<ChatMediaCache>(
+  (ref) => ChatMediaCache(CacheManagerMediaBackend()),
+);
 
 /// Public CMS registry prefill. Overridden with a fake in widget tests.
 final npiLookupProvider = Provider<NpiLookup>((ref) => NpiLookup());

@@ -1,7 +1,7 @@
 import 'dart:io';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -9,7 +9,9 @@ import '../../core/tokens/colors.dart';
 import '../../core/tokens/radii.dart';
 import '../../core/tokens/spacing.dart';
 import '../../core/tokens/typography.dart';
+import '../../core/di/providers.dart';
 import '../../data/models/message.dart';
+import '../../data/services/chat_media_cache.dart';
 import 'app_pressable.dart';
 import 'message_bubble.dart';
 
@@ -54,9 +56,11 @@ class _BubbleFooter extends StatelessWidget {
   }
 }
 
-/// Photo message. Lazily resolves a presigned URL (same pattern as
-/// VoiceNoteBubble) and renders the image; tap → full-screen viewer.
-class ImageBubble extends StatefulWidget {
+/// Photo message. Served from [ChatMediaCache] by message id: the first view
+/// downloads it (resolving a presigned URL only then), every later view reads
+/// the phone. Tap → full-screen viewer, same file.
+class ImageBubble extends ConsumerStatefulWidget {
+  final String messageId;
   final Future<String> Function() getFileUrl;
   final bool isMine;
   final DateTime timestamp;
@@ -65,6 +69,7 @@ class ImageBubble extends StatefulWidget {
 
   const ImageBubble({
     super.key,
+    required this.messageId,
     required this.getFileUrl,
     required this.isMine,
     required this.timestamp,
@@ -73,13 +78,33 @@ class ImageBubble extends StatefulWidget {
   });
 
   @override
-  State<ImageBubble> createState() => _ImageBubbleState();
+  ConsumerState<ImageBubble> createState() => _ImageBubbleState();
 }
 
-class _ImageBubbleState extends State<ImageBubble> {
-  late final Future<String> _url = widget.getFileUrl();
+class _ImageBubbleState extends ConsumerState<ImageBubble> {
+  late final ChatMediaCache _cache = ref.read(chatMediaCacheProvider);
+  File? _file;
+  bool _failed = false;
 
-  void _openViewer(String url) {
+  @override
+  void initState() {
+    super.initState();
+    // Already on the phone this run → paint now, no spinner frame.
+    _file = _cache.peek(widget.messageId);
+    if (_file == null) _load();
+  }
+
+  Future<void> _load() async {
+    if (_failed) setState(() => _failed = false);
+    try {
+      final f = await _cache.image(widget.messageId, widget.getFileUrl);
+      if (mounted) setState(() => _file = f);
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  void _openViewer(File file) {
     showDialog<void>(
       context: context,
       builder: (_) => Dialog.fullscreen(
@@ -88,7 +113,7 @@ class _ImageBubbleState extends State<ImageBubble> {
           children: [
             Positioned.fill(
               child: InteractiveViewer(
-                child: Center(child: CachedNetworkImage(imageUrl: url)),
+                child: Center(child: Image.file(file)),
               ),
             ),
             Positioned(
@@ -107,9 +132,45 @@ class _ImageBubbleState extends State<ImageBubble> {
     );
   }
 
+  Widget _broken(double width) => AppPressable(
+        // Tap to try again: a miss is usually just a dropped connection.
+        onTap: _load,
+        child: SizedBox(
+          width: width,
+          height: 120,
+          child: const Icon(Icons.broken_image_outlined, color: Colors.grey),
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     final maxW = MediaQuery.sizeOf(context).width * 0.65;
+    final file = _file;
+    final Widget image;
+    if (_failed) {
+      image = _broken(maxW - 8);
+    } else if (file == null) {
+      image = SizedBox(
+        width: maxW - 8,
+        height: 160,
+        child: const Center(child: CircularProgressIndicator()),
+      );
+    } else {
+      image = AppPressable(
+        onTap: () => _openViewer(file),
+        child: Image.file(
+          file,
+          width: maxW - 8,
+          fit: BoxFit.cover,
+          // Decode at bubble size, not camera size: a thread of photos
+          // otherwise holds full-resolution bitmaps in memory.
+          cacheWidth:
+              ((maxW - 8) * MediaQuery.devicePixelRatioOf(context)).round(),
+          gaplessPlayback: true,
+          errorBuilder: (_, _, _) => _broken(maxW - 8),
+        ),
+      );
+    }
     final bubble = Container(
       constraints: BoxConstraints(maxWidth: maxW),
       padding: const EdgeInsets.all(4),
@@ -123,50 +184,7 @@ class _ImageBubbleState extends State<ImageBubble> {
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: FutureBuilder<String>(
-              future: _url,
-              builder: (context, snap) {
-                if (snap.hasError) {
-                  return SizedBox(
-                    width: maxW - 8,
-                    height: 120,
-                    child: const Icon(Icons.broken_image_outlined,
-                        color: Colors.grey),
-                  );
-                }
-                if (!snap.hasData) {
-                  return SizedBox(
-                    width: maxW - 8,
-                    height: 160,
-                    child:
-                        const Center(child: CircularProgressIndicator()),
-                  );
-                }
-                final url = snap.data!;
-                return AppPressable(
-                  onTap: () => _openViewer(url),
-                  child: CachedNetworkImage(
-                    imageUrl: url,
-                    width: maxW - 8,
-                    fit: BoxFit.cover,
-                    placeholder: (_, _) => SizedBox(
-                      width: maxW - 8,
-                      height: 160,
-                      child:
-                          const Center(child: CircularProgressIndicator()),
-                    ),
-                    errorWidget: (_, _, _) => const SizedBox(
-                      height: 120,
-                      child: Icon(Icons.broken_image_outlined,
-                          color: Colors.grey),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
+          ClipRRect(borderRadius: BorderRadius.circular(12), child: image),
           Padding(
             padding: const EdgeInsets.fromLTRB(0, 3, 4, 2),
             child: _BubbleFooter(

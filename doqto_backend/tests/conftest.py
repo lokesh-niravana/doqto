@@ -96,6 +96,17 @@ async def _clean():
     redis = await get_redis()
     await redis.flushdb()
     yield
+    # Fire-and-forget work (push dispatch after a send, invite fan-out) opens
+    # its own DB session. Left pending when the loop closes, its connection
+    # sits idle-in-transaction and the next test's TRUNCATE waits forever.
+    # Let it finish; cancel anything that is still running after a grace.
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    if pending:
+        _, still = await asyncio.wait(pending, timeout=5)
+        for t in still:
+            t.cancel()
+        if still:
+            await asyncio.gather(*still, return_exceptions=True)
     try:
         await close_redis()
     except Exception:

@@ -15,7 +15,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
+from enum import Enum
 from typing import Protocol
 
 import httpx
@@ -30,17 +32,68 @@ from app.core.constants import (
     PUSH_TITLE,
 )
 from app.db.postgres import SessionLocal
-from app.models import DeviceToken, User
+from app.models import Conversation, DeviceToken, User
+from app.services.message_service import MessageService
 
 log = logging.getLogger("doqto.push")
+
+# How long Apple/Google hold a push for a phone that is off or offline. The
+# device gets it when it reconnects, app running or not. APNs keeps the newest
+# per collapse id, so a conversation arrives as one up-to-date banner.
+PUSH_TTL_SECONDS = 28 * 24 * 3600
+
+
+def fcm_message(
+    *, token: str, title: str, body: str, data: dict[str, str], collapse_key: str,
+    now: float | None = None,
+) -> dict:
+    """FCM HTTP v1 message. Pure, so the delivery contract is testable."""
+    now = time.time() if now is None else now
+    return {
+        "token": token,
+        "notification": {"title": title, "body": body},
+        "data": data,
+        "android": {
+            "collapse_key": collapse_key,
+            "priority": "high",
+            "ttl": f"{PUSH_TTL_SECONDS}s",
+        },
+        "apns": {
+            "headers": {
+                "apns-collapse-id": collapse_key,
+                "apns-priority": "10",
+                "apns-push-type": "alert",
+                "apns-expiration": str(int(now) + PUSH_TTL_SECONDS),
+            },
+            "payload": {"aps": {"sound": "default"}},
+        },
+    }
+
+
+def new_message_body(sender_name: str | None, unread: int) -> str:
+    """Sender name is directory data, not PHI; the count is not content."""
+    if not sender_name:
+        return PUSH_BODY_NEW_MESSAGE
+    if unread > 1:
+        return f"{sender_name} sent you {unread} new messages"
+    return f"{sender_name} sent you a message"
+
+
+class PushResult(str, Enum):
+    SENT = "sent"
+    # Transient or configuration failure (e.g. FCM 401 "Invalid APNs
+    # credential"): keep the token, but never log it as sent. That mislabel
+    # hid a broken APNs key for every iPhone (2026-11-03).
+    FAILED = "failed"
+    # Token permanently invalid (unregistered/expired): prune the row.
+    DEAD = "dead-token"
 
 
 class PushSender(Protocol):
     async def send(
         self, *, token: str, title: str, body: str, data: dict[str, str], collapse_key: str
-    ) -> bool:
-        """Deliver one push. Returns False iff the token is permanently
-        invalid (unregistered/expired) and its row should be pruned."""
+    ) -> PushResult:
+        """Deliver one push and say what happened."""
         ...
 
 
@@ -51,7 +104,7 @@ class DevLogPushSender:
         self, *, token: str, title: str, body: str, data: dict[str, str], collapse_key: str
     ) -> bool:
         log.info("[FAKE PUSH] %s → %s / %s %s", token[:12], title, body, data)
-        return True
+        return PushResult.SENT
 
 
 class FcmPushSender:
@@ -81,28 +134,27 @@ class FcmPushSender:
 
     async def send(
         self, *, token: str, title: str, body: str, data: dict[str, str], collapse_key: str
-    ) -> bool:
-        message = {
-            "token": token,
-            "notification": {"title": title, "body": body},
-            "data": data,
-            "android": {"collapse_key": collapse_key, "priority": "high"},
-            "apns": {
-                "headers": {"apns-collapse-id": collapse_key, "apns-priority": "10"},
-                "payload": {"aps": {"sound": "default"}},
-            },
-        }
+    ) -> PushResult:
+        message = fcm_message(
+            token=token, title=title, body=body, data=data, collapse_key=collapse_key
+        )
         bearer = await asyncio.to_thread(self._bearer)
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
                 self._url, json={"message": message}, headers={"Authorization": f"Bearer {bearer}"}
             )
         if resp.status_code == 200:
-            return True
+            return PushResult.SENT
         # UNREGISTERED / NOT_FOUND: token is dead, prune it. Anything else: keep.
         dead = resp.status_code == 404 or "UNREGISTERED" in resp.text
-        log.warning("fcm send failed %s %s", resp.status_code, resp.text[:200])
-        return not dead
+        # One line, with the reason: the old multi-line dump cut off before it.
+        try:
+            err = resp.json().get("error", {})
+            reason = f'{err.get("status")}: {err.get("message")}'
+        except ValueError:
+            reason = resp.text[:200].replace("\n", " ")
+        log.warning("fcm send failed %s %s", resp.status_code, reason)
+        return PushResult.DEAD if dead else PushResult.FAILED
 
 
 def _default_sender() -> PushSender:
@@ -225,15 +277,15 @@ class PushService:
                     )
                 ).all()
                 for row in rows:
-                    ok = await sender.send(
+                    result = await sender.send(
                         token=row.token,
                         title=title,
                         body=body,
                         data=data,
                         collapse_key=collapse_key,
                     )
-                    log.info("push %s user=%s", "sent" if ok else "dead-token", recipient_id)
-                    if not ok:
+                    log.info("push %s user=%s platform=%s", result.value, recipient_id, row.platform)
+                    if result is PushResult.DEAD:
                         await db.delete(row)
                 await db.commit()
         except Exception:  # noqa: BLE001 — never propagate into the caller
@@ -256,10 +308,20 @@ class PushService:
                 # The sender's name is directory data, not PHI — the body may
                 # carry it. Message content never goes in a push.
                 name = await db.scalar(select(User.full_name).where(User.id == sender_id))
-                body = f"{name} sent you a message" if name else PUSH_BODY_NEW_MESSAGE
+                conv = await db.get(Conversation, conversation_id)
                 for uid in recipient_ids:
                     if uid == sender_id:
                         continue
+                    # The banner collapses per conversation, so it carries the
+                    # unread count: eight messages read "8 new messages", not
+                    # one indistinguishable banner.
+                    unread = 0
+                    if conv is not None:
+                        counts = await MessageService.unread_counts(
+                            conversations=[conv], user_id=uid, db=db
+                        )
+                        unread = counts.get(conversation_id, 0)
+                    body = new_message_body(name, unread)
                     # No presence gate: a killed/backgrounded iOS app keeps its
                     # socket "open" for minutes, and FCM already suppresses
                     # foreground display on both platforms — no duplicates.
@@ -269,15 +331,18 @@ class PushService:
                         )
                     ).all()
                     for row in rows:
-                        ok = await sender.send(
+                        result = await sender.send(
                             token=row.token,
                             title=PUSH_TITLE,
                             body=body,
                             data=data,
                             collapse_key=str(conversation_id),
                         )
-                        log.info("push %s user=%s conv=%s", "sent" if ok else "dead-token", uid, conversation_id)
-                        if not ok:
+                        log.info(
+                            "push %s user=%s platform=%s conv=%s",
+                            result.value, uid, row.platform, conversation_id,
+                        )
+                        if result is PushResult.DEAD:
                             await db.delete(row)  # permanently-invalid token
                 await db.commit()
         except Exception:  # noqa: BLE001 — never propagate into the send path

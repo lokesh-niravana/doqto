@@ -14,6 +14,7 @@ from app.core.enums import AuditAction, InvitationStatus
 from app.core.permissions import can_start_direct
 from app.models import AuditLog, Connection, ConnectionInvitation, Notification
 from app.services import push_service
+from app.services.push_service import PushResult
 from app.services.push_service import PushService
 from app.services.relationship_service import RelationshipService
 from tests import helpers
@@ -25,9 +26,9 @@ class RecordingSender:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def send(self, *, token, title, body, data, collapse_key) -> bool:
+    async def send(self, *, token, title, body, data, collapse_key) -> PushResult:
         self.calls.append({"token": token, "title": title, "body": body, "data": data})
-        return True
+        return PushResult.SENT
 
 
 @pytest.fixture(autouse=True)

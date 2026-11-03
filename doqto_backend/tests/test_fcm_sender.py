@@ -8,6 +8,7 @@ import pytest
 
 from app.core.config import settings
 from app.services import push_service
+from app.services.push_service import PushResult
 
 def _fake_sa() -> dict:
     from cryptography.hazmat.primitives import serialization
@@ -57,7 +58,7 @@ async def test_send_shapes_v1_message(monkeypatch, sender):
     ok = await sender.send(
         token="t1", title="Doqto", body="New message", data={"conversation_id": "c"}, collapse_key="c"
     )
-    assert ok is True
+    assert ok is PushResult.SENT
     req = seen[0]
     assert req.url.path == "/v1/projects/doqto-test/messages:send"
     assert req.headers["authorization"] == "Bearer tok"
@@ -68,12 +69,23 @@ async def test_send_shapes_v1_message(monkeypatch, sender):
 
 async def test_unregistered_token_is_pruned(monkeypatch, sender):
     _patch_http(monkeypatch, 404, '{"error":{"status":"NOT_FOUND","details":[{"errorCode":"UNREGISTERED"}]}}', [])
-    assert await sender.send(token="t", title="a", body="b", data={}, collapse_key="k") is False
+    assert await sender.send(token="t", title="a", body="b", data={}, collapse_key="k") is PushResult.DEAD
 
 
 async def test_transient_error_keeps_token(monkeypatch, sender):
     _patch_http(monkeypatch, 503, "unavailable", [])
-    assert await sender.send(token="t", title="a", body="b", data={}, collapse_key="k") is True
+    assert await sender.send(token="t", title="a", body="b", data={}, collapse_key="k") is PushResult.FAILED
+
+
+async def test_bad_apns_credential_is_a_failure_with_its_reason(monkeypatch, sender, caplog):
+    """The prod failure of 2026-11-03: FCM 401 because the APNs key in
+    Firebase belonged to the old Apple team. Keep the token; say why."""
+    body = '{"error":{"code":401,"message":"Invalid APNs credential.","status":"UNAUTHENTICATED"}}'
+    _patch_http(monkeypatch, 401, body, [])
+    with caplog.at_level("WARNING", logger="doqto.push"):
+        r = await sender.send(token="t", title="a", body="b", data={}, collapse_key="k")
+    assert r is PushResult.FAILED
+    assert "UNAUTHENTICATED: Invalid APNs credential." in caplog.text
 
 
 def test_bearer_refresh_transport_is_installed(monkeypatch):

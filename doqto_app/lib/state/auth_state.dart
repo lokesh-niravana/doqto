@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -32,6 +33,22 @@ class AuthState {
 
 class AuthNotifier extends Notifier<AuthState> {
   StreamSubscription<String>? _tokenRefreshSub;
+
+  /// Waits between push-registration attempts when no token is available yet
+  /// or the API call fails. Tests shrink these.
+  @visibleForTesting
+  static List<Duration> pushRetryDelays = const [
+    Duration(seconds: 5),
+    Duration(seconds: 30),
+    Duration(minutes: 2),
+  ];
+
+  /// After a success, an app resume re-registers at most this often (keeps
+  /// last_seen fresh and heals a row the server pruned).
+  static const pushResyncInterval = Duration(hours: 6);
+
+  DateTime? _pushSyncedAt;
+  bool _pushSyncing = false;
 
   @override
   AuthState build() {
@@ -108,12 +125,12 @@ class AuthNotifier extends Notifier<AuthState> {
   /// or can go straight to chats. Also hydrates [orgProvider] as a side effect
   /// so downstream screens have the active org available.
   Future<AuthStage> _resolveStageForRegisteredUser() async {
+    // Fire-and-forget: push registration must never block sign-in. It runs
+    // for every registered doctor, org or not, and before the org lookup so a
+    // failure there cannot skip it.
+    unawaited(syncPushToken());
     try {
       final orgs = await ref.read(orgRepositoryProvider).listMine();
-      // Fire-and-forget: push registration must never block sign-in. It runs
-      // for every registered doctor, org or not — an org-less account still
-      // gets messages and connection requests.
-      unawaited(_syncPushToken());
       // No org is no longer a blocker: onboarding ends at registration and
       // chats loads without one. The realtime socket is owned by
       // realtimeSessionProvider, keyed on the auth stage, so it is live here
@@ -156,38 +173,69 @@ class AuthNotifier extends Notifier<AuthState> {
   DevicePlatform get _devicePlatform =>
       Platform.isIOS ? DevicePlatform.ios : DevicePlatform.android;
 
-  /// Register this device's push token (no-op while the provider is stubbed)
-  /// and keep it registered across platform token rotations. Called after
-  /// login and on every authed app start; the backend upsert is idempotent.
-  Future<void> _syncPushToken() async {
-    // Everything here is best-effort: no Firebase binding (tests, a broken
-    // plugin) must never surface as an error out of sign-in.
-    final PushTokenProvider provider;
+  /// Register this device's push token and keep it registered across
+  /// platform token rotations. Runs after sign-in, on every authed app start,
+  /// and on resume (see [onAppResumed]); the backend upsert is idempotent.
+  ///
+  /// A miss is retried on [pushRetryDelays]: on iOS the token is often not
+  /// ready in the first seconds after launch. Errors are logged, never thrown.
+  Future<void> syncPushToken() async {
+    if (_pushSyncing) return;
+    _pushSyncing = true;
     try {
-      provider = ref.read(pushTokenProviderProvider);
-    } catch (_) {
+      final PushTokenProvider provider;
+      try {
+        provider = ref.read(pushTokenProviderProvider);
+      } catch (_) {
+        return; // no Firebase binding (tests, a broken plugin)
+      }
+      final waits = [Duration.zero, ...pushRetryDelays];
+      for (var i = 0; i < waits.length; i++) {
+        if (waits[i] > Duration.zero) await Future<void>.delayed(waits[i]);
+        if (state.stage == AuthStage.signedOut) return;
+        try {
+          final token = await provider.getToken();
+          if (token != null && token.isNotEmpty) {
+            await ref
+                .read(userRepositoryProvider)
+                .registerPushToken(token: token, platform: _devicePlatform);
+            _pushSyncedAt = DateTime.now();
+            break;
+          }
+          debugPrint('push: no device token yet (attempt ${i + 1})');
+        } catch (e) {
+          debugPrint('push: registration failed (attempt ${i + 1}): $e');
+        }
+      }
+      await _tokenRefreshSub?.cancel();
+      try {
+        _tokenRefreshSub = provider.onTokenRefresh.listen((token) async {
+          try {
+            await ref
+                .read(userRepositoryProvider)
+                .registerPushToken(token: token, platform: _devicePlatform);
+            _pushSyncedAt = DateTime.now();
+          } catch (e) {
+            debugPrint('push: re-registration after rotation failed: $e');
+          }
+        });
+      } catch (_) {}
+    } finally {
+      _pushSyncing = false;
+    }
+  }
+
+  /// App came to the foreground: if this device is not known to be
+  /// registered (or it has been a while), register again. This is what heals
+  /// a phone that missed registration, without waiting for a cold start.
+  void onAppResumed() {
+    if (state.user == null || state.stage == AuthStage.signedOut) return;
+    if (state.stage == AuthStage.needsRegistration) return;
+    final last = _pushSyncedAt;
+    if (last != null && DateTime.now().difference(last) < pushResyncInterval) {
       return;
     }
-    try {
-      final token = await provider.getToken();
-      if (token != null && token.isNotEmpty) {
-        await ref
-            .read(userRepositoryProvider)
-            .registerPushToken(token: token, platform: _devicePlatform);
-      }
-    } catch (_) {
-      // Best-effort — retried on next app start / login.
-    }
-    await _tokenRefreshSub?.cancel();
-    try {
-      _tokenRefreshSub = provider.onTokenRefresh.listen((token) async {
-        try {
-          await ref
-              .read(userRepositoryProvider)
-              .registerPushToken(token: token, platform: _devicePlatform);
-        } catch (_) {}
-      });
-    } catch (_) {}
+    unawaited(syncPushToken());
   }
 
   /// Start phone verification. Firebase sends the SMS; the returned challenge

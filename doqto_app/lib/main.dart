@@ -20,6 +20,7 @@ import 'data/services/network_cache.dart';
 import 'data/services/outbox.dart';
 import 'state/chat_state.dart';
 import 'state/notification_state.dart';
+import 'state/auth_state.dart';
 import 'state/realtime_state.dart';
 
 Future<void> main() async {
@@ -106,6 +107,8 @@ class _DoqtoAppState extends ConsumerState<DoqtoApp>
     // refresh, message catch-up, and outbox drain. Nothing on pause — the
     // server's idle deadline reaps dead sockets, so brief app-switches survive.
     ref.read(websocketClientProvider).onAppResumed();
+    // A phone that missed push registration heals on the next resume.
+    ref.read(authProvider.notifier).onAppResumed();
   }
 
   @override

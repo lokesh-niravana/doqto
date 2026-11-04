@@ -87,6 +87,10 @@ class AuthNotifier extends Notifier<AuthState> {
     try {
       await ref.read(chatMediaCacheProvider).clear();
     } catch (_) {}
+    // Chat documents kept on the phone.
+    try {
+      await ref.read(chatDocumentStoreProvider).clear();
+    } catch (_) {}
     // Decoded bitmaps held in memory.
     try {
       PaintingBinding.instance.imageCache

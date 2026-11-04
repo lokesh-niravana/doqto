@@ -939,6 +939,8 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     }
     if (m.type == MessageType.file) {
       return FileBubble(
+        key: ValueKey(m.id),
+        messageId: m.id,
         getFileUrl: () => ref.read(chatRepositoryProvider).fileUrl(m.id),
         fileName: m.fileName ?? 'File',
         fileSizeBytes: m.fileSizeBytes,

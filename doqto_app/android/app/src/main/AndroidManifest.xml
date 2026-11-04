@@ -46,6 +46,17 @@
                 <data android:scheme="doqto"/>
             </intent-filter>
         </activity>
+        <!-- Lets another app read one chat document, per file and per grant.
+             exported=false: nothing can reach it without that grant. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.documents"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/document_paths" />
+        </provider>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

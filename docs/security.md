@@ -51,6 +51,24 @@ messenger does, under these safeguards (`lib/data/services/chat_media_cache.dart
   is deleted or hidden. The wipe also empties the shared default image cache
   where builds up to 41 stored chat photos by URL.
 
+Chat documents get the same safeguards in their own store
+(`lib/data/services/chat_document_store.dart`), kept under their real file name
+because viewers choose the format from the extension. The name comes from the
+sender, so it is reduced to one safe path segment. Unused documents go after 30
+days; there is no count limit.
+
+Documents are rendered on the device and never sent to a viewing service:
+
+- **iOS:** Apple's QuickLook inside the app, for every format it knows. Its
+  share button can still export a file. QuickLook offers no supported way to
+  remove it.
+- **Android PDF:** the platform's `PdfRenderer` inside the app.
+- **Android Word, Excel and the rest:** Android has no built-in renderer, so
+  the file opens in an installed app, only after a prompt saying it is leaving
+  Doqto. `FileProvider` grants that app read access to the one file. From then
+  on Doqto cannot protect that app's copy, and neither the wipe nor eviction
+  reaches it.
+
 Not done: app-level encryption of the cached files on top of OS encryption,
 and a remote wipe for a lost phone beyond revoking the session.
 

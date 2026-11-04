@@ -11,6 +11,7 @@ import '../data/api/websocket_client.dart';
 import '../data/models/conversation.dart';
 import '../data/models/message.dart';
 import '../data/repositories/chat_repository.dart';
+import '../data/services/chat_document_store.dart';
 import '../data/services/chat_media_cache.dart';
 import '../data/services/outbox.dart';
 import 'auth_state.dart';
@@ -112,6 +113,20 @@ Future<void> seedSentImage(
 ) async {
   if (msg.type != MessageType.image || e.filePath == null) return;
   await cache.seed(msg.id, File(e.filePath!));
+}
+
+/// Same for a sent document: its own bubble opens without a download.
+Future<void> seedSentDocument(
+  ChatDocumentStore store,
+  OutboxEntry e,
+  Message msg,
+) async {
+  if (msg.type != MessageType.file || e.filePath == null) return;
+  await store.seed(
+    msg.id,
+    msg.fileName ?? e.fileName ?? 'document',
+    File(e.filePath!),
+  );
 }
 
 /// True when the entry's media payload is gone from disk (nothing left to
@@ -237,7 +252,10 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
           final msg = Message.fromJson(event.data);
           if (msg.conversationId == conversationId) _replace(msg);
           // A deleted photo must not linger on this phone.
-          if (msg.isDeleted) ref.read(chatMediaCacheProvider).evict(msg.id);
+          if (msg.isDeleted) {
+            ref.read(chatMediaCacheProvider).evict(msg.id);
+            ref.read(chatDocumentStoreProvider).evict(msg.id);
+          }
           break;
         case WsEventServer.transcriptReady:
           final id = event.data['message_id'] as String;
@@ -385,6 +403,7 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
         entry,
       );
       await seedSentImage(ref.read(chatMediaCacheProvider), entry, msg);
+      await seedSentDocument(ref.read(chatDocumentStoreProvider), entry, msg);
       await ref.read(outboxProvider).remove(entry.clientId);
       _insert(msg);
     } catch (_) {
@@ -534,14 +553,17 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
   Future<void> delete(String messageId) async {
     _replace(await ref.read(chatRepositoryProvider).deleteMessage(messageId));
     await ref.read(chatMediaCacheProvider).evict(messageId);
+    await ref.read(chatDocumentStoreProvider).evict(messageId);
   }
 
   /// "Delete for me": drop the rows locally after the server hides them.
   Future<void> hide(List<String> messageIds) async {
     await ref.read(chatRepositoryProvider).hideMessages(messageIds);
     final media = ref.read(chatMediaCacheProvider);
+    final documents = ref.read(chatDocumentStoreProvider);
     for (final id in messageIds) {
       await media.evict(id);
+      await documents.evict(id);
     }
     final ids = messageIds.toSet();
     state = AsyncData([
@@ -604,6 +626,7 @@ final outboxDrainerProvider = Provider<void>((ref) {
       try {
         final msg = await deliverOutboxEntry(repo, e);
         await seedSentImage(ref.read(chatMediaCacheProvider), e, msg);
+        await seedSentDocument(ref.read(chatDocumentStoreProvider), e, msg);
         await outbox.remove(e.clientId);
       } on ApiException catch (err) {
         // 413: payload too large — permanent for THIS entry, but the network

@@ -1,4 +1,5 @@
 import Flutter
+import QuickLook
 import UIKit
 
 @main
@@ -6,6 +7,8 @@ import UIKit
   // H4: covers the window while the app is inactive so the task-switcher
   // snapshot never shows PHI.
   private var privacyOverlay: UIVisualEffectView?
+  // QLPreviewController holds its data source weakly.
+  private var documentPreview: DocumentPreview?
 
   override func application(
     _ application: UIApplication,
@@ -13,6 +16,7 @@ import UIKit
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
     registerFileProtectionChannel()
+    registerDocumentChannel()
     // Required by flutter_local_notifications so foreground banners and
     // notification taps are routed to the plugin.
     if #available(iOS 10.0, *) {
@@ -58,6 +62,43 @@ import UIKit
     }
   }
 
+  /// Chat documents open in Apple's QuickLook inside the app: PDF, Word,
+  /// Excel, PowerPoint and more, rendered on the device.
+  private func registerDocumentChannel() {
+    guard let registrar = self.registrar(forPlugin: "DoqtoDocuments") else { return }
+    let channel = FlutterMethodChannel(
+      name: "doqto/documents", binaryMessenger: registrar.messenger())
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "preview",
+        let args = call.arguments as? [String: Any],
+        let path = args["path"] as? String
+      else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let url = URL(fileURLWithPath: path)
+      guard QLPreviewController.canPreview(url as NSURL),
+        let self = self, let top = self.topViewController()
+      else {
+        result(false)
+        return
+      }
+      let preview = DocumentPreview(url: url)
+      self.documentPreview = preview
+      let controller = QLPreviewController()
+      controller.dataSource = preview
+      controller.modalPresentationStyle = .fullScreen
+      top.present(controller, animated: true)
+      result(true)
+    }
+  }
+
+  private func topViewController() -> UIViewController? {
+    var top = activeWindow?.rootViewController
+    while let presented = top?.presentedViewController { top = presented }
+    return top
+  }
+
   /// self.window is nil under the scene lifecycle; the scene owns the window.
   private var activeWindow: UIWindow? {
     UIApplication.shared.connectedScenes
@@ -78,5 +119,23 @@ import UIKit
   @objc private func uncoverForPrivacy() {
     privacyOverlay?.removeFromSuperview()
     privacyOverlay = nil
+  }
+}
+
+/// A single file for QuickLook. The title comes from the file name, which is
+/// why ChatDocumentStore keeps the real one.
+private final class DocumentPreview: NSObject, QLPreviewControllerDataSource {
+  private let url: URL
+
+  init(url: URL) {
+    self.url = url
+  }
+
+  func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+
+  func previewController(
+    _ controller: QLPreviewController, previewItemAt index: Int
+  ) -> QLPreviewItem {
+    url as NSURL
   }
 }

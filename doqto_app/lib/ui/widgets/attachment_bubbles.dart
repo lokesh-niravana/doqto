@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/radii.dart';
@@ -14,6 +13,7 @@ import '../../data/models/message.dart';
 import '../../data/services/chat_media_cache.dart';
 import 'app_pressable.dart';
 import 'message_bubble.dart';
+import 'open_document.dart';
 
 /// Timestamp + status ticks row shared by attachment bubbles (mirrors
 /// MessageBubble's footer).
@@ -33,8 +33,9 @@ class _BubbleFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final timeColor =
-        isMine ? AppColors.white.withValues(alpha: 0.55) : AppColors.textMuted;
+    final timeColor = isMine
+        ? AppColors.white.withValues(alpha: 0.55)
+        : AppColors.textMuted;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -112,9 +113,7 @@ class _ImageBubbleState extends ConsumerState<ImageBubble> {
         child: Stack(
           children: [
             Positioned.fill(
-              child: InteractiveViewer(
-                child: Center(child: Image.file(file)),
-              ),
+              child: InteractiveViewer(child: Center(child: Image.file(file))),
             ),
             Positioned(
               top: AppSpacing.lg,
@@ -133,14 +132,14 @@ class _ImageBubbleState extends ConsumerState<ImageBubble> {
   }
 
   Widget _broken(double width) => AppPressable(
-        // Tap to try again: a miss is usually just a dropped connection.
-        onTap: _load,
-        child: SizedBox(
-          width: width,
-          height: 120,
-          child: const Icon(Icons.broken_image_outlined, color: Colors.grey),
-        ),
-      );
+    // Tap to try again: a miss is usually just a dropped connection.
+    onTap: _load,
+    child: SizedBox(
+      width: width,
+      height: 120,
+      child: const Icon(Icons.broken_image_outlined, color: Colors.grey),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -164,8 +163,8 @@ class _ImageBubbleState extends ConsumerState<ImageBubble> {
           fit: BoxFit.cover,
           // Decode at bubble size, not camera size: a thread of photos
           // otherwise holds full-resolution bitmaps in memory.
-          cacheWidth:
-              ((maxW - 8) * MediaQuery.devicePixelRatioOf(context)).round(),
+          cacheWidth: ((maxW - 8) * MediaQuery.devicePixelRatioOf(context))
+              .round(),
           gaplessPlayback: true,
           errorBuilder: (_, _, _) => _broken(maxW - 8),
         ),
@@ -176,8 +175,9 @@ class _ImageBubbleState extends ConsumerState<ImageBubble> {
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: widget.isMine ? AppColors.medBlue : AppColors.white,
-        borderRadius:
-            widget.isMine ? AppRadii.bubbleSent : AppRadii.bubbleReceived,
+        borderRadius: widget.isMine
+            ? AppRadii.bubbleSent
+            : AppRadii.bubbleReceived,
         border: widget.isMine ? null : Border.all(color: AppColors.gray100),
       ),
       child: Column(
@@ -199,10 +199,13 @@ class _ImageBubbleState extends ConsumerState<ImageBubble> {
     );
     return Padding(
       padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.lg, vertical: AppSpacing.xs),
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.xs,
+      ),
       child: Row(
-        mainAxisAlignment:
-            widget.isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment: widget.isMine
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
         children: [bubble],
       ),
     );
@@ -250,8 +253,7 @@ class PendingImageBubble extends StatelessWidget {
                 fit: BoxFit.cover,
                 errorBuilder: (_, _, _) => const SizedBox(
                   height: 120,
-                  child:
-                      Icon(Icons.broken_image_outlined, color: Colors.grey),
+                  child: Icon(Icons.broken_image_outlined, color: Colors.grey),
                 ),
               ),
             ),
@@ -270,10 +272,13 @@ class PendingImageBubble extends StatelessWidget {
     );
     return Padding(
       padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.lg, vertical: AppSpacing.xs),
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.xs,
+      ),
       child: Row(
-        mainAxisAlignment:
-            isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment: isMine
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
         children: [bubble],
       ),
     );
@@ -283,7 +288,9 @@ class PendingImageBubble extends StatelessWidget {
 /// Document message: icon + name + size. Tap → open presigned URL externally.
 /// A null [getFileUrl] means the file is still in the local outbox (uploading
 /// or failed) — same card, status tick from [status], tap does nothing.
-class FileBubble extends StatelessWidget {
+class FileBubble extends ConsumerStatefulWidget {
+  /// Null while the message is still local: nothing to open yet.
+  final String? messageId;
   final Future<String> Function()? getFileUrl;
   final String fileName;
   final int? fileSizeBytes;
@@ -295,6 +302,7 @@ class FileBubble extends StatelessWidget {
 
   const FileBubble({
     super.key,
+    this.messageId,
     required this.getFileUrl,
     required this.fileName,
     this.fileSizeBytes,
@@ -305,42 +313,55 @@ class FileBubble extends StatelessWidget {
     this.status = MessageStatus.sent,
   });
 
+  @override
+  ConsumerState<FileBubble> createState() => _FileBubbleState();
+}
+
+class _FileBubbleState extends ConsumerState<FileBubble> {
+  bool _opening = false;
+
   String get _sizeLabel {
-    final b = fileSizeBytes;
+    final b = widget.fileSizeBytes;
     if (b == null) return '';
     if (b < 1024) return '$b B';
     if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(0)} KB';
     return '${(b / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
-  Future<void> _open(BuildContext context) async {
-    final resolve = getFileUrl;
-    if (resolve == null) return;
-    try {
-      final url = await resolve();
-      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not open the file')));
-      }
-    }
+  Future<void> _open() async {
+    final id = widget.messageId;
+    final resolve = widget.getFileUrl;
+    if (id == null || resolve == null || _opening) return;
+    setState(() => _opening = true);
+    await openChatDocument(
+      context,
+      ref,
+      messageId: id,
+      fileName: widget.fileName,
+      resolveUrl: resolve,
+    );
+    if (mounted) setState(() => _opening = false);
   }
 
   @override
   Widget build(BuildContext context) {
-    final fg = isMine ? AppColors.white : AppColors.textPrimary;
+    final fg = widget.isMine ? AppColors.white : AppColors.textPrimary;
     final bubble = AppPressable(
-      onTap: () => _open(context),
+      onTap: _open,
       child: Container(
-        constraints:
-            BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.72),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.sizeOf(context).width * 0.72,
+        ),
         padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md, vertical: AppSpacing.sm + 2),
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm + 2,
+        ),
         decoration: BoxDecoration(
-          color: isMine ? AppColors.medBlue : AppColors.white,
-          borderRadius: isMine ? AppRadii.bubbleSent : AppRadii.bubbleReceived,
-          border: isMine ? null : Border.all(color: AppColors.gray100),
+          color: widget.isMine ? AppColors.medBlue : AppColors.white,
+          borderRadius: widget.isMine
+              ? AppRadii.bubbleSent
+              : AppRadii.bubbleReceived,
+          border: widget.isMine ? null : Border.all(color: AppColors.gray100),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -349,7 +370,23 @@ class FileBubble extends StatelessWidget {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.insert_drive_file_outlined, color: fg, size: 30),
+                _opening
+                    ? SizedBox(
+                        width: 30,
+                        height: 30,
+                        child: Padding(
+                          padding: const EdgeInsets.all(5),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: fg,
+                          ),
+                        ),
+                      )
+                    : Icon(
+                        Icons.insert_drive_file_outlined,
+                        color: fg,
+                        size: 30,
+                      ),
                 const SizedBox(width: AppSpacing.sm),
                 Flexible(
                   child: Column(
@@ -357,7 +394,7 @@ class FileBubble extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        fileName,
+                        widget.fileName,
                         style: AppText.messageBody.copyWith(color: fg),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
@@ -366,7 +403,7 @@ class FileBubble extends StatelessWidget {
                         Text(
                           _sizeLabel,
                           style: AppText.timestamp.copyWith(
-                            color: isMine
+                            color: widget.isMine
                                 ? AppColors.white.withValues(alpha: 0.7)
                                 : AppColors.textMuted,
                           ),
@@ -378,21 +415,25 @@ class FileBubble extends StatelessWidget {
             ),
             const SizedBox(height: 2),
             _BubbleFooter(
-                isMine: isMine,
-                timestamp: timestamp,
-                read: read,
-                delivered: delivered,
-                status: status),
+              isMine: widget.isMine,
+              timestamp: widget.timestamp,
+              read: widget.read,
+              delivered: widget.delivered,
+              status: widget.status,
+            ),
           ],
         ),
       ),
     );
     return Padding(
       padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.lg, vertical: AppSpacing.xs),
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.xs,
+      ),
       child: Row(
-        mainAxisAlignment:
-            isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment: widget.isMine
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
         children: [bubble],
       ),
     );

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the chat document store is shareable, and only per file, per grant.
+     Must match ChatDocumentStore.folder. -->
+<paths>
+    <cache-path name="documents" path="doqto_chat_docs/" />
+</paths>

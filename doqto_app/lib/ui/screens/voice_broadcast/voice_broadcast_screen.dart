@@ -12,15 +12,15 @@ import 'package:speech_to_text/speech_to_text.dart';
 
 import '../../../core/di/providers.dart';
 import '../../../core/enums/app_enums.dart';
+import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/motion.dart';
 import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
-import '../../../data/models/organization.dart';
-import '../../../state/auth_state.dart';
+import '../../../core/utils/error_messages.dart';
 import '../../../state/chat_state.dart';
-import '../../../state/org_state.dart';
+import '../../../state/network_state.dart';
 import '../../widgets/app_skeleton.dart';
 import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
@@ -28,11 +28,44 @@ import '../../widgets/primary_button.dart';
 
 enum _Phase { pick, record, preview, sending }
 
+/// Centered explanation with one way forward, for the recipient picker.
+class _PickerMessage extends StatelessWidget {
+  final String title;
+  final String body;
+  final String action;
+  final VoidCallback onAction;
+
+  const _PickerMessage({
+    required this.title,
+    required this.body,
+    required this.action,
+    required this.onAction,
+  });
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(title, style: AppText.bodyPrimary, textAlign: TextAlign.center),
+          const SizedBox(height: AppSpacing.sm),
+          Text(body, style: AppText.caption, textAlign: TextAlign.center),
+          const SizedBox(height: AppSpacing.lg),
+          AppButton(label: action, onPressed: onAction),
+        ],
+      ),
+    ),
+  );
+}
+
 class VoiceBroadcastScreen extends ConsumerStatefulWidget {
   const VoiceBroadcastScreen({super.key});
 
   @override
-  ConsumerState<VoiceBroadcastScreen> createState() => _VoiceBroadcastScreenState();
+  ConsumerState<VoiceBroadcastScreen> createState() =>
+      _VoiceBroadcastScreenState();
 }
 
 class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
@@ -105,7 +138,8 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
     }
     await _stt.initialize();
     final dir = await getTemporaryDirectory();
-    final path = '${dir.path}/broadcast_${DateTime.now().millisecondsSinceEpoch}.wav';
+    final path =
+        '${dir.path}/broadcast_${DateTime.now().millisecondsSinceEpoch}.wav';
     await _recorder.start(
       RecordConfig(
         encoder: AudioEncoder.wav,
@@ -215,15 +249,21 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
 
     ref.invalidate(conversationsProvider);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('Voice note sent to $successCount conversation${successCount == 1 ? '' : 's'}.'),
-      backgroundColor: AppColors.medBlue,
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Voice note sent to $successCount conversation${successCount == 1 ? '' : 's'}.',
+        ),
+        backgroundColor: AppColors.medBlue,
+      ),
+    );
     context.pop();
   }
 
   void _discard() {
-    if (_filePath != null) File(_filePath!).delete().catchError((_) => File(_filePath!));
+    if (_filePath != null) {
+      File(_filePath!).delete().catchError((_) => File(_filePath!));
+    }
     context.pop();
   }
 
@@ -254,11 +294,9 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
   }
 
   Widget _buildPicker() {
-    final orgId = ref.watch(orgProvider).current?.id;
-    final currentUserId = ref.watch(authProvider).user?.id;
-    final membersAsync = orgId != null
-        ? ref.watch(orgMembersProvider(orgId))
-        : const AsyncValue<List<OrgMember>>.data([]);
+    // Connections plus colleagues: anyone you can message. Org members alone
+    // left a doctor with no org (or a connection outside it) an empty page.
+    final peopleAsync = ref.watch(invitablePeopleProvider);
     final convsAsync = ref.watch(conversationsProvider);
     final groups = (convsAsync.asData?.value ?? [])
         .where((c) => c.type == ConversationType.group)
@@ -267,19 +305,35 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
     return Column(
       children: [
         Expanded(
-          child: membersAsync.when(
+          child: peopleAsync.when(
             loading: () => const SkeletonList(),
-            error: (e, _) => Center(child: Text('$e')),
-            data: (members) {
-              final others = members.where((m) => m.id != currentUserId).toList();
+            error: (e, _) => _PickerMessage(
+              title: 'Couldn’t load your contacts',
+              body: ErrorMessages.forApi(e),
+              action: 'Retry',
+              onAction: () => ref.invalidate(connectionsProvider),
+            ),
+            data: (others) {
+              if (others.isEmpty && groups.isEmpty) {
+                return _PickerMessage(
+                  title: 'No one to send to yet',
+                  body:
+                      'Connect with doctors you know. Once they accept, '
+                      'you can send them voice notes here.',
+                  action: 'Find doctors on Doqto',
+                  onAction: () => context.push(AppRoutes.peopleSearch),
+                );
+              }
               return ListView(
                 padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
                 children: [
                   if (groups.isNotEmpty) ...[
                     Padding(
                       padding: const EdgeInsets.fromLTRB(
-                        AppSpacing.screenHorizontal, AppSpacing.sm,
-                        AppSpacing.screenHorizontal, AppSpacing.xs,
+                        AppSpacing.screenHorizontal,
+                        AppSpacing.sm,
+                        AppSpacing.screenHorizontal,
+                        AppSpacing.xs,
                       ),
                       child: Text('GROUPS', style: AppText.label),
                     ),
@@ -293,9 +347,14 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
                             _selectedConvIds.remove(g.id);
                           }
                         }),
-                        title: Text(g.name ?? 'Group', style: AppText.bodyPrimary),
+                        title: Text(
+                          g.name ?? 'Group',
+                          style: AppText.bodyPrimary,
+                        ),
                         secondary: DoctorAvatar(
-                          initials: (g.name ?? 'G').substring(0, (g.name?.length ?? 1).clamp(0, 2)).toUpperCase(),
+                          initials: (g.name ?? 'G')
+                              .substring(0, (g.name?.length ?? 1).clamp(0, 2))
+                              .toUpperCase(),
                           colorIndex: groups.indexOf(g),
                         ),
                         activeColor: AppColors.medBlue,
@@ -303,13 +362,16 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
                       ),
                     const SizedBox(height: AppSpacing.md),
                   ],
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.screenHorizontal, AppSpacing.sm,
-                      AppSpacing.screenHorizontal, AppSpacing.xs,
+                  if (others.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppSpacing.screenHorizontal,
+                        AppSpacing.sm,
+                        AppSpacing.screenHorizontal,
+                        AppSpacing.xs,
+                      ),
+                      child: Text('PEOPLE', style: AppText.label),
                     ),
-                    child: Text('PEOPLE', style: AppText.label),
-                  ),
                   for (final m in others)
                     CheckboxListTile(
                       value: _selectedUserIds.contains(m.id),
@@ -324,7 +386,7 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
                       subtitle: Text(m.specialty ?? '', style: AppText.caption),
                       secondary: DoctorAvatar(
                         initials: m.initials,
-                        colorIndex: others.indexOf(m),
+                        colorIndex: m.avatarIndex,
                         imageUrl: m.avatarPresignedUrl,
                       ),
                       activeColor: AppColors.medBlue,
@@ -355,69 +417,75 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
       child: FadeSlideIn(
         key: const ValueKey('record-phase'),
         child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.xl),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const _RecordingIndicator(),
-            const SizedBox(height: AppSpacing.lg),
-            SizedBox(
-              height: 56,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  for (var i = 0; i < 40; i++)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 1),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 100),
-                        curve: Curves.easeOut,
-                        width: 3,
-                        height: i < _amplitudes.length
-                            ? (_amplitudes[i] * 52).clamp(2.0, 52.0)
-                            : 2.0,
-                        decoration: BoxDecoration(
-                          color: AppColors.medBlue,
-                          borderRadius: BorderRadius.circular(1.5),
+          padding: const EdgeInsets.all(AppSpacing.xl),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const _RecordingIndicator(),
+              const SizedBox(height: AppSpacing.lg),
+              SizedBox(
+                height: 56,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    for (var i = 0; i < 40; i++)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 1),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 100),
+                          curve: Curves.easeOut,
+                          width: 3,
+                          height: i < _amplitudes.length
+                              ? (_amplitudes[i] * 52).clamp(2.0, 52.0)
+                              : 2.0,
+                          decoration: BoxDecoration(
+                            color: AppColors.medBlue,
+                            borderRadius: BorderRadius.circular(1.5),
+                          ),
                         ),
                       ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              Text(_formatDuration(_durationSec), style: AppText.display),
+              const SizedBox(height: AppSpacing.md),
+              if (_transcript.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.lg,
+                  ),
+                  child: Text(
+                    _transcript,
+                    style: AppText.body.copyWith(fontStyle: FontStyle.italic),
+                    textAlign: TextAlign.center,
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              const SizedBox(height: AppSpacing.xxl),
+              Material(
+                color: AppColors.medBlue,
+                shape: const CircleBorder(),
+                elevation: 4,
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: _stopRecording,
+                  child: Container(
+                    width: 72,
+                    height: 72,
+                    alignment: Alignment.center,
+                    child: const Icon(
+                      Icons.stop,
+                      color: AppColors.white,
+                      size: 36,
                     ),
-                ],
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            Text(_formatDuration(_durationSec), style: AppText.display),
-            const SizedBox(height: AppSpacing.md),
-            if (_transcript.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                child: Text(
-                  _transcript,
-                  style: AppText.body.copyWith(fontStyle: FontStyle.italic),
-                  textAlign: TextAlign.center,
-                  maxLines: 4,
-                  overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ),
-            const SizedBox(height: AppSpacing.xxl),
-            Material(
-              color: AppColors.medBlue,
-              shape: const CircleBorder(),
-              elevation: 4,
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: _stopRecording,
-                child: Container(
-                  width: 72,
-                  height: 72,
-                  alignment: Alignment.center,
-                  child: const Icon(Icons.stop, color: AppColors.white, size: 36),
-                ),
-              ),
-            ),
-          ],
-        ),
+            ],
+          ),
         ),
       ),
     );
@@ -428,65 +496,67 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
       child: FadeSlideIn(
         key: const ValueKey('preview-phase'),
         child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.xl),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                IconButton(
-                  onPressed: _togglePlay,
-                  iconSize: 48,
-                  icon: Icon(
-                    _isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                    color: AppColors.medBlue,
+          padding: const EdgeInsets.all(AppSpacing.xl),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    onPressed: _togglePlay,
+                    iconSize: 48,
+                    icon: Icon(
+                      _isPlaying
+                          ? Icons.pause_circle_filled
+                          : Icons.play_circle_filled,
+                      color: AppColors.medBlue,
+                    ),
                   ),
-                ),
-                const SizedBox(width: AppSpacing.md),
-                Text(_formatDuration(_durationSec), style: AppText.display),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            if (_transcript.isNotEmpty)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(AppSpacing.md),
-                decoration: BoxDecoration(
-                  color: AppColors.medBlueLight,
-                  borderRadius: AppRadii.rMd,
-                ),
-                child: Text(
-                  _transcript,
-                  style: AppText.bodyPrimary,
-                  maxLines: 6,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                  const SizedBox(width: AppSpacing.md),
+                  Text(_formatDuration(_durationSec), style: AppText.display),
+                ],
               ),
-            const SizedBox(height: AppSpacing.xxl),
-            Row(
-              children: [
-                Expanded(
-                  child: AppButton(
-                    label: 'Discard',
-                    variant: AppButtonVariant.ghost,
-                    onPressed: _discard,
-                    expand: true,
+              const SizedBox(height: AppSpacing.lg),
+              if (_transcript.isNotEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  decoration: BoxDecoration(
+                    color: AppColors.medBlueLight,
+                    borderRadius: AppRadii.rMd,
+                  ),
+                  child: Text(
+                    _transcript,
+                    style: AppText.bodyPrimary,
+                    maxLines: 6,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: AppButton(
-                    label: 'Send to $_totalSelected',
-                    icon: Icons.send,
-                    onPressed: _send,
-                    expand: true,
+              const SizedBox(height: AppSpacing.xxl),
+              Row(
+                children: [
+                  Expanded(
+                    child: AppButton(
+                      label: 'Discard',
+                      variant: AppButtonVariant.ghost,
+                      onPressed: _discard,
+                      expand: true,
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
-        ),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: AppButton(
+                      label: 'Send to $_totalSelected',
+                      icon: Icons.send,
+                      onPressed: _send,
+                      expand: true,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -499,10 +569,7 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
         children: [
           const CircularProgressIndicator(),
           const SizedBox(height: AppSpacing.lg),
-          Text(
-            'Sending $_sendProgress / $_sendTotal…',
-            style: AppText.body,
-          ),
+          Text('Sending $_sendProgress / $_sendTotal…', style: AppText.body),
         ],
       ),
     );

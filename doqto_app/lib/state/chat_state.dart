@@ -106,7 +106,10 @@ Future<Message> deliverOutboxEntry(ChatRepository repo, OutboxEntry e) async {
 /// The sender's own photo is already on disk: file it under the server id
 /// before the outbox copy is deleted, so the sent bubble never downloads it.
 Future<void> seedSentImage(
-    ChatMediaCache cache, OutboxEntry e, Message msg) async {
+  ChatMediaCache cache,
+  OutboxEntry e,
+  Message msg,
+) async {
   if (msg.type != MessageType.image || e.filePath == null) return;
   await cache.seed(msg.id, File(e.filePath!));
 }
@@ -199,22 +202,34 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
           break;
         case WsEventServer.messageDelivered:
           // Conversation-level ack: flip gray double-checks on own messages.
+          // The ack names who received (user_id): it covers only messages
+          // someone ELSE sent. The server echoes it to the acker too, and
+          // without this check their own unsent-to-anyone bubbles went gray.
           if (event.data['conversation_id'] != conversationId) break;
+          final deliveredBy = event.data['user_id'] as String?;
           state = AsyncData([
             for (final m in state.value ?? <Message>[])
-              m.copyWith(delivered: true),
+              if (m.senderId != deliveredBy) m.copyWith(delivered: true) else m,
           ]);
           break;
         case WsEventServer.messageRead:
           final convId = event.data['conversation_id'] as String?;
           final msgId = event.data['message_id'] as String?;
+          // user_id is the READER. Reading a chat reads the other side's
+          // messages, never your own: the server echoes this event to the
+          // reader (so their list badge clears), and flipping every bubble
+          // turned the reader's own sent messages blue.
+          final readBy = event.data['user_id'] as String?;
           // Conversation-level read targets a specific conversation; per-message
           // read is matched by id below regardless of conversation.
           if (msgId == null && convId != conversationId) break;
           final current = state.value ?? [];
           state = AsyncData([
             for (final m in current)
-              if (msgId == null || m.id == msgId) m.copyWith(read: true) else m,
+              if ((msgId == null || m.id == msgId) && m.senderId != readBy)
+                m.copyWith(read: true)
+              else
+                m,
           ]);
           break;
         case WsEventServer.messageEdited:

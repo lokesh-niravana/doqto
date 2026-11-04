@@ -56,7 +56,8 @@ class ChatThreadScreen extends ConsumerStatefulWidget {
   ConsumerState<ChatThreadScreen> createState() => _ChatThreadScreenState();
 }
 
-class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen> {
+class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
+    with WidgetsBindingObserver {
   final _input = TextEditingController();
   final _scroll = ScrollController();
   bool _showRecorder = false;
@@ -83,9 +84,41 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen> {
   bool _showJump = false;
   int _unseenCount = 0;
 
+  // A message that landed while nobody could see this chat (app in the
+  // background, phone locked, another screen pushed on top). The socket stays
+  // up through short app-switches, so without this the sender got blue ticks
+  // for messages still sitting unseen on a locked phone.
+  bool _readOwed = false;
+
+  bool get _visible {
+    final life = WidgetsBinding.instance.lifecycleState;
+    final onScreen = life == null || life == AppLifecycleState.resumed;
+    return onScreen && (ModalRoute.of(context)?.isCurrent ?? true);
+  }
+
+  /// Blue ticks mean a person saw it: mark read only while this chat is on
+  /// screen, otherwise owe the read until it is.
+  void _markReadIfVisible() {
+    if (!mounted) return;
+    if (!_visible) {
+      _readOwed = true;
+      return;
+    }
+    _readOwed = false;
+    ref
+        .read(chatRepositoryProvider)
+        .markConversationRead(widget.conversationId);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _readOwed) _markReadIfVisible();
+  }
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Infinite scroll-back: nearing the top (= end of the reversed list)
     // pulls the next older page.
     _scroll.addListener(() {
@@ -102,9 +135,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen> {
     });
     // Opening the thread = reading it: flip the sender's ticks to double-check.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref
-          .read(chatRepositoryProvider)
-          .markConversationRead(widget.conversationId);
+      _markReadIfVisible();
       // This chat is on screen: suppress banners for it and clear any shown.
       ref.read(activeConversationProvider.notifier).state =
           widget.conversationId;
@@ -116,6 +147,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     // ponytail: ref is gone when the whole tree is torn down (app exit /
     // test teardown); clearing the active chat is moot then.
     try {
@@ -760,8 +792,10 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen> {
       for (final m in members)
         if (m.userId != meId) m.fullName,
     ];
-    return [...others, if (members.any((m) => m.userId == meId)) 'You']
-        .join(', ');
+    return [
+      ...others,
+      if (members.any((m) => m.userId == meId)) 'You',
+    ].join(', ');
   }
 
   Widget _buildBubble(Message m, bool isMine, List<Message> msgs, int i) {
@@ -964,12 +998,16 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen> {
       if (msgs.first.id == prevNewestId) {
         return; // read-state change, not a new message
       }
-      if (msgs.first.senderId != me?.id) {
-        ref
-            .read(chatRepositoryProvider)
-            .markConversationRead(widget.conversationId);
-      }
+      if (msgs.first.senderId != me?.id) _markReadIfVisible();
     });
+    // Back on top after a pushed screen (photo viewer, info) pops: settle a
+    // read owed while it covered the chat. ModalRoute.of in _visible makes
+    // this build re-run when the route's isCurrent changes.
+    if (_readOwed && _visible) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_readOwed) _markReadIfVisible();
+      });
+    }
     final focused = ref.watch(conversationsProvider).asData?.value ?? const [];
     Conversation? conv;
     for (final c in focused) {

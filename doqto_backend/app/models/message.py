@@ -52,6 +52,9 @@ class Message(Base):
     # is_deleted (expiry/purge) hides the row entirely.
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Bumped on every post-send change other members can see (edit, delete,
+    # reaction). Catch-up uses it: after_seq only finds NEW messages.
+    changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -95,6 +98,28 @@ class MessageHide(Base):
         primary_key=True,
     )
     hidden_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class MessageReaction(Base):
+    """One emoji per (message, user). Not PHI (an emoji alone), stored plain."""
+
+    __tablename__ = Tables.MESSAGE_REACTIONS
+
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.MESSAGES}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.USERS}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    emoji: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Re-stamped when the emoji changes: when the CURRENT reaction was made.
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 

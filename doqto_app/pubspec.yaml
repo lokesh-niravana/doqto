@@ -89,6 +89,7 @@ flutter:
   assets:
     - logo.png
     - assets/splash_logo_white.png
+    - assets/emoji/emoji.json
 
 flutter_launcher_icons:
   # Brand icon: white mark on brand teal (#35878F), matching AppColors.medBlue and the splash.

@@ -11,6 +11,7 @@ from app.api.ws_manager import ws_manager
 from app.core.constants import (
     FILE_MAX_BYTES,
     PRESIGNED_URL_TTL_SECONDS,
+    RATE_LIMIT_REACTIONS_PER_MINUTE,
     RATE_LIMIT_READS_PER_MINUTE,
     VOICE_NOTE_MAX_FILE_BYTES,
 )
@@ -33,6 +34,8 @@ from app.schemas.message import (
     MessageEditOut,
     MessageHideIn,
     MessageOut,
+    MessageReactedEvent,
+    MessageReactIn,
 )
 from app.services.audit_service import AuditService
 from app.services.file_service import FileService
@@ -280,6 +283,10 @@ async def get_file_url(
 _EDIT_DELETE_STATUS = {
     "message_not_found": status.HTTP_404_NOT_FOUND,
     "not_message_sender": status.HTTP_403_FORBIDDEN,
+    "not_a_conversation_member": status.HTTP_403_FORBIDDEN,
+    "invalid_emoji": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "not_reachable": status.HTTP_403_FORBIDDEN,
+    "not_connected": status.HTTP_403_FORBIDDEN,
 }
 
 
@@ -291,7 +298,9 @@ def _raise_edit_delete(e: MessageError) -> None:
 
 async def _broadcast(msg: Message, event: WsEventServer, db: AsyncSession) -> MessageOut:
     recipients = await MessageService.member_ids(conversation_id=msg.conversation_id, db=db)
-    out = MessageService.to_out(msg)
+    # Edits keep reactions; the client swaps the row, so the payload must carry them.
+    reactions = await MessageService.reactions_for(message_ids=[msg.id], db=db)
+    out = MessageService.to_out(msg, reactions=reactions.get(msg.id))
     await db.commit()
     await ws_manager.publish_to_users(recipients, event, out.model_dump(mode="json"))
     return out
@@ -338,6 +347,76 @@ async def delete_message(
         except Exception:
             logging.getLogger("doqto.messages").warning("s3 delete failed for %s", s3_key)
     return out
+
+
+async def _reaction_response(
+    msg: Message, changed: bool, actor_id: uuid.UUID, emoji: str | None, db: AsyncSession
+) -> MessageOut:
+    """Commit, then (only if something changed) fan out `message_reacted` to
+    every member — the actor too, for their other devices — and push the
+    author when someone else added or replaced a reaction."""
+    reactions = (await MessageService.reactions_for(message_ids=[msg.id], db=db)).get(
+        msg.id, []
+    )
+    out = MessageService.to_out(msg, reactions=reactions)
+    if not changed:
+        return out
+    recipients = await MessageService.member_ids(conversation_id=msg.conversation_id, db=db)
+    await db.commit()
+    event = MessageReactedEvent(
+        conversation_id=msg.conversation_id,
+        message_id=msg.id,
+        reactions=reactions,
+        changed_at=msg.changed_at,
+        actor_id=actor_id,
+        emoji=emoji,
+    )
+    await ws_manager.publish_to_users(
+        recipients, WsEventServer.MESSAGE_REACTED, event.model_dump(mode="json")
+    )
+    if emoji is not None and msg.sender_id != actor_id:
+        PushService.notify_reaction(
+            conversation_id=msg.conversation_id,
+            author_id=msg.sender_id,
+            actor_id=actor_id,
+            emoji=emoji,
+        )
+    return out
+
+
+@router.put(ApiRoutes.MESSAGES_REACTION, response_model=MessageOut)
+async def set_reaction(
+    message_id: uuid.UUID,
+    body: MessageReactIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MessageOut:
+    """Add or replace the caller's one reaction. Same emoji again = no-op."""
+    await enforce_rate_limit(user.id, "react_message", RATE_LIMIT_REACTIONS_PER_MINUTE)
+    try:
+        msg, changed = await MessageService.set_reaction(
+            message_id=message_id, user_id=user.id, emoji=body.emoji, db=db
+        )
+    except MessageError as e:
+        _raise_edit_delete(e)
+    return await _reaction_response(msg, changed, user.id, body.emoji, db)
+
+
+@router.delete(ApiRoutes.MESSAGES_REACTION, response_model=MessageOut)
+async def remove_reaction(
+    message_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MessageOut:
+    """Remove the caller's reaction. None to remove = no-op."""
+    await enforce_rate_limit(user.id, "react_message", RATE_LIMIT_REACTIONS_PER_MINUTE)
+    try:
+        msg, changed = await MessageService.remove_reaction(
+            message_id=message_id, user_id=user.id, db=db
+        )
+    except MessageError as e:
+        _raise_edit_delete(e)
+    return await _reaction_response(msg, changed, user.id, None, db)
 
 
 @router.post(ApiRoutes.MESSAGES_HIDE, response_model=OkResponse)

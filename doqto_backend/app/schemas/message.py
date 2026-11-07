@@ -20,6 +20,18 @@ class MessageEditIn(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
 
 
+class MessageReactIn(BaseModel):
+    # One emoji grapheme cluster; validated with the `emoji` package in the
+    # service (ZWJ sequences, skin tones, flags allowed). 32 bytes UTF-8 max.
+    emoji: str = Field(min_length=1, max_length=32)
+
+
+class ReactionOut(BaseModel):
+    emoji: str
+    count: int
+    user_ids: list[uuid.UUID]  # oldest reaction first
+
+
 class MessageHideIn(BaseModel):
     message_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
 
@@ -66,6 +78,22 @@ class MessageOut(BaseModel):
     client_id: str | None = None  # echoes the sender's idempotency key
     edited_at: datetime | None = None
     deleted_at: datetime | None = None  # tombstone: content/media gone, row kept
+    # Same for every viewer (no per-user fields), so one payload fans out.
+    # Sorted by count desc, then earliest reaction.
+    reactions: list[ReactionOut] = []
+    changed_at: datetime | None = None  # last edit/delete/reaction (catch-up cursor)
+
+
+class MessageReactedEvent(BaseModel):
+    """WS `message_reacted`: patch reactions only — never the whole row, so
+    the receiver's read/delivered ticks are left alone."""
+
+    conversation_id: uuid.UUID
+    message_id: uuid.UUID
+    reactions: list[ReactionOut]
+    changed_at: datetime
+    actor_id: uuid.UUID
+    emoji: str | None  # None = the actor removed their reaction
 
 
 class FileUrlOut(BaseModel):

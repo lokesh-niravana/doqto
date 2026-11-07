@@ -144,6 +144,11 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
   bool _catchingUp = false;
   static const _maxCatchUpPages = 10;
 
+  /// Reactions: at most one request in flight per message; taps made while
+  /// one is running collapse into the latest wanted state ([_ReactWant]).
+  final _reactInFlight = <String>{};
+  final _reactWanted = <String, _ReactWant>{};
+
   @override
   Future<List<Message>> build(String conversationId) async {
     _listenWs(conversationId);
@@ -257,6 +262,10 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
             ref.read(chatDocumentStoreProvider).evict(msg.id);
           }
           break;
+        case WsEventServer.messageReacted:
+          if (event.data['conversation_id'] != conversationId) break;
+          _onReacted(event.data);
+          break;
         case WsEventServer.transcriptReady:
           final id = event.data['message_id'] as String;
           final transcript = event.data['transcript'] as String?;
@@ -318,6 +327,7 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
           if (s != null && s > after!) after = s;
         }
         if (batch.length < AppConstants.messagesPageSize) {
+          await _catchUpChanges(conversationId);
           await _recache(conversationId);
           return;
         }
@@ -330,6 +340,52 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
       _catchingUp = false;
     }
   }
+
+  /// Post-send changes (edits, deletes, reactions) to rows we already hold,
+  /// made while we were offline. seq catch-up only finds NEW messages.
+  /// Cursor: the newest changedAt we know of, else the oldest loaded row's
+  /// createdAt (any later change to a loaded row is newer than that).
+  Future<void> _catchUpChanges(String conversationId) async {
+    final loaded = (state.value ?? const <Message>[])
+        .where((m) => m.status == MessageStatus.sent && m.seq != null)
+        .toList();
+    if (loaded.isEmpty) return;
+    DateTime? cursor;
+    for (final m in loaded) {
+      final c = m.changedAt;
+      if (c != null && (cursor == null || c.isAfter(cursor))) cursor = c;
+    }
+    cursor ??= loaded
+        .map((m) => m.createdAt)
+        .reduce((a, b) => a.isBefore(b) ? a : b)
+        .subtract(const Duration(seconds: 1));
+    for (var page = 0; page < _maxCatchUpPages; page++) {
+      final batch = await ref
+          .read(chatRepositoryProvider)
+          .listMessages(conversationId, changedSince: cursor);
+      final byId = {for (final m in batch) m.id: m};
+      final current = state.value ?? const <Message>[];
+      state = AsyncData([
+        for (final m in current)
+          if (byId[m.id] case final fresh? when _isNewer(fresh.changedAt, m.changedAt))
+            fresh.copyWith(read: m.read || fresh.read, delivered: m.delivered || fresh.delivered)
+          else
+            m,
+      ]);
+      for (final m in batch) {
+        if (byId.containsKey(m.id) && m.isDeleted) {
+          await ref.read(chatMediaCacheProvider).evict(m.id);
+          await ref.read(chatDocumentStoreProvider).evict(m.id);
+        }
+      }
+      final last = batch.lastOrNull?.changedAt;
+      if (batch.length < AppConstants.messagesPageSize || last == null) return;
+      cursor = last;
+    }
+  }
+
+  static bool _isNewer(DateTime? incoming, DateTime? current) =>
+      incoming != null && (current == null || incoming.isAfter(current));
 
   /// Write the newest page-worth of delivered messages back to the cache.
   Future<void> _recache(String conversationId) async {
@@ -556,6 +612,95 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
     await ref.read(chatDocumentStoreProvider).evict(messageId);
   }
 
+  /// React to a message ([emoji] null = remove mine). Optimistic: the pill
+  /// changes at once; the server's answer confirms it, a failure restores
+  /// the last server-confirmed reactions and rethrows (the screen shows a
+  /// snackbar). Fast repeated taps send at most one request at a time.
+  Future<void> react(String messageId, String? emoji) async {
+    final me = ref.read(authProvider).user?.id;
+    if (me == null) return;
+    final msg = (state.value ?? const <Message>[])
+        .where((m) => m.id == messageId)
+        .firstOrNull;
+    if (msg == null || !msg.canReact) return;
+    if (msg.myReaction(me) == emoji && !_reactInFlight.contains(messageId)) return;
+
+    _patchReactions(messageId, MessageReaction.apply(msg.reactions, me, emoji));
+    _reactWanted[messageId] = _ReactWant(emoji);
+    if (!_reactInFlight.add(messageId)) return; // the running loop sends it
+
+    var confirmed = msg.reactions;
+    DateTime? confirmedAt = msg.changedAt;
+    final repo = ref.read(chatRepositoryProvider);
+    try {
+      while (_reactWanted.containsKey(messageId)) {
+        final want = _reactWanted.remove(messageId)!;
+        final out = want.emoji == null
+            ? await repo.removeReaction(messageId)
+            : await repo.setReaction(messageId, want.emoji!);
+        confirmed = out.reactions;
+        confirmedAt = out.changedAt ?? confirmedAt;
+      }
+      _patchReactions(messageId, confirmed, changedAt: confirmedAt, onlyIfNewer: true);
+    } catch (_) {
+      _reactWanted.remove(messageId);
+      _patchReactions(messageId, confirmed, changedAt: confirmedAt);
+      rethrow;
+    } finally {
+      _reactInFlight.remove(messageId);
+      _recache(arg);
+    }
+  }
+
+  /// WS `message_reacted`: patch reactions only (never the whole row, so
+  /// ticks survive). Out-of-order events are dropped by changed_at. While my
+  /// own request is in flight, my echo is ignored and someone else's change
+  /// is applied with my pending choice laid back on top.
+  void _onReacted(Map<String, dynamic> data) {
+    final id = data['message_id'] as String?;
+    final changedAt = data['changed_at'] != null
+        ? DateTime.tryParse(data['changed_at'] as String)
+        : null;
+    if (id == null || changedAt == null) return;
+    final me = ref.read(authProvider).user?.id;
+    var reactions = MessageReaction.listFromJson(data['reactions']);
+    if (_reactInFlight.contains(id) && me != null) {
+      if (data['actor_id'] == me) return;
+      final pending = _reactWanted[id];
+      final mine = (state.value ?? const <Message>[])
+          .where((m) => m.id == id)
+          .firstOrNull
+          ?.myReaction(me);
+      reactions = MessageReaction.apply(
+        reactions,
+        me,
+        pending != null ? pending.emoji : mine,
+      );
+    }
+    _patchReactions(id, reactions, changedAt: changedAt, onlyIfNewer: true);
+    _recache(arg);
+  }
+
+  void _patchReactions(
+    String messageId,
+    List<MessageReaction> reactions, {
+    DateTime? changedAt,
+    bool onlyIfNewer = false,
+  }) {
+    final current = state.value ?? const <Message>[];
+    state = AsyncData([
+      for (final m in current)
+        if (m.id == messageId &&
+            (!onlyIfNewer ||
+                changedAt == null ||
+                m.changedAt == null ||
+                !changedAt.isBefore(m.changedAt!)))
+          m.copyWith(reactions: reactions, changedAt: changedAt)
+        else
+          m,
+    ]);
+  }
+
   /// "Delete for me": drop the rows locally after the server hides them.
   Future<void> hide(List<String> messageIds) async {
     await ref.read(chatRepositoryProvider).hideMessages(messageIds);
@@ -602,6 +747,11 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
     if (current.any((m) => m.id == msg.id)) return;
     state = AsyncData([msg, ...current]);
   }
+}
+
+class _ReactWant {
+  final String? emoji;
+  const _ReactWant(this.emoji);
 }
 
 final messagesProvider =

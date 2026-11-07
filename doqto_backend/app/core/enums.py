@@ -174,6 +174,7 @@ class WsEventServer(StrEnum):
     MESSAGE_READ = "message_read"
     MESSAGE_EDITED = "message_edited"
     MESSAGE_DELETED = "message_deleted"
+    MESSAGE_REACTED = "message_reacted"
     PRESENCE_UPDATE = "presence_update"
     MEMBER_ADDED = "member_added"
     MEMBER_REMOVED = "member_removed"

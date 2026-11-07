@@ -17,6 +17,7 @@ class Tables:
     MESSAGE_RECEIPTS = "message_receipts"
     MESSAGE_EDITS = "message_edits"
     MESSAGE_HIDES = "message_hides"
+    MESSAGE_REACTIONS = "message_reactions"
     AUDIT_LOGS = "audit_logs"
     DEVICE_TOKENS = "device_tokens"
     # Networking graph (M1)

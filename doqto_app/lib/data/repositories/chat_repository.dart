@@ -34,10 +34,12 @@ class ChatRepository {
     String conversationId, {
     DateTime? before,
     int? afterSeq,
+    DateTime? changedSince,
   }) async {
     final query = <String, dynamic>{
       'before': ?before?.toUtc().toIso8601String(),
       'after_seq': ?afterSeq,
+      'changed_since': ?changedSince?.toUtc().toIso8601String(),
     };
     final list = await _api.getList(
       ApiRoutes.conversationMessages(conversationId),
@@ -135,6 +137,21 @@ class ChatRepository {
       ApiRoutes.message(messageId),
       body: {'content': content},
     );
+    return Message.fromJson(j);
+  }
+
+  /// Add or replace my one reaction. Same emoji again is a server no-op.
+  Future<Message> setReaction(String messageId, String emoji) async {
+    final j = await _api.put(
+      ApiRoutes.messageReaction(messageId),
+      body: {'emoji': emoji},
+    );
+    return Message.fromJson(j);
+  }
+
+  /// Remove my reaction (no-op if I had none).
+  Future<Message> removeReaction(String messageId) async {
+    final j = await _api.delete(ApiRoutes.messageReaction(messageId));
     return Message.fromJson(j);
   }
 

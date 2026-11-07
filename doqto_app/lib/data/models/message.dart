@@ -4,6 +4,61 @@ import '../../core/enums/app_enums.dart';
 /// persisted messages, which are always [sent]).
 enum MessageStatus { sending, sent, failed }
 
+/// One emoji on a message and who chose it (oldest first). Wire shape of the
+/// server's `ReactionOut`; the same for every viewer.
+class MessageReaction {
+  final String emoji;
+  final List<String> userIds;
+
+  const MessageReaction({required this.emoji, required this.userIds});
+
+  int get count => userIds.length;
+
+  factory MessageReaction.fromJson(Map<String, dynamic> j) => MessageReaction(
+        emoji: j['emoji'] as String,
+        userIds: [for (final u in (j['user_ids'] as List? ?? const [])) u as String],
+      );
+
+  Map<String, dynamic> toJson() =>
+      {'emoji': emoji, 'count': count, 'user_ids': userIds};
+
+  static List<MessageReaction> listFromJson(Object? raw) => [
+        for (final r in (raw as List? ?? const []))
+          MessageReaction.fromJson(r as Map<String, dynamic>),
+      ];
+
+  /// The list after [me] picks [emoji] (null = remove): one reaction per
+  /// person, empty groups dropped, sorted by count desc then first-seen —
+  /// the same order the server returns, so the optimistic update and the
+  /// confirmed one don't reshuffle the pill.
+  static List<MessageReaction> apply(
+    List<MessageReaction> current,
+    String me,
+    String? emoji,
+  ) {
+    final out = <MessageReaction>[];
+    var added = false;
+    for (final r in current) {
+      final ids = [for (final u in r.userIds) if (u != me) u];
+      if (r.emoji == emoji) {
+        ids.add(me);
+        added = true;
+      }
+      if (ids.isNotEmpty) out.add(MessageReaction(emoji: r.emoji, userIds: ids));
+    }
+    if (emoji != null && !added) {
+      out.add(MessageReaction(emoji: emoji, userIds: [me]));
+    }
+    // List.sort isn't guaranteed stable; sort by (count desc, original index).
+    final indexed = out.asMap().entries.toList()
+      ..sort((a, b) {
+        final c = b.value.count.compareTo(a.value.count);
+        return c != 0 ? c : a.key.compareTo(b.key);
+      });
+    return [for (final e in indexed) e.value];
+  }
+}
+
 class Message {
   final String id;
   final String conversationId;
@@ -25,6 +80,10 @@ class Message {
   final int? seq; // per-conversation sequence (null for pending/legacy cache)
   final DateTime? editedAt; // sender edited the body (history on the server)
   final DateTime? deletedAt; // tombstone: content/media gone, row kept
+  final List<MessageReaction> reactions;
+  // Last post-send change (edit/delete/reaction) — catch-up cursor and the
+  // staleness check for out-of-order `message_reacted` events.
+  final DateTime? changedAt;
   // Outbox media file on disk — lets pending image bubbles show a real
   // preview instead of a filename. Never serialized; rebuilt from the outbox.
   final String? localPath;
@@ -51,6 +110,8 @@ class Message {
     this.localPath,
     this.editedAt,
     this.deletedAt,
+    this.reactions = const [],
+    this.changedAt,
   });
 
   /// Sender may edit a text message this long after sending (server-enforced).
@@ -60,6 +121,21 @@ class Message {
   static const deleteWindow = Duration(minutes: 3);
 
   bool get isDeleted => deletedAt != null;
+
+  /// Only persisted, live, non-system rows take reactions (server-enforced).
+  bool get canReact =>
+      type != MessageType.system &&
+      !isDeleted &&
+      status == MessageStatus.sent &&
+      seq != null;
+
+  /// The emoji [me] reacted with, if any.
+  String? myReaction(String me) {
+    for (final r in reactions) {
+      if (r.userIds.contains(me)) return r.emoji;
+    }
+    return null;
+  }
 
   bool _own(String me, DateTime now, Duration window) =>
       senderId == me &&
@@ -131,6 +207,8 @@ class Message {
         seq: j['seq'] as int?,
         editedAt: j['edited_at'] != null ? DateTime.parse(j['edited_at'] as String) : null,
         deletedAt: j['deleted_at'] != null ? DateTime.parse(j['deleted_at'] as String) : null,
+        reactions: MessageReaction.listFromJson(j['reactions']),
+        changedAt: j['changed_at'] != null ? DateTime.parse(j['changed_at'] as String) : null,
       );
 
   Map<String, dynamic> toJson() => {
@@ -153,6 +231,8 @@ class Message {
         'seq': seq,
         'edited_at': editedAt?.toIso8601String(),
         'deleted_at': deletedAt?.toIso8601String(),
+        'reactions': [for (final r in reactions) r.toJson()],
+        'changed_at': changedAt?.toIso8601String(),
       };
 
   Message copyWith({
@@ -161,6 +241,8 @@ class Message {
     bool? read,
     bool? delivered,
     MessageStatus? status,
+    List<MessageReaction>? reactions,
+    DateTime? changedAt,
   }) =>
       Message(
         id: id,
@@ -184,5 +266,7 @@ class Message {
         localPath: localPath,
         editedAt: editedAt,
         deletedAt: deletedAt,
+        reactions: reactions ?? this.reactions,
+        changedAt: changedAt ?? this.changedAt,
       );
 }

@@ -19,6 +19,7 @@ import '../../../core/tokens/shadows.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
+import '../../../data/api/api_client.dart';
 import '../../../data/models/conversation.dart';
 import '../../../data/models/group.dart';
 import '../../../data/models/message.dart';
@@ -33,7 +34,9 @@ import '../../widgets/app_pressable.dart';
 import '../../widgets/attachment_bubbles.dart';
 import '../../widgets/connectivity_banner.dart';
 import '../../widgets/doctor_avatar.dart';
+import '../../widgets/emoji_picker_sheet.dart';
 import '../../widgets/message_bubble.dart';
+import '../../widgets/reactions.dart';
 import '../../widgets/typing_indicator.dart';
 import '../../widgets/voice_note_bubble.dart';
 import '_conversation_display.dart';
@@ -786,6 +789,9 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   /// In a group, who sent what: user id → member. Empty in a 1:1 chat.
   Map<String, GroupMember> _members = const {};
 
+  /// 1:1 chats have no member list; the header title names the peer.
+  String? _peerName;
+
   /// "Dr Ravi Patel, Dr Sarah Kim, You": the header's member line.
   static String _memberLine(List<GroupMember> members, String? meId) {
     final others = [
@@ -845,9 +851,69 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   /// Any non-system row: long-press starts selection, taps toggle while
   /// selecting (the bubble's own taps are swallowed, like WhatsApp), and the
   /// whole row tints when selected.
+  ///
+  /// Reactions: with exactly one reactable message selected, the reaction
+  /// tray sits above it; reaction pills hang under any bubble that has them.
   Widget _selectable(Message m, Widget row) {
     if (m.type == MessageType.system) return row;
     final selected = _selected.contains(m.id);
+    final me = ref.read(authProvider).user?.id;
+    final isMine = m.senderId == me;
+    final side = isMine ? Alignment.centerRight : Alignment.centerLeft;
+    const inset = EdgeInsets.symmetric(
+      horizontal: AppSpacing.screenHorizontal + AppSpacing.sm,
+    );
+    Widget content = AbsorbPointer(absorbing: _selecting, child: row);
+    if (m.reactions.isNotEmpty && !m.isDeleted) {
+      content = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          content,
+          Align(
+            alignment: side,
+            child: Transform.translate(
+              offset: const Offset(0, -6),
+              child: Padding(
+                padding: inset,
+                child: AbsorbPointer(
+                  absorbing: _selecting,
+                  child: ReactionPills(
+                    reactions: m.reactions,
+                    me: me,
+                    onTap: () => _showWhoReacted(m.id),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    if (selected && _selected.length == 1 && m.canReact) {
+      content = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Align(
+            alignment: side,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.screenHorizontal, AppSpacing.xs,
+                AppSpacing.screenHorizontal, AppSpacing.xs,
+              ),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: ReactionTray(
+                  current: me == null ? null : m.myReaction(me),
+                  onPick: (e) => _react(m.id, e),
+                  onMore: () => _moreReactions(m.id),
+                ),
+              ),
+            ),
+          ),
+          content,
+        ],
+      );
+    }
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onLongPress: _selecting ? null : () => _toggleSelect(m),
@@ -856,8 +922,65 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         color: selected
             ? AppColors.medBlue.withValues(alpha: 0.18)
             : Colors.transparent,
-        child: AbsorbPointer(absorbing: _selecting, child: row),
+        child: content,
       ),
+    );
+  }
+
+  Message? _messageById(String id) =>
+      (ref.read(messagesProvider(widget.conversationId)).value ?? const <Message>[])
+          .where((m) => m.id == id)
+          .firstOrNull;
+
+  /// Tray / picker pick: the same emoji as mine removes it, anything else
+  /// sets it. Selection clears first, like WhatsApp.
+  Future<void> _react(String messageId, String emoji) async {
+    final me = ref.read(authProvider).user?.id;
+    final m = _messageById(messageId);
+    if (me == null || m == null) return;
+    _clearSelection();
+    await _sendReaction(messageId, m.myReaction(me) == emoji ? null : emoji);
+  }
+
+  Future<void> _sendReaction(String messageId, String? emoji) async {
+    try {
+      await ref
+          .read(messagesProvider(widget.conversationId).notifier)
+          .react(messageId, emoji);
+    } catch (e) {
+      _toast(_reactionError(e));
+    }
+  }
+
+  static String _reactionError(Object e) {
+    if (e is ApiException) {
+      if (e.detail == 'message_deleted') return 'Message was deleted';
+      if (e.status == 429) return 'Slow down a little';
+      return ErrorMessages.forApi(e);
+    }
+    return 'Couldn\'t react. Check your connection.';
+  }
+
+  Future<void> _moreReactions(String messageId) async {
+    _clearSelection();
+    final picked = await showEmojiPickerSheet(
+      context,
+      ref.read(chatCacheProvider),
+    );
+    if (!mounted || picked == null) return;
+    await _react(messageId, picked);
+  }
+
+  void _showWhoReacted(String messageId) {
+    final m = _messageById(messageId);
+    if (m == null || m.reactions.isEmpty) return;
+    showWhoReactedSheet(
+      context: context,
+      reactions: m.reactions,
+      me: ref.read(authProvider).user?.id,
+      nameFor: (uid) => _members[uid]?.fullName ?? _peerName ?? 'Former member',
+      colorFor: (uid) => _members[uid]?.avatarIndex ?? 0,
+      onRemoveMine: () => _sendReaction(messageId, null),
     );
   }
 
@@ -1040,6 +1163,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         : (ref.watch(groupMembersProvider(groupId)).asData?.value ??
               const <GroupMember>[]);
     _members = {for (final m in members) m.userId: m};
+    _peerName = groupId == null ? display?.title : null;
     final subtitle = otherTyping
         ? null
         : groupId == null

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import (
     MESSAGE_DELETE_WINDOW_SEC,
     MESSAGE_EDIT_WINDOW_SEC,
+    MESSAGE_REACTION_MAX_BYTES,
     MESSAGES_PAGE_SIZE,
     PURGE_CONTENT_GRACE_SEC,
 )
@@ -21,6 +22,8 @@ from app.core.enums import (
     MessageType,
     TranscriptStatus,
 )
+import emoji as emoji_lib
+
 from app.core.security import decrypt_message, encrypt_message
 from app.models import (
     Conversation,
@@ -29,10 +32,11 @@ from app.models import (
     Message,
     MessageEdit,
     MessageHide,
+    MessageReaction,
     MessageReceipt,
     User,
 )
-from app.schemas.message import MessageOut
+from app.schemas.message import MessageOut, ReactionOut
 from app.services.audit_service import AuditService
 
 
@@ -405,6 +409,7 @@ class MessageService:
         db: AsyncSession,
         after_seq: int | None = None,
         user_id: uuid.UUID | None = None,
+        changed_since: datetime | None = None,
     ) -> list[Message]:
         stmt = select(Message).where(
             Message.conversation_id == conversation_id,
@@ -413,7 +418,13 @@ class MessageService:
         )
         if user_id is not None:
             stmt = stmt.where(MessageService._not_hidden_for(user_id))
-        if after_seq is not None:
+        if changed_since is not None:
+            # Post-send changes (edits, deletes, reactions) the client missed
+            # while offline; seq catch-up can't see them.
+            stmt = stmt.where(Message.changed_at > changed_since).order_by(
+                Message.changed_at.asc()
+            )
+        elif after_seq is not None:
             # Forward catch-up sync: everything the client hasn't seen, oldest first.
             stmt = stmt.where(Message.seq > after_seq).order_by(Message.seq.asc())
         else:
@@ -477,7 +488,12 @@ class MessageService:
         return len(ids)
 
     @staticmethod
-    def to_out(msg: Message, read: bool = False, delivered: bool = False) -> MessageOut:
+    def to_out(
+        msg: Message,
+        read: bool = False,
+        delivered: bool = False,
+        reactions: list[ReactionOut] | None = None,
+    ) -> MessageOut:
         content = decrypt_message(msg.content_encrypted) if msg.content_encrypted else None
         return MessageOut(
             id=msg.id,
@@ -501,6 +517,8 @@ class MessageService:
             client_id=msg.client_id,
             edited_at=msg.edited_at,
             deleted_at=msg.deleted_at,
+            reactions=reactions or [],
+            changed_at=msg.changed_at,
         )
 
     # --- Edit / delete (sender-only, time-boxed) ---------------------------- #
@@ -541,6 +559,7 @@ class MessageService:
         db.add(MessageEdit(message_id=msg.id, content_encrypted=msg.content_encrypted))
         msg.content_encrypted = encrypt_message(content)
         msg.edited_at = datetime.now(tz=timezone.utc)
+        msg.changed_at = msg.edited_at
         await AuditService.log(
             db,
             user_id=user_id,
@@ -570,7 +589,9 @@ class MessageService:
         msg.transcript_encrypted = None
         msg.s3_key = None
         msg.deleted_at = datetime.now(tz=timezone.utc)
+        msg.changed_at = msg.deleted_at
         await db.execute(delete(MessageEdit).where(MessageEdit.message_id == msg.id))
+        await db.execute(delete(MessageReaction).where(MessageReaction.message_id == msg.id))
         await AuditService.log(
             db,
             user_id=user_id,
@@ -580,6 +601,141 @@ class MessageService:
         )
         await db.flush()
         return msg, s3_key
+
+    # --- Reactions (one emoji per member per message) ------------------------ #
+
+    @staticmethod
+    def valid_reaction_emoji(value: str) -> bool:
+        """Exactly one emoji grapheme cluster (ZWJ, skin tone, flag ok)."""
+        return len(value.encode("utf-8")) <= MESSAGE_REACTION_MAX_BYTES and bool(
+            emoji_lib.is_emoji(value)
+        )
+
+    @staticmethod
+    async def reactions_for(
+        *, message_ids: list[uuid.UUID], db: AsyncSession
+    ) -> dict[uuid.UUID, list[ReactionOut]]:
+        """One query for a whole page. Per message: grouped by emoji, sorted
+        by count desc then earliest reaction; user_ids oldest first."""
+        if not message_ids:
+            return {}
+        rows = await db.execute(
+            select(MessageReaction)
+            .where(MessageReaction.message_id.in_(message_ids))
+            .order_by(MessageReaction.created_at.asc(), MessageReaction.user_id.asc())
+        )
+        grouped: dict[uuid.UUID, dict[str, list[uuid.UUID]]] = {}
+        for r in rows.scalars().all():
+            grouped.setdefault(r.message_id, {}).setdefault(r.emoji, []).append(r.user_id)
+        out: dict[uuid.UUID, list[ReactionOut]] = {}
+        for mid, by_emoji in grouped.items():
+            # dict keeps first-seen order = earliest reaction; stable sort by count.
+            items = [
+                ReactionOut(emoji=e, count=len(uids), user_ids=uids)
+                for e, uids in by_emoji.items()
+            ]
+            items.sort(key=lambda x: -x.count)
+            out[mid] = items
+        return out
+
+    @staticmethod
+    async def _reactable_message(
+        *, message_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession
+    ) -> Message:
+        # Expired ("disappeared") rows are invisible to every read path, so they
+        # take no reactions either, even before the purge job flags them.
+        msg = await db.scalar(
+            select(Message).where(Message.id == message_id, MessageService._not_expired())
+        )
+        if msg is None or msg.is_deleted:
+            raise MessageError("message_not_found")
+        member = await db.scalar(
+            select(ConversationMember.user_id).where(
+                ConversationMember.conversation_id == msg.conversation_id,
+                ConversationMember.user_id == user_id,
+            )
+        )
+        if member is None:
+            # Same answer as a missing id: no oracle for message ids in
+            # conversations the caller isn't in.
+            raise MessageError("message_not_found")
+        if msg.deleted_at is not None:
+            raise MessageError("message_deleted")
+        if msg.type == MessageType.SYSTEM:
+            raise MessageError("message_not_reactable")
+        # Direct chats: a reaction is a message to the other person, so the
+        # send gate applies — a block or removed connection freezes reactions
+        # too (a block must never be observable, and must never ping).
+        conv = await db.get(Conversation, msg.conversation_id)
+        if conv is not None and conv.type == ConversationType.DIRECT:
+            other_id = await db.scalar(
+                select(ConversationMember.user_id).where(
+                    ConversationMember.conversation_id == conv.id,
+                    ConversationMember.user_id != user_id,
+                )
+            )
+            if other_id is not None:
+                from app.core import permissions
+                from app.services.relationship_service import RelationshipService
+
+                ctx = await RelationshipService.load_context(user_id, other_id, db)
+                decision = permissions.can_message(ctx)
+                if decision.mode == "denied":
+                    raise MessageError(
+                        "not_connected" if decision.reason == "not_connected" else "not_reachable"
+                    )
+        return msg
+
+    @staticmethod
+    async def set_reaction(
+        *, message_id: uuid.UUID, user_id: uuid.UUID, emoji: str, db: AsyncSession
+    ) -> tuple[Message, bool]:
+        """Add or replace the caller's reaction. Returns (message, changed);
+        the same emoji again is a no-op (changed=False, nothing written)."""
+        if not MessageService.valid_reaction_emoji(emoji):
+            raise MessageError("invalid_emoji")
+        msg = await MessageService._reactable_message(
+            message_id=message_id, user_id=user_id, db=db
+        )
+        current = await db.scalar(
+            select(MessageReaction.emoji).where(
+                MessageReaction.message_id == msg.id, MessageReaction.user_id == user_id
+            )
+        )
+        if current == emoji:
+            return msg, False
+        now = datetime.now(tz=timezone.utc)
+        stmt = pg_insert(MessageReaction).values(
+            message_id=msg.id, user_id=user_id, emoji=emoji, created_at=now
+        )
+        await db.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[MessageReaction.message_id, MessageReaction.user_id],
+                set_={"emoji": emoji, "created_at": now},
+            )
+        )
+        msg.changed_at = now
+        await db.flush()
+        return msg, True
+
+    @staticmethod
+    async def remove_reaction(
+        *, message_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession
+    ) -> tuple[Message, bool]:
+        """Remove the caller's reaction. No reaction → no-op (changed=False)."""
+        msg = await MessageService._reactable_message(
+            message_id=message_id, user_id=user_id, db=db
+        )
+        result = await db.execute(
+            delete(MessageReaction).where(
+                MessageReaction.message_id == msg.id, MessageReaction.user_id == user_id
+            )
+        )
+        if not result.rowcount:
+            return msg, False
+        msg.changed_at = datetime.now(tz=timezone.utc)
+        await db.flush()
+        return msg, True
 
     @staticmethod
     async def list_edits(*, message_id: uuid.UUID, db: AsyncSession) -> list[MessageEdit]:

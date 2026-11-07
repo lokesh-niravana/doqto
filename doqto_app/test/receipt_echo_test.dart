@@ -30,6 +30,7 @@ class _Repo extends ChatRepository {
     String conversationId, {
     DateTime? before,
     int? afterSeq,
+    DateTime? changedSince,
   }) async =>
       [_msg('mine', 'me'), _msg('theirs', 'them')];
 }

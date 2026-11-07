@@ -187,6 +187,11 @@ class ApiClient {
     return (r.data as Map).cast<String, dynamic>();
   }
 
+  Future<Map<String, dynamic>> put(String path, {Object? body}) async {
+    final r = await _call(() => _dio.put(path, data: body));
+    return (r.data as Map).cast<String, dynamic>();
+  }
+
   Future<Map<String, dynamic>> patch(String path, {Object? body}) async {
     final r = await _call(() => _dio.patch(path, data: body));
     return (r.data as Map).cast<String, dynamic>();

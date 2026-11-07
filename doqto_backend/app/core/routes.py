@@ -88,6 +88,7 @@ class ApiRoutes:
     MESSAGES_READ = "/{message_id}/read"
     MESSAGES_DETAIL = "/{message_id}"  # PATCH edit / DELETE
     MESSAGES_EDITS = "/{message_id}/edits"
+    MESSAGES_REACTION = "/{message_id}/reaction"  # PUT set / DELETE remove (own)
     MESSAGES_HIDE = "/hide"  # POST delete-for-me (batch)
     MESSAGES_FILE_URL = "/{message_id}/file-url"
 

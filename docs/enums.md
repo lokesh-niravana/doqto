@@ -256,6 +256,14 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `conversation_request_declined` | `conversation_id` (M4) — silent, sent ONLY to the decliner's own devices |
 | `group_invite_received` | `group_id, invite_id, inviter_id, inviter_name, group_name` (M5, no PHI) |
 | `group_member_joined` | `group_id, user_id, user_name` (M5) — a member joined |
+| `message_edited` | full `MessageOut` (incl. `reactions`, `changed_at`) — replace the row by id |
+| `message_deleted` | full `MessageOut` tombstone — replace the row by id |
+| `message_reacted` | `conversation_id, message_id, reactions[], changed_at, actor_id, emoji` (null = removed) — patch reactions only, drop if `changed_at` is not newer |
+| `connected` | `user_id` — first server frame after a successful `auth` |
+| `invitation_withdrawn` | `invitation_id, sender_id` — the sender withdrew it |
+| `org_updated` | `org_id, status` — org status or details changed; refetch |
+| `group_updated` | `group_id` — group details changed; refetch |
+| `profile_updated` | `user_id` — a profile you can see changed; refetch |
 
 ## WsEventClient (client → server)
 

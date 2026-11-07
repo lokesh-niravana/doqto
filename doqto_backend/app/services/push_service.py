@@ -70,6 +70,10 @@ def fcm_message(
     }
 
 
+def reaction_body(actor_name: str | None, emoji: str) -> str:
+    return f"{actor_name or 'Someone'} reacted {emoji} to your message"
+
+
 def new_message_body(sender_name: str | None, unread: int) -> str:
     """Sender name is directory data, not PHI; the count is not content."""
     if not sender_name:
@@ -213,6 +217,48 @@ class PushService:
                 recipient_ids=recipient_ids,
                 sender_id=sender_id,
             )
+        )
+
+    @staticmethod
+    def notify_reaction(
+        *,
+        conversation_id: uuid.UUID,
+        author_id: uuid.UUID,
+        actor_id: uuid.UUID,
+        emoji: str,
+    ) -> None:
+        """'<name> reacted 👍 to your message' — a name is directory data and
+        an emoji is not message content, so this stays PHI-free. Own collapse
+        key so it never replaces a pending new-message banner. Fire-and-forget."""
+        asyncio.create_task(
+            PushService._dispatch_reaction(
+                conversation_id=conversation_id,
+                author_id=author_id,
+                actor_id=actor_id,
+                emoji=emoji,
+            )
+        )
+
+    @staticmethod
+    async def _dispatch_reaction(
+        *,
+        conversation_id: uuid.UUID,
+        author_id: uuid.UUID,
+        actor_id: uuid.UUID,
+        emoji: str,
+    ) -> None:
+        try:
+            async with SessionLocal() as db:
+                name = await db.scalar(select(User.full_name).where(User.id == actor_id))
+        except Exception:  # noqa: BLE001
+            log.exception("reaction push name lookup failed")
+            name = None
+        await PushService._dispatch_simple(
+            recipient_id=author_id,
+            title=PUSH_TITLE,
+            body=reaction_body(name, emoji),
+            data={"type": "reaction", "conversation_id": str(conversation_id)},
+            collapse_key=f"reaction:{conversation_id}",
         )
 
     @staticmethod

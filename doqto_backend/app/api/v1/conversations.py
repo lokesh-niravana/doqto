@@ -262,6 +262,7 @@ async def list_messages(
     request: Request,
     before: datetime | None = Query(default=None),
     after_seq: int | None = Query(default=None, ge=0),
+    changed_since: datetime | None = Query(default=None),
     limit: int = Query(default=MESSAGES_PAGE_SIZE, ge=1, le=MESSAGES_PAGE_SIZE),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -269,6 +270,10 @@ async def list_messages(
     if before is not None and after_seq is not None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, detail="before_and_after_seq_exclusive"
+        )
+    if changed_since is not None and (before is not None or after_seq is not None):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail="changed_since_exclusive"
         )
     await enforce_rate_limit(user.id, "list_messages", RATE_LIMIT_READS_PER_MINUTE)
     conv = await _assert_member(conversation_id, user.id, db)
@@ -284,6 +289,7 @@ async def list_messages(
         metadata={
             "before": before.isoformat() if before else None,
             "after_seq": after_seq,
+            "changed_since": changed_since.isoformat() if changed_since else None,
             "limit": limit,
         },
     )
@@ -294,6 +300,7 @@ async def list_messages(
         db=db,
         after_seq=after_seq,
         user_id=user.id,
+        changed_since=changed_since,
     )
     # A3 hybrid: GROUP ticks come from member seq cursors, DIRECT from receipts.
     if conv.type == ConversationType.GROUP:
@@ -307,8 +314,14 @@ async def list_messages(
         delivered_ids = await MessageService.delivered_message_ids(
             message_ids=[m.id for m in msgs], db=db
         )
+    reactions = await MessageService.reactions_for(message_ids=[m.id for m in msgs], db=db)
     return [
-        MessageService.to_out(m, read=m.id in read_ids, delivered=m.id in delivered_ids)
+        MessageService.to_out(
+            m,
+            read=m.id in read_ids,
+            delivered=m.id in delivered_ids,
+            reactions=reactions.get(m.id),
+        )
         for m in msgs
     ]
 

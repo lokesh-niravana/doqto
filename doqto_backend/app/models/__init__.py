@@ -2,7 +2,14 @@ from app.models.audit import AuditLog
 from app.models.conversation import Conversation, ConversationMember, DirectConversationKey
 from app.models.device_token import DeviceToken
 from app.models.group import Group, GroupInvite, GroupMember
-from app.models.message import Message, MessageEdit, MessageHide, MessageReceipt, ScheduledMessage
+from app.models.message import (
+    Message,
+    MessageEdit,
+    MessageHide,
+    MessageReaction,
+    MessageReceipt,
+    ScheduledMessage,
+)
 from app.models.network import (
     AppInvite,
     Block,
@@ -36,6 +43,7 @@ __all__ = [
     "Message",
     "MessageEdit",
     "MessageHide",
+    "MessageReaction",
     "MessageReceipt",
     "ScheduledMessage",
     "Mute",

@@ -56,6 +56,8 @@ class ApiRoutes {
   static String message(String id) =>
       '$apiV1/messages/$id'; // PATCH edit / DELETE
   static String messageEdits(String id) => '$apiV1/messages/$id/edits';
+  static String messageReaction(String id) =>
+      '$apiV1/messages/$id/reaction'; // PUT set / DELETE remove (own)
   static const String messagesHide =
       '$apiV1/messages/hide'; // POST delete-for-me
   static String messageFileUrl(String id) => '$apiV1/messages/$id/file-url';

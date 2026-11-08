@@ -418,7 +418,7 @@ class GroupService:
             select(Conversation).where(Conversation.id == group.conversation_id)
         )
         sys_msg = await MessageService.send_system(
-            conv=conv, sender_id=user.id, content=f"{user.full_name} joined", db=db
+            conv=conv, sender_id=user.id, content=f"{user.full_name} joined the group", db=db
         )
         sys_out = MessageService.to_out(sys_msg)
         recipients = await MessageService.member_ids(
@@ -636,7 +636,7 @@ class GroupService:
             select(Conversation).where(Conversation.id == group.conversation_id)
         )
         sys_msg = await MessageService.send_system(
-            conv=conv, sender_id=user.id, content=f"{user.full_name} joined", db=db
+            conv=conv, sender_id=user.id, content=f"{user.full_name} joined the group", db=db
         )
         sys_out = MessageService.to_out(sys_msg)
         recipients = await MessageService.member_ids(
@@ -773,7 +773,31 @@ class GroupService:
         recipients = await MessageService.member_ids(
             conversation_id=group.conversation_id, db=db
         )
+        # In-chat banner for the people who stay: "X left the group" /
+        # "X was removed by Y". The leaver is told through MEMBER_REMOVED.
+        target_user = await db.get(User, target_id)
+        target_name = target_user.full_name if target_user else "A member"
+        conv = await db.scalar(
+            select(Conversation).where(Conversation.id == group.conversation_id)
+        )
+        sys_out = None
+        if conv is not None:
+            sys_msg = await MessageService.send_system(
+                conv=conv,
+                sender_id=actor.id,
+                content=(
+                    f"{target_name} left the group"
+                    if is_self
+                    else f"{target_name} was removed by {actor.full_name}"
+                ),
+                db=db,
+            )
+            sys_out = MessageService.to_out(sys_msg)
         await db.commit()
+        if sys_out is not None:
+            await ws_manager.publish_to_users(
+                recipients, WsEventServer.NEW_MESSAGE, sys_out.model_dump(mode="json")
+            )
         await ws_manager.publish_to_users(
             [*recipients, target_id],
             WsEventServer.MEMBER_REMOVED,

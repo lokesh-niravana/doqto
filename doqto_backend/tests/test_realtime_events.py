@@ -366,11 +366,16 @@ async def test_remove_member_tells_members_and_removed(client, group_env, group_
         f"/api/v1/groups/{env.gid}/members/{env.member.id}", headers=env.admin_h
     )
     assert r.status_code == 200, r.text
-    # The pre-existing member_removed frame still goes out, then group_updated.
+    # The remaining members get an in-chat banner first, then the
+    # pre-existing member_removed frame, then group_updated.
     assert [ev for _, ev, _ in group_ws] == [
+        WsEventServer.NEW_MESSAGE,
         WsEventServer.MEMBER_REMOVED,
         WsEventServer.GROUP_UPDATED,
     ]
+    banner = [p for _, ev, p in group_ws if ev == WsEventServer.NEW_MESSAGE][0]
+    assert banner["type"] == "system"
+    assert banner["content"].endswith(f"was removed by {env.admin.full_name}")
     assert _group_updated(group_ws, env) == [
         ({env.owner.id, env.admin.id, env.member.id}, {"group_id": env.gid})
     ]

@@ -1028,6 +1028,29 @@ class _Members extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // The member list is for members: an invitee sees the count and a hint
+    // instead of the 403 the server answers (groups are undiscoverable).
+    if (!group.isMember) {
+      return _Section(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SectionLabel(Strings.groupMemberCount(group.memberCount)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.screenHorizontal, 0,
+                AppSpacing.screenHorizontal, AppSpacing.md,
+              ),
+              child: Text(
+                Strings.groupMembersAfterJoin,
+                key: const ValueKey('members-join-hint'),
+                style: AppText.caption.copyWith(color: AppColors.gray600),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     final async = ref.watch(groupMembersProvider(group.id));
     final meId = ref.watch(authProvider).user?.id;
     final manage = group.canManage;

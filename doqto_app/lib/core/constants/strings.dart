@@ -259,6 +259,8 @@ class Strings {
   static const String groupsSearchHint = 'Search groups by name…';
   static const String groupsNoRequests = 'No pending join requests';
   static const String groupsNoMembers = 'No members yet';
+  static const String groupMembersAfterJoin =
+      'You can see who is in this group once you join.';
   static const String groupsNoDiscover = 'No groups found. Try a different name.';
   static const String groupsCreatedLabel = 'Created';
   static const String groupsRulesLabel = 'Rules';

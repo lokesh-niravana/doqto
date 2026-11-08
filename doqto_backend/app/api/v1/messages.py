@@ -3,16 +3,22 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, status
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.ws_manager import ws_manager
 from app.core.constants import (
+    ADMIN_REMOVED_MESSAGE_TEXT,
     FILE_MAX_BYTES,
     PRESIGNED_URL_TTL_SECONDS,
+    RATE_LIMIT_FORWARDS_PER_MINUTE,
     RATE_LIMIT_REACTIONS_PER_MINUTE,
     RATE_LIMIT_READS_PER_MINUTE,
+    RATE_LIMIT_STARS_PER_MINUTE,
+    STARRED_PAGE_SIZE,
     VOICE_NOTE_MAX_DURATION_SECONDS,
     VOICE_NOTE_MAX_FILE_BYTES,
     VOICE_NOTE_MIN_DURATION_SECONDS,
@@ -35,11 +41,15 @@ from app.schemas.message import (
     FileUrlOut,
     MessageEditIn,
     MessageEditOut,
+    MessageForwardIn,
     MessageHideIn,
     MessageOut,
     MessageReactedEvent,
     MessageReactIn,
     MessageReceiptOut,
+    MessageStarredEvent,
+    StarredMessageOut,
+    StarredPage,
 )
 from app.services.audit_service import AuditService
 from app.services.file_service import FileService
@@ -367,9 +377,11 @@ async def get_file_url(
     return FileUrlOut(url=url, expires_in=PRESIGNED_URL_TTL_SECONDS)
 
 
-# MessageError → HTTP status for the edit/delete paths.
+# MessageError → HTTP status for the edit/delete/react/forward/star paths.
+# Anything not listed is a 409 state conflict (window closed, tombstone, …).
 _EDIT_DELETE_STATUS = {
     "message_not_found": status.HTTP_404_NOT_FOUND,
+    "conversation_not_found": status.HTTP_404_NOT_FOUND,
     "not_message_sender": status.HTTP_403_FORBIDDEN,
     "not_a_conversation_member": status.HTTP_403_FORBIDDEN,
     "invalid_emoji": status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -377,6 +389,10 @@ _EDIT_DELETE_STATUS = {
     "not_connected": status.HTTP_403_FORBIDDEN,
     "group_dm_request": status.HTTP_403_FORBIDDEN,
     "group_dm_disabled": status.HTTP_403_FORBIDDEN,
+    "post_restricted": status.HTTP_403_FORBIDDEN,
+    "conversation_not_open": status.HTTP_403_FORBIDDEN,
+    "forward_blocked_by_org": status.HTTP_403_FORBIDDEN,
+    "forward_limit": status.HTTP_422_UNPROCESSABLE_ENTITY,
 }
 
 
@@ -388,9 +404,9 @@ def _raise_edit_delete(e: MessageError) -> None:
 
 async def _broadcast(msg: Message, event: WsEventServer, db: AsyncSession) -> MessageOut:
     recipients = await MessageService.member_ids(conversation_id=msg.conversation_id, db=db)
-    # Edits keep reactions; the client swaps the row, so the payload must carry them.
-    reactions = await MessageService.reactions_for(message_ids=[msg.id], db=db)
-    out = MessageService.to_out(msg, reactions=reactions.get(msg.id))
+    # Edits keep reactions and the quote; the client swaps the row, so the
+    # payload must carry them.
+    out = (await MessageService.outs_for([msg], db=db))[0]
     await db.commit()
     await ws_manager.publish_to_users(recipients, event, out.model_dump(mode="json"))
     return out
@@ -420,15 +436,30 @@ async def delete_message(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MessageOut:
-    """Sender deletes within the delete window → tombstone for every member."""
+    """Sender deletes within the delete window → tombstone for every member.
+    A group admin may delete any member's message (any age); the thread then
+    shows the system line "Admin removed a message"."""
     await enforce_rate_limit(user.id, "delete_message")
     try:
-        msg, s3_key = await MessageService.delete_message(
+        msg, s3_key, by_admin = await MessageService.delete_message(
             message_id=message_id, user_id=user.id, db=db
         )
     except MessageError as e:
         _raise_edit_delete(e)
+    system_out: MessageOut | None = None
+    recipients: list[uuid.UUID] = []
+    if by_admin:
+        conv = await db.get(Conversation, msg.conversation_id)
+        system_msg = await MessageService.send_system(
+            conv=conv, sender_id=user.id, content=ADMIN_REMOVED_MESSAGE_TEXT, db=db
+        )
+        system_out = MessageService.to_out(system_msg)
+        recipients = await MessageService.member_ids(conversation_id=conv.id, db=db)
     out = await _broadcast(msg, WsEventServer.MESSAGE_DELETED, db)
+    if system_out is not None:
+        await ws_manager.publish_to_users(
+            recipients, WsEventServer.NEW_MESSAGE, system_out.model_dump(mode="json")
+        )
     if s3_key:
         # Best-effort: the row is already shredded; a stray object is caught by
         # the purge job's key sweep if this fails.
@@ -537,3 +568,175 @@ async def list_message_edits(
         MessageEditOut(content=decrypt_message(e.content_encrypted), replaced_at=e.replaced_at)
         for e in await MessageService.list_edits(message_id=message_id, db=db)
     ]
+
+
+# --- Forward (batch 4) ------------------------------------------------------- #
+
+
+@router.post(ApiRoutes.MESSAGES_FORWARD, response_model=list[MessageOut])
+async def forward_message(
+    message_id: uuid.UUID,
+    body: MessageForwardIn,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[MessageOut]:
+    """Copy a message into up to 5 conversations the caller can post to. Each
+    copy is a normal new message (own row, own S3 object) flagged
+    `forwarded` with `forward_depth` + 1; at depth 5 forwarding stops
+    (422 forward_limit). Org policy allow_forward_outside_org=false blocks
+    copies leaving the source org (403 forward_blocked_by_org)."""
+    await enforce_rate_limit(user.id, "forward_message", RATE_LIMIT_FORWARDS_PER_MINUTE)
+
+    async def _copy(src_key: str, dst_key: str) -> None:
+        await FileService.copy_object(src_key=src_key, dst_key=dst_key)
+
+    try:
+        copies = await MessageService.forward_message(
+            message_id=message_id,
+            user_id=user.id,
+            conversation_ids=body.conversation_ids,
+            db=db,
+            copy_object=_copy,
+        )
+    except MessageError as e:
+        _raise_edit_delete(e)
+    outs = await MessageService.outs_for(copies, db=db)
+    fanout: list[tuple[list[uuid.UUID], MessageOut]] = []
+    for out in outs:
+        recipients = await MessageService.member_ids(conversation_id=out.conversation_id, db=db)
+        fanout.append((recipients, out))
+    await db.commit()
+    for recipients, out in fanout:
+        await ws_manager.publish_to_users(
+            recipients, WsEventServer.NEW_MESSAGE, out.model_dump(mode="json")
+        )
+        PushService.notify_new_message(
+            conversation_id=out.conversation_id, recipient_ids=recipients, sender_id=user.id
+        )
+    return outs
+
+
+# --- Stars (batch 4) --------------------------------------------------------- #
+
+
+async def _star_response(
+    msg: Message, changed: bool, starred: bool, user: User, db: AsyncSession
+) -> MessageOut:
+    out = (await MessageService.outs_for([msg], db=db, viewer_id=user.id))[0]
+    if changed:
+        await db.commit()
+        # Private: only the actor's own devices learn about it.
+        await ws_manager.publish_to_users(
+            [user.id],
+            WsEventServer.MESSAGE_STARRED,
+            MessageStarredEvent(
+                conversation_id=msg.conversation_id, message_id=msg.id, starred=starred
+            ).model_dump(mode="json"),
+        )
+    return out
+
+
+@router.put(ApiRoutes.MESSAGES_STAR, response_model=MessageOut)
+async def star_message(
+    message_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MessageOut:
+    """Bookmark a message for myself. Idempotent; nobody else can tell."""
+    await enforce_rate_limit(user.id, "star_message", RATE_LIMIT_STARS_PER_MINUTE)
+    try:
+        msg, changed = await MessageService.set_star(
+            message_id=message_id, user_id=user.id, starred=True, db=db
+        )
+    except MessageError as e:
+        _raise_edit_delete(e)
+    return await _star_response(msg, changed, True, user, db)
+
+
+@router.delete(ApiRoutes.MESSAGES_STAR, response_model=MessageOut)
+async def unstar_message(
+    message_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MessageOut:
+    await enforce_rate_limit(user.id, "star_message", RATE_LIMIT_STARS_PER_MINUTE)
+    try:
+        msg, changed = await MessageService.set_star(
+            message_id=message_id, user_id=user.id, starred=False, db=db
+        )
+    except MessageError as e:
+        _raise_edit_delete(e)
+    return await _star_response(msg, changed, False, user, db)
+
+
+@router.get(ApiRoutes.MESSAGES_STARRED, response_model=StarredPage)
+async def list_starred(
+    request: Request,
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=STARRED_PAGE_SIZE, ge=1, le=STARRED_PAGE_SIZE),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> StarredPage:
+    """My starred messages across every conversation, newest star first.
+    Cursor = the last row's starred_at. Deleted / expired / hidden messages
+    are never listed (and their stars are purged)."""
+    await enforce_rate_limit(user.id, "list_starred", RATE_LIMIT_READS_PER_MINUTE)
+    before: datetime | None = None
+    if cursor:
+        try:
+            before = datetime.fromisoformat(cursor)
+        except ValueError as e:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid_cursor") from e
+    rows = await MessageService.list_starred(user_id=user.id, before=before, limit=limit, db=db)
+    next_cursor = None
+    if len(rows) > limit:
+        rows = rows[:limit]
+        next_cursor = rows[-1][0].created_at.isoformat()
+    # Decrypted PHI leaves the server: one audit row per page, like a thread read.
+    await AuditService.log_request(
+        request,
+        user_id=user.id,
+        action=AuditAction.STARRED_MESSAGES_READ,
+        resource_type="user",
+        resource_id=user.id,
+        db=db,
+        metadata={"count": len(rows), "cursor": cursor},
+    )
+    await db.commit()
+    msgs = [m for _, m, _ in rows]
+    outs = await MessageService.outs_for(msgs, db=db, viewer_id=user.id)
+    # Direct chats are named after the other member.
+    other_ids: set[uuid.UUID] = set()
+    conv_members: dict[uuid.UUID, list[uuid.UUID]] = {}
+    direct_ids = [c.id for _, _, c in rows if c.type == ConversationType.DIRECT]
+    if direct_ids:
+        conv_members = await MessageService.members_by_conversation(
+            conversation_ids=list(set(direct_ids)), db=db
+        )
+        for ids in conv_members.values():
+            other_ids.update(uid for uid in ids if uid != user.id)
+    names: dict[uuid.UUID, str] = {}
+    if other_ids:
+        names = dict(
+            (await db.execute(select(User.id, User.full_name).where(User.id.in_(other_ids)))).all()
+        )
+    data: list[StarredMessageOut] = []
+    for (star, _, conv), out in zip(rows, outs):
+        if conv.type == ConversationType.DIRECT:
+            name = next(
+                (names[u] for u in conv_members.get(conv.id, []) if u != user.id and u in names),
+                None,
+            )
+        else:
+            name = conv.name
+        data.append(
+            StarredMessageOut(
+                message=out,
+                conversation_id=conv.id,
+                conversation_type=str(conv.type),
+                conversation_name=name,
+                starred_at=star.created_at,
+            )
+        )
+    return StarredPage(data=data, next_cursor=next_cursor)

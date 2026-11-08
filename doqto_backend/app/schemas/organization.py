@@ -72,6 +72,8 @@ class OrgOut(ORMModel):
     verified_at: datetime | None
     created_at: datetime
     member_count: int = 0
+    # Content policies (batch 4) — effective values, defaults filled in.
+    policies: dict = {}
 
 
 class OrgApproveIn(BaseModel):
@@ -88,12 +90,16 @@ class OrgNetworkingSettingsIn(BaseModel):
     external_networking_enabled: bool | None = None
     external_dm_policy: ExternalDmPolicy | None = None
     directory_visibility: DirectoryVisibility | None = None
+    # Content policies (batch 4, organizations.policies).
+    allow_forward_outside_org: bool | None = None
+    allow_copy: bool | None = None
 
 
 class OrgNetworkingSettingsOut(ORMModel):
     external_networking_enabled: bool
     external_dm_policy: ExternalDmPolicy
     directory_visibility: DirectoryVisibility
+    policies: dict = {}
 
 
 class MemberOut(BaseModel):

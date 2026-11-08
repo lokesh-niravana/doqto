@@ -46,5 +46,9 @@ class FileService:
         return await _s3_instance.presigned_url(key=key, expires_in=expires_in)
 
     @staticmethod
+    async def copy_object(*, src_key: str, dst_key: str) -> None:
+        await _s3_instance.copy_object(src_key=src_key, dst_key=dst_key)
+
+    @staticmethod
     async def delete_object(*, key: str) -> None:
         await _s3_instance.delete_object(key=key)

@@ -67,7 +67,11 @@ def _test_database():
 
         engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
         async with engine.begin() as c:
-            await c.run_sync(Base.metadata.drop_all)
+            # DROP SCHEMA … CASCADE instead of drop_all: drop_all assumes the
+            # DB matches the current models (it ALTERs away use_alter FKs
+            # first) and breaks on a test DB left by an older schema.
+            await c.execute(sa.text("DROP SCHEMA public CASCADE"))
+            await c.execute(sa.text("CREATE SCHEMA public"))
             await c.run_sync(Base.metadata.create_all)
             # Indexes that live only in migrations (0007, 0009).
             await c.execute(

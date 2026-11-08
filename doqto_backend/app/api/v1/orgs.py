@@ -8,7 +8,12 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import RATE_LIMIT_READS_PER_MINUTE
+from app.core.constants import (
+    ORG_POLICY_ALLOW_COPY,
+    ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG,
+    ORG_POLICY_DEFAULTS,
+    RATE_LIMIT_READS_PER_MINUTE,
+)
 from app.core.dependencies import get_current_user, require_org_admin, require_org_member
 from app.api.ws_manager import ws_manager
 from app.core.enums import AuditAction, OrgStatus, WsEventServer
@@ -83,10 +88,16 @@ async def publish_org_updated(
     )
 
 
+def effective_policies(org: Organization) -> dict:
+    """Content policies with defaults filled in (batch 4)."""
+    return {**ORG_POLICY_DEFAULTS, **(org.policies or {})}
+
+
 async def _to_out(org: Organization, db: AsyncSession) -> OrgOut:
     count = await OrgService.member_count(org_id=org.id, db=db)
     out = OrgOut.model_validate(org)
     out.member_count = count
+    out.policies = effective_policies(org)
     return out
 
 
@@ -274,6 +285,16 @@ async def update_networking_settings(
     if body.directory_visibility is not None:
         org.directory_visibility = body.directory_visibility
         changes["directory_visibility"] = body.directory_visibility.value
+    # Content policies (batch 4) live in the JSONB column; copy-on-write so
+    # SQLAlchemy sees the change.
+    policies = dict(org.policies or {})
+    for key in (ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG, ORG_POLICY_ALLOW_COPY):
+        value = getattr(body, key)
+        if value is not None:
+            policies[key] = value
+            changes[key] = value
+    if policies != (org.policies or {}):
+        org.policies = policies
     if changes:
         await AuditService.log_request(
             request,
@@ -287,7 +308,9 @@ async def update_networking_settings(
         await db.commit()
         await db.refresh(org)
         await publish_org_updated(org_id, db)
-    return OrgNetworkingSettingsOut.model_validate(org)
+    out = OrgNetworkingSettingsOut.model_validate(org)
+    out.policies = effective_policies(org)
+    return out
 
 
 @router.get(ApiRoutes.ORGS_INVITE_CODE)

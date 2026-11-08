@@ -52,6 +52,9 @@ SHARED = {
     # backend-only — deliberately NOT gated, no Dart mirror needed. Visibility
     # and join policy were retired when groups became invite-only.
     "GroupRole",
+    # Batch 4: the report-reason picker renders from this enum. ReportSubjectType
+    # and ReportStatus stay backend-only.
+    "ReportReason",
     "MessageType",
     "TranscriptStatus",
     "WsEventServer",

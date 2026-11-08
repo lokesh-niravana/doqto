@@ -21,7 +21,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID as PgUUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.enums import InvitationStatus, ReportStatus
@@ -227,6 +227,15 @@ class Report(Base):
         server_default=ReportStatus.OPEN.value,
         nullable=False,
     )
+    # Batch 4: the reporter's last few message ids in the thread (ids only,
+    # never bodies) so a moderator can pull context; who resolved it, when.
+    context_message_ids: Mapped[list[uuid.UUID] | None] = mapped_column(
+        ARRAY(PgUUID(as_uuid=True)), nullable=True
+    )
+    resolved_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey(f"{Tables.USERS}.id"), nullable=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

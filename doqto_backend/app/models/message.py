@@ -3,8 +3,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID as PgUUID
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, false, func
+from sqlalchemy.dialects.postgresql import ARRAY, UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.enums import MessageType, ScheduledMessageStatus, TranscriptStatus
@@ -55,6 +55,52 @@ class Message(Base):
     # Bumped on every post-send change other members can see (edit, delete,
     # reaction). Catch-up uses it: after_seq only finds NEW messages.
     changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # --- Batch 4 ---------------------------------------------------------- #
+    # Reply/quote: the message this one answers (same conversation). The quote
+    # is rendered live from the target row, so nothing is copied here.
+    reply_to_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.MESSAGES}.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # Forwarded copy: own row, own (copied) S3 object. forward_depth counts
+    # hops; at FORWARD_MAX_DEPTH the client shows "Forwarded many times" and the
+    # server refuses to forward again.
+    forwarded: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    forward_depth: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    # Members referenced with `@[<uuid>]` tokens in the body (validated as
+    # conversation members at send time). Ids only — not PHI.
+    mentions: Mapped[list[uuid.UUID] | None] = mapped_column(
+        ARRAY(PgUUID(as_uuid=True)), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class MessageStar(Base):
+    """A member's private bookmark on a message. Not PHI (just the pair).
+    Stars never extend retention: the purge job drops stars on deleted /
+    expired messages."""
+
+    __tablename__ = Tables.MESSAGE_STARS
+    __table_args__ = (Index("ix_message_stars_user_created", "user_id", "created_at"),)
+
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.MESSAGES}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.USERS}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

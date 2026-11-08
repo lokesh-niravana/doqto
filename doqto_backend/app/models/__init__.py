@@ -8,6 +8,7 @@ from app.models.message import (
     MessageHide,
     MessageReaction,
     MessageReceipt,
+    MessageStar,
     ScheduledMessage,
 )
 from app.models.network import (
@@ -45,6 +46,7 @@ __all__ = [
     "MessageHide",
     "MessageReaction",
     "MessageReceipt",
+    "MessageStar",
     "ScheduledMessage",
     "Mute",
     "SuggestionDismissal",

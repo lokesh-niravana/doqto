@@ -7,7 +7,9 @@ Payload policy: title/body are the fixed constants PUSH_TITLE /
 PUSH_BODY_NEW_MESSAGE (or "<sender name> sent you a message" — directory data,
 not PHI). Never message content (HIPAA: pushes transit
 Apple/Google unencrypted-to-us). Data carries only the conversation UUID for
-deep-linking; collapse key dedupes per conversation.
+deep-linking; collapse key dedupes per conversation. Mentions (batch 4) send
+"<sender> mentioned you in <group>" to the people named INSTEAD of the generic
+banner — still names only.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from sqlalchemy.sql import func
 
 from app.core.config import settings
 from app.core.constants import (
+    PUSH_BODY_MENTION_FALLBACK,
     PUSH_BODY_NEW_MESSAGE,
     PUSH_TITLE,
 )
@@ -77,6 +80,16 @@ def reaction_body(actor_name: str | None, emoji: str) -> str:
 def group_invite_body(actor_name: str | None, group_name: str) -> str:
     """Names only — a doctor's name and a group name are directory data."""
     return f"{actor_name or 'Someone'} invited you to {group_name}"
+
+
+def mention_body(actor_name: str | None, group_name: str | None) -> str:
+    """'Dr X mentioned you in <group>' — names only (directory data). Never
+    the message text."""
+    if not actor_name:
+        return PUSH_BODY_MENTION_FALLBACK
+    if group_name:
+        return f"{actor_name} mentioned you in {group_name}"
+    return f"{actor_name} mentioned you"
 
 
 def new_message_body(sender_name: str | None, unread: int) -> str:
@@ -214,15 +227,64 @@ class PushService:
         conversation_id: uuid.UUID,
         recipient_ids: list[uuid.UUID],
         sender_id: uuid.UUID,
+        skip_ids: set[uuid.UUID] | None = None,
     ) -> None:
-        """Fire-and-forget: never blocks or fails the send path."""
+        """Fire-and-forget: never blocks or fails the send path. `skip_ids`
+        are members who get a different push for this message (mentions)."""
         asyncio.create_task(
             PushService._dispatch(
                 conversation_id=conversation_id,
                 recipient_ids=recipient_ids,
                 sender_id=sender_id,
+                skip_ids=skip_ids,
             )
         )
+
+    @staticmethod
+    def notify_mentions(
+        *,
+        conversation_id: uuid.UUID,
+        mentioned_ids: list[uuid.UUID],
+        sender_id: uuid.UUID,
+    ) -> None:
+        """'Dr X mentioned you in <group>' to each mentioned member (never the
+        sender). Same collapse key as the conversation's new-message banner so
+        it REPLACES it rather than stacking. Mentions bypass any per-chat mute
+        the client applies — this push is the mute-proof path. Fire-and-forget."""
+        asyncio.create_task(
+            PushService._dispatch_mentions(
+                conversation_id=conversation_id,
+                mentioned_ids=mentioned_ids,
+                sender_id=sender_id,
+            )
+        )
+
+    @staticmethod
+    async def _dispatch_mentions(
+        *,
+        conversation_id: uuid.UUID,
+        mentioned_ids: list[uuid.UUID],
+        sender_id: uuid.UUID,
+    ) -> None:
+        try:
+            async with SessionLocal() as db:
+                name = await db.scalar(select(User.full_name).where(User.id == sender_id))
+                conv = await db.get(Conversation, conversation_id)
+                group_name = conv.name if conv is not None else None
+        except Exception:  # noqa: BLE001
+            log.exception("mention push lookup failed")
+            name, group_name = None, None
+        body = mention_body(name, group_name)
+        for uid in mentioned_ids:
+            if uid == sender_id:
+                continue
+            await PushService._dispatch_simple(
+                recipient_id=uid,
+                title=PUSH_TITLE,
+                body=body,
+                data={"type": "mention", "conversation_id": str(conversation_id)},
+                collapse_key=str(conversation_id),
+            )
 
     @staticmethod
     def notify_reaction(
@@ -369,7 +431,9 @@ class PushService:
         conversation_id: uuid.UUID,
         recipient_ids: list[uuid.UUID],
         sender_id: uuid.UUID,
+        skip_ids: set[uuid.UUID] | None = None,
     ) -> None:
+        skip = skip_ids or set()
         try:
             sender = _sender()
             # PHI-free by policy — constants only, plus the conversation UUID
@@ -382,7 +446,7 @@ class PushService:
                 name = await db.scalar(select(User.full_name).where(User.id == sender_id))
                 conv = await db.get(Conversation, conversation_id)
                 for uid in recipient_ids:
-                    if uid == sender_id:
+                    if uid == sender_id or uid in skip:
                         continue
                     # The banner collapses per conversation, so it carries the
                     # unread count: eight messages read "8 new messages", not

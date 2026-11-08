@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -14,6 +14,7 @@ from app.core.constants import (
     CHAT_LIST_PREVIEW_MAX_LEN,
     DISAPPEAR_OPTIONS_SEC,
     MESSAGES_PAGE_SIZE,
+    RATE_LIMIT_PINS_PER_MINUTE,
     RATE_LIMIT_READS_PER_MINUTE,
 )
 from app.core import permissions
@@ -51,7 +52,9 @@ from app.schemas.conversation import (
     ConversationSettingsIn,
 )
 from app.schemas.message import (
+    ConversationPinIn,
     MessageOut,
+    MessagePinnedEvent,
     MessageScheduleIn,
     MessageSendIn,
     ScheduledMessageOut,
@@ -129,6 +132,7 @@ def _to_out(
 ) -> ConversationOut:
     out = ConversationOut.model_validate(conv)
     out.member_ids = member_ids
+    out.pinned_message_id, out.pinned_until = MessageService.effective_pin(conv)
     if last_msg is not None:
         out.last_message_at = last_msg.created_at
         out.last_message_sender_id = last_msg.sender_id
@@ -273,12 +277,22 @@ async def list_messages(
     conversation_id: uuid.UUID,
     request: Request,
     before: datetime | None = Query(default=None),
+    before_date: date | None = Query(default=None),
     after_seq: int | None = Query(default=None, ge=0),
     changed_since: datetime | None = Query(default=None),
     limit: int = Query(default=MESSAGES_PAGE_SIZE, ge=1, le=MESSAGES_PAGE_SIZE),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[MessageOut]:
+    # "Jump to date" (batch 4): the page ending at the end of that UTC day.
+    if before_date is not None:
+        if before is not None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, detail="before_and_before_date_exclusive"
+            )
+        before = datetime.combine(before_date, datetime.min.time(), tzinfo=timezone.utc) + timedelta(
+            days=1
+        )
     if before is not None and after_seq is not None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, detail="before_and_after_seq_exclusive"
@@ -331,16 +345,9 @@ async def list_messages(
         delivered_ids = await MessageService.delivered_message_ids(
             message_ids=[m.id for m in msgs], db=db
         )
-    reactions = await MessageService.reactions_for(message_ids=[m.id for m in msgs], db=db)
-    return [
-        MessageService.to_out(
-            m,
-            read=m.id in read_ids,
-            delivered=m.id in delivered_ids,
-            reactions=reactions.get(m.id),
-        )
-        for m in msgs
-    ]
+    return await MessageService.outs_for(
+        msgs, db=db, viewer_id=user.id, read_ids=read_ids, delivered_ids=delivered_ids
+    )
 
 
 @router.post(ApiRoutes.CONVERSATIONS_MESSAGES, response_model=MessageOut)
@@ -391,12 +398,16 @@ async def send_message(
             client_id=body.client_id,
             ip_address=ip,
             user_agent=user_agent,
+            reply_to_id=body.reply_to_id,
         )
     except MessageError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        raise HTTPException(_SEND_STATUS.get(str(e), status.HTTP_400_BAD_REQUEST), detail=str(e)) from e
 
-    out = MessageService.to_out(msg)
+    # The quote travels with the message so receivers render it without a
+    # second fetch; `starred` is per-viewer and stays false in the fan-out.
+    out = (await MessageService.outs_for([msg], db=db))[0]
     recipients = await MessageService.member_ids(conversation_id=conversation_id, db=db)
+    mentioned = [uid for uid in (msg.mentions or []) if uid != user.id]
 
     await db.commit()  # flush before broadcasting so receivers can query
     await ws_manager.publish_to_users(
@@ -405,9 +416,27 @@ async def send_message(
         out.model_dump(mode="json"),
     )
     PushService.notify_new_message(
-        conversation_id=conversation_id, recipient_ids=recipients, sender_id=user.id
+        conversation_id=conversation_id,
+        recipient_ids=recipients,
+        sender_id=user.id,
+        skip_ids=set(mentioned),
     )
+    if mentioned:
+        # "Dr X mentioned you in <group>" — replaces the generic banner for
+        # the people named; the client's per-chat mute does not apply to it.
+        PushService.notify_mentions(
+            conversation_id=conversation_id, mentioned_ids=mentioned, sender_id=user.id
+        )
     return out
+
+
+# MessageError → HTTP status on the send path (anything else is 400).
+_SEND_STATUS = {
+    "reply_target_invalid": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "mention_not_member": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "too_many_mentions": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "conversation_not_found": status.HTTP_404_NOT_FOUND,
+}
 
 
 @router.post(ApiRoutes.CONVERSATIONS_MESSAGES_SCHEDULE, response_model=ScheduledMessageOut)
@@ -508,7 +537,7 @@ async def mark_conversation_delivered(
 ) -> OkResponse:
     """Recipient acks receipt of a conversation's messages → gray double-check
     on the sender's side. Called by clients whenever messages arrive."""
-    conv = await _assert_member(conversation_id, user.id, db)
+    await _assert_member(conversation_id, user.id, db)
     changed = await MessageService.mark_conversation_delivered(
         conversation_id=conversation_id, user_id=user.id, db=db
     )
@@ -654,3 +683,78 @@ async def update_settings(
     return OkResponse()
 
 
+
+
+# --- Pinned message (batch 4) ------------------------------------------------ #
+
+_PIN_STATUS = {
+    "message_not_found": status.HTTP_404_NOT_FOUND,
+    "not_authorized": status.HTTP_403_FORBIDDEN,
+    "invalid_pin_duration": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "message_deleted": status.HTTP_409_CONFLICT,
+    "message_not_pinnable": status.HTTP_409_CONFLICT,
+}
+
+
+async def _publish_pin(
+    conv: Conversation,
+    event: WsEventServer,
+    message_id: uuid.UUID | None,
+    actor_id: uuid.UUID | None,
+    db: AsyncSession,
+) -> None:
+    recipients = await MessageService.member_ids(conversation_id=conv.id, db=db)
+    payload = MessagePinnedEvent(
+        conversation_id=conv.id,
+        message_id=message_id,
+        pinned_until=conv.pinned_until if event == WsEventServer.MESSAGE_PINNED else None,
+        actor_id=actor_id,
+    )
+    await db.commit()
+    await db.refresh(conv)  # commit expired the row; the response reads it
+    await ws_manager.publish_to_users(recipients, event, payload.model_dump(mode="json"))
+
+
+@router.put(ApiRoutes.CONVERSATIONS_PIN, response_model=ConversationOut)
+async def pin_message(
+    conversation_id: uuid.UUID,
+    body: ConversationPinIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ConversationOut:
+    """Pin one message to the top of the thread for 24h / 7d / 30d. Direct:
+    either member; group: admin+. Replaces any current pin."""
+    await enforce_rate_limit(user.id, "pin_message", RATE_LIMIT_PINS_PER_MINUTE)
+    conv = await _assert_member(conversation_id, user.id, db)
+    try:
+        msg = await MessageService.pin_message(
+            conv=conv,
+            message_id=body.message_id,
+            user_id=user.id,
+            duration_sec=body.duration_sec,
+            db=db,
+        )
+    except MessageError as e:
+        raise HTTPException(_PIN_STATUS.get(str(e), status.HTTP_409_CONFLICT), detail=str(e)) from e
+    await _publish_pin(conv, WsEventServer.MESSAGE_PINNED, msg.id, user.id, db)
+    members = await MessageService.member_ids(conversation_id=conversation_id, db=db)
+    return _to_out(conv, members)
+
+
+@router.delete(ApiRoutes.CONVERSATIONS_PIN, response_model=ConversationOut)
+async def unpin_message(
+    conversation_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ConversationOut:
+    """Remove the pin (same roles as pinning). Nothing pinned = no-op."""
+    await enforce_rate_limit(user.id, "pin_message", RATE_LIMIT_PINS_PER_MINUTE)
+    conv = await _assert_member(conversation_id, user.id, db)
+    try:
+        previous = await MessageService.unpin_message(conv=conv, user_id=user.id, db=db)
+    except MessageError as e:
+        raise HTTPException(_PIN_STATUS.get(str(e), status.HTTP_409_CONFLICT), detail=str(e)) from e
+    if previous is not None:
+        await _publish_pin(conv, WsEventServer.MESSAGE_UNPINNED, previous, user.id, db)
+    members = await MessageService.member_ids(conversation_id=conversation_id, db=db)
+    return _to_out(conv, members)

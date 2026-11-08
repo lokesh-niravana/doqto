@@ -5,8 +5,12 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.core.constants import INVITATION_MESSAGE_MAX_LEN, REPORT_DETAILS_MAX_LEN
-from app.core.enums import InvitationStatus
+from app.core.constants import (
+    INVITATION_MESSAGE_MAX_LEN,
+    REPORT_CONTEXT_MAX_IDS,
+    REPORT_DETAILS_MAX_LEN,
+)
+from app.core.enums import InvitationStatus, ReportReason, ReportStatus, ReportSubjectType
 from app.schemas.common import ORMModel
 
 
@@ -98,11 +102,37 @@ class MuteOut(BaseModel):
 
 
 class ReportCreateIn(BaseModel):
-    # The app reports people from their profile and omits this.
-    subject_type: str = Field(default="user", max_length=20)
+    # The app reports people from their profile and omits this; a message
+    # report (batch 4) sends subject_type=message + the message id.
+    subject_type: ReportSubjectType = ReportSubjectType.USER
     subject_id: uuid.UUID
-    reason: str = Field(max_length=50)
+    reason: ReportReason
     details: str | None = Field(default=None, max_length=REPORT_DETAILS_MAX_LEN)
+    # Message reports: the last few message ids in the thread (ids ONLY, never
+    # bodies) so a moderator can pull context through the audited read path.
+    context_message_ids: list[uuid.UUID] = Field(
+        default_factory=list, max_length=REPORT_CONTEXT_MAX_IDS
+    )
+
+
+class ReportOut(ORMModel):
+    """Moderation queue row (super-admin only). Ids only — no message bodies."""
+
+    id: uuid.UUID
+    reporter_id: uuid.UUID
+    subject_type: str
+    subject_id: uuid.UUID
+    reason: str
+    details: str | None = None
+    status: ReportStatus
+    context_message_ids: list[uuid.UUID] | None = None
+    resolved_by: uuid.UUID | None = None
+    resolved_at: datetime | None = None
+    created_at: datetime
+
+
+class ReportStatusIn(BaseModel):
+    status: ReportStatus
 
 
 class CursorPage(BaseModel):

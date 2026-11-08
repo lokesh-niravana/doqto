@@ -463,13 +463,17 @@ async def file_report(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> OkResponse:
-    await ConnectionService.report(
-        request=request,
-        user=user,
-        subject_type=body.subject_type,
-        subject_id=body.subject_id,
-        reason=body.reason,
-        details=body.details,
-        db=db,
-    )
+    try:
+        await ConnectionService.report(
+            request=request,
+            user=user,
+            subject_type=body.subject_type.value,
+            subject_id=body.subject_id,
+            reason=body.reason.value,
+            details=body.details,
+            db=db,
+            context_message_ids=body.context_message_ids,
+        )
+    except ConnectionError as e:
+        _raise(e)
     return OkResponse()

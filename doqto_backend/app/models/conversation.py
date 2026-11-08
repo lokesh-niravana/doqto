@@ -55,6 +55,24 @@ class Conversation(Base):
     last_seq: Mapped[int] = mapped_column(
         BigInteger, default=0, server_default="0", nullable=False
     )
+    # Pinned message (batch 4): one per conversation, time-boxed. The FK is
+    # use_alter because conversations <-> messages reference each other.
+    pinned_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(
+            f"{Tables.MESSAGES}.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_conversations_pinned_message",
+        ),
+        nullable=True,
+    )
+    pinned_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    pinned_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey(f"{Tables.USERS}.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

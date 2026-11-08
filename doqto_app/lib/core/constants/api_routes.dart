@@ -46,6 +46,8 @@ class ApiRoutes {
       '$apiV1/conversations/$convId/members/$userId';
   static String conversationSettings(String id) =>
       '$apiV1/conversations/$id/settings';
+  // Pinned message (batch 4): PUT {message_id, duration_sec} / DELETE.
+  static String conversationPin(String id) => '$apiV1/conversations/$id/pin';
 
   // Messages
   static String messageUpload(String convId) =>
@@ -63,6 +65,14 @@ class ApiRoutes {
   static String messageFileUrl(String id) => '$apiV1/messages/$id/file-url';
   static String messageReceipts(String id) =>
       '$apiV1/messages/$id/receipts'; // sender-only read-by / delivered-to
+  // Batch 4
+  static String messageForward(String id) =>
+      '$apiV1/messages/$id/forward'; // POST {conversation_ids: [≤5]}
+  static String messageStar(String id) =>
+      '$apiV1/messages/$id/star'; // PUT star / DELETE unstar (private)
+  static const String messagesStarred =
+      '$apiV1/messages/starred'; // GET ?cursor=&limit= across conversations
+  static const String linkPreview = '$apiV1/link-preview'; // GET ?url=
 
   // People / profiles (networking M1/M2)
   static String userProfile(String userId) => '$apiV1/users/$userId/profile';

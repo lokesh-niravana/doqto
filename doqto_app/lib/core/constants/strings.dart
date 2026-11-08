@@ -623,4 +623,115 @@ class Strings {
   static const String storageNever = 'Never';
   static const String storageWifiOnly = 'Wi-Fi only';
   static const String storageWifiAndCellular = 'Wi-Fi and cellular';
+
+  // Compliance (batch 7): My Org → Policies / Access requests / Reports
+  static const String myOrgAdminSection = 'Administration';
+  static const String myOrgPolicies = 'Policies';
+  static const String myOrgPoliciesHint = 'Copy, export, screenshots, retention, legal hold';
+  static const String myOrgAccessRequests = 'Access requests';
+  static const String myOrgAccessRequestsHint = 'Emergency access to a conversation, approved by a second admin';
+  static const String myOrgReports = 'Reports';
+  static const String myOrgReportsHint = 'Reports about or by members of this organisation';
+  static const String myOrgMemberPolicies = 'Your organisation\'s policies';
+  static const String myOrgMemberPoliciesHint = 'What your admins allow in organisation chats';
+
+  static const String orgPoliciesTitle = 'Policies';
+  static const String orgPoliciesReadOnlyFooter = 'Set by your organisation\'s admins. Ask them to change anything here.';
+  static const String orgPoliciesSectionContent = 'Content';
+  static const String orgPoliciesSectionNotifications = 'Notifications';
+  static const String orgPoliciesSectionRetention = 'Retention';
+  static const String orgPolicyForwardOutside = 'Forward outside the organisation';
+  static const String orgPolicyForwardOutsideHint = 'Members can forward messages to chats outside this organisation';
+  static const String orgPolicyAllowCopy = 'Copy message text';
+  static const String orgPolicyAllowCopyHint = 'Show Copy on messages in organisation chats';
+  static const String orgPolicyMediaExport = 'Save and share media';
+  static const String orgPolicyMediaExportHint = 'Save to Photos and Share on photos, videos and documents';
+  static const String orgPolicyBlockScreenshots = 'Block screenshots';
+  static const String orgPolicyBlockScreenshotsHint = 'Android blanks organisation chats in screenshots; iOS screenshots are audited';
+  static const String orgPolicyPreviewDefault = 'Message previews in banners';
+  static const String orgPolicyPreviewDefaultHint = 'Members who have not chosen see message text in notifications';
+  static const String orgPolicyDefaultDisappear = 'Default disappearing timer';
+  static const String orgPolicyDefaultDisappearHint = 'New organisation group chats start with this timer';
+  static const String orgPolicyRetention = 'Keep messages for';
+  static const String orgPolicyRetentionHint = 'Older messages in organisation chats are removed automatically';
+  static const String orgPolicyRetentionForever = 'Forever';
+  static String orgPolicyRetentionDays(int days) => days == 1 ? '1 day' : '$days days';
+  static const String orgPolicyLegalHold = 'Legal hold';
+  static const String orgPolicyLegalHoldHint = 'Nothing in organisation chats is destroyed, including deleted messages, until the hold is lifted';
+  static const String orgPolicyLegalHoldOnTitle = 'Turn on legal hold?';
+  static const String orgPolicyLegalHoldOnBody =
+      'Deleted messages, expired messages and deleted accounts keep their content for this organisation\'s chats until you lift the hold. Members still see deletions as usual. Content is readable only through an approved access request.';
+  static const String orgPolicyLegalHoldOffTitle = 'Lift legal hold?';
+  static const String orgPolicyLegalHoldOffBody =
+      'Everything held back will be destroyed on the next purge pass — deleted messages, expired messages and deleted accounts. This cannot be undone.';
+  static const String orgPolicyRetentionTitle = 'Change retention?';
+  static String orgPolicyRetentionBody(String keep) =>
+      'Messages in this organisation\'s chats older than $keep will be removed for everyone on the next pass. This cannot be undone.';
+  static const String orgPolicyConfirm = 'Confirm';
+  static const String orgPoliciesSaveFailed = 'Could not save that policy';
+  static const String policyOn = 'On';
+  static const String policyOff = 'Off';
+
+  static const String accessRequestsTitle = 'Access requests';
+  static const String accessRequestsEmpty = 'No access requests';
+  static const String accessRequestsEmptyHint =
+      'Emergency access to a conversation needs a written reason and a second admin\'s approval. Every read is audited and the members are told.';
+  static const String accessRequestNew = 'Request access';
+  static const String accessRequestConversation = 'Conversation';
+  static const String accessRequestConversationHint = 'Conversation ID';
+  static const String accessRequestPickConversation = 'Choose from my chats';
+  static const String accessRequestReason = 'Reason';
+  static const String accessRequestReasonHint = 'Why you need to read this conversation';
+  static const String accessRequestReasonRequired = 'A reason is required';
+  static const String accessRequestConversationRequired = 'Choose or paste a conversation';
+  static const String accessRequestSubmit = 'Send request';
+  static const String accessRequestCreated = 'Request sent. Another admin must approve it.';
+  static const String accessRequestApprove = 'Approve';
+  static const String accessRequestReject = 'Reject';
+  static const String accessRequestOpen = 'Open audited view';
+  static const String accessRequestStatusPending = 'Pending';
+  static const String accessRequestStatusApproved = 'Approved';
+  static const String accessRequestStatusRejected = 'Rejected';
+  static const String accessRequestStatusExpired = 'Expired';
+  static String accessRequestRequestedBy(String who) => 'Requested by $who';
+  static const String accessRequestYou = 'you';
+  static String accessRequestAccessUntil(String when) => 'Access until $when';
+  static const String accessRequestAwaitingOther = 'Waiting for another admin to decide';
+  static const String accessRequestDecisionFailed = 'Could not record that decision';
+  static const String accessRequestApproveTitle = 'Approve access?';
+  static String accessRequestApproveBody(String who) =>
+      '$who will be able to read this conversation for 24 hours. Every page they open is audited and the members are told an administrator accessed it.';
+  static const String breakGlassTitle = 'Audited view';
+  static const String breakGlassBanner = 'Compliance access — audited; the members were told';
+  static const String breakGlassEmpty = 'No messages in this conversation';
+  static const String breakGlassOlder = 'Load older messages';
+  static const String breakGlassDeleted = 'Deleted by the sender — content kept under legal hold';
+  static const String breakGlassSystem = 'System message';
+
+  static const String orgReportsTitle = 'Reports';
+  static const String orgReportsEmpty = 'No reports';
+  static const String orgReportsEmptyHint =
+      'Reports about members of this organisation, or filed by them, appear here. Message content is never shown.';
+  static const String orgReportsFilterAll = 'All';
+  static const String orgReportStatusOpen = 'Open';
+  static const String orgReportStatusReviewing = 'Reviewing';
+  static const String orgReportStatusActioned = 'Actioned';
+  static const String orgReportStatusDismissed = 'Dismissed';
+  static const String orgReportSubjectUser = 'About a member';
+  static const String orgReportSubjectMessage = 'About a message';
+  static String orgReportContext(int n) => n == 1 ? '1 message attached' : '$n messages attached';
+  static const String orgReportChangeStatus = 'Change status';
+  static const String orgReportStatusFailed = 'Could not update the report';
+
+  static const String scheduledTitle = 'Scheduled messages';
+  static const String scheduledEmpty = 'Nothing scheduled in this chat';
+  static const String scheduledEmptyHint = 'Hold the send button to schedule a message.';
+  static const String scheduledCancel = 'Cancel';
+  static const String scheduledCancelled = 'Scheduled message cancelled';
+  static const String scheduledCancelFailed = 'Could not cancel that message';
+  static const String scheduledFailed = 'Failed to send';
+  static const String scheduledPending = 'Will be sent';
+
+  static const String deviceModifiedBanner =
+      'This device appears modified; your organisation may block access';
 }

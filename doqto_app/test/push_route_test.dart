@@ -15,6 +15,18 @@ void main() {
     expect(routePathForPushData({'type': 'group_invite'}), '/groups');
   });
 
+  test('access_request push lands on My Org → Access requests', () {
+    expect(routePathForPushData({'type': 'access_request', 'access_request_id': 'r1'}),
+        '/my-org/access-requests');
+  });
+
+  test('universal-link paths route to the chat and the profile', () {
+    expect(routePathForPayload('doqto:///c/c1'), '/chat/c1');
+    expect(routePathForPayload('https://api.doqto.ai/c/c1'), '/chat/c1');
+    expect(routePathForPayload('https://api.doqto.ai/u/u1'), '/people/u1');
+    expect(routePathForPayload('https://api.doqto.ai/g/tok'), '/g/tok');
+  });
+
   test('in-app payload routes: groups, group info, invite link', () {
     expect(routePathForPayload('doqto:///groups/g1'), '/groups/g1');
     expect(routePathForPayload('doqto:///groups/g1/info'), '/groups/g1/info');

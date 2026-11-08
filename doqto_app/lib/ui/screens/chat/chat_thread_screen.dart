@@ -39,6 +39,7 @@ import '../../../state/chat_state.dart';
 import '../../../data/api/websocket_client.dart';
 import '../../../state/groups_state.dart';
 import '../../../state/notification_state.dart';
+import '../../../state/compliance_state.dart';
 import '../../../state/org_state.dart';
 import '../../../state/presence_state.dart';
 import '../../../state/link_preview_state.dart';
@@ -71,6 +72,7 @@ import '../../widgets/unread_divider.dart';
 import '../../widgets/voice_note_bubble.dart';
 import '_conversation_display.dart';
 import '../media/media_viewer_screen.dart';
+import '../compliance/scheduled_messages_sheet.dart';
 import 'caption_sheet.dart';
 import 'forward_picker_sheet.dart';
 import 'poll_create_sheet.dart';
@@ -375,10 +377,11 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   String? get _groupId => widget.groupId ?? _conv?.groupId;
 
   /// Org policy `allow_copy` (batch 4): hidden when my org forbids copying
-  /// and this chat belongs to it.
+  /// and this chat belongs to it. Read from the live policies provider
+  /// (batch 7), which refetches on `org_updated`.
   bool get _allowCopy {
     final org = ref.read(orgProvider).current;
-    if (org == null || org.policies.allowCopy) return true;
+    if (org == null || ref.read(currentOrgPoliciesProvider).allowCopy) return true;
     final conv = _conv;
     final groupId = _groupId;
     final group = groupId == null ? null : ref.read(groupDetailProvider(groupId)).asData?.value;
@@ -2521,6 +2524,26 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                     tooltip: Strings.chatSearch,
                     icon: const Icon(Icons.search),
                     onPressed: _enterSearch,
+                  ),
+                  PopupMenuButton<String>(
+                    key: const ValueKey('thread-more'),
+                    tooltip: Strings.chatMore,
+                    onSelected: (v) {
+                      if (v == 'scheduled') {
+                        showScheduledMessagesSheet(context, widget.conversationId);
+                      }
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        key: ValueKey('thread-menu-scheduled'),
+                        value: 'scheduled',
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.schedule_send_rounded),
+                          title: Text(Strings.scheduledTitle),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
                 title: display == null

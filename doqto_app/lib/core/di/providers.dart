@@ -7,6 +7,7 @@ import '../../data/repositories/auth_repository.dart';
 import '../../data/services/auth_broker.dart';
 import '../../data/services/firebase_auth_broker.dart';
 import '../../data/repositories/chat_repository.dart';
+import '../../data/repositories/compliance_repository.dart';
 import '../../data/repositories/groups_repository.dart';
 import '../../data/repositories/network_repository.dart';
 import '../../data/repositories/org_repository.dart';
@@ -62,6 +63,11 @@ final orgRepositoryProvider = Provider<OrgRepository>(
 
 final chatRepositoryProvider = Provider<ChatRepository>(
   (ref) => ChatRepository(ref.watch(apiClientProvider)),
+);
+
+/// Org policies, break-glass, org moderation, scheduled list (batch 7).
+final complianceRepositoryProvider = Provider<ComplianceRepository>(
+  (ref) => ComplianceRepository(ref.watch(apiClientProvider)),
 );
 
 final userRepositoryProvider = Provider<UserRepository>(

@@ -76,6 +76,7 @@ dependencies:
   # posters come from a MethodChannel (AVAssetImageGenerator), never from a
   # thumbnail plugin.
   video_player: 2.10.1
+  crypto: ^3.0.8
 
 dev_dependencies:
   flutter_test:

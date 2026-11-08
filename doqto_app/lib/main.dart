@@ -23,6 +23,7 @@ import 'state/notification_state.dart';
 import 'state/auth_state.dart';
 import 'state/presence_state.dart';
 import 'state/realtime_state.dart';
+import 'ui/widgets/device_integrity_banner.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -131,6 +132,8 @@ class _DoqtoAppState extends ConsumerState<DoqtoApp>
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       routerConfig: router,
+      // Release-only strip when the device looks jailbroken / rooted.
+      builder: (_, child) => DeviceIntegrityBanner(child: child!),
     );
   }
 }

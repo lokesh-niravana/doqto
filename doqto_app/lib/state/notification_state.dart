@@ -30,7 +30,12 @@ final activeConversationProvider = StateProvider<String?>((ref) => null);
 /// fall back to treating the payload as a conversation id.
 String routePathForPayload(String payload) {
   final uri = Uri.tryParse(payload);
-  if (uri != null && (uri.scheme == 'doqto' || payload.startsWith('/'))) {
+  // `doqto://` scheme, a bare path, or a universal link on our domains.
+  const linkHosts = {'api.doqto.ai', 'doqto.ai', 'www.doqto.ai'};
+  if (uri != null &&
+      (uri.scheme == 'doqto' ||
+          payload.startsWith('/') ||
+          (uri.scheme == 'https' && linkHosts.contains(uri.host)))) {
     final segs = uri.pathSegments;
     if (segs.length >= 2) {
       switch (segs[0]) {
@@ -46,6 +51,11 @@ String routePathForPayload(String payload) {
               : AppRoutes.group(segs[1]);
         case 'g':
           return AppRoutes.groupInviteLink(segs[1]);
+        // Universal-link paths (batch 7): /c/<conversation>, /u/<user>.
+        case 'c':
+          return AppRoutes.chat(segs[1]);
+        case 'u':
+          return AppRoutes.person(segs[1]);
       }
     }
   }
@@ -65,6 +75,9 @@ String? routePathForPushData(Map<String, dynamic> data) {
         _ => AppRoutes.groups,
       },
     'invitation_received' || 'invitation_accepted' => AppRoutes.network,
+    // Break-glass (batch 7): "needs your review" / "was decided" both land
+    // on the list, which refetches on open.
+    'access_request' => AppRoutes.myOrgAccessRequests,
     // Someone we invited joined and is now connected: open their profile.
     'invite_joined' => switch (data['user_id']) {
         final String id when id.isNotEmpty => AppRoutes.person(id),

@@ -1,18 +1,60 @@
 import '../../core/enums/app_enums.dart';
 
-/// Org content policies (batch 4), defaults filled in by the server.
+/// Org policies (batch 4 + batch 7), defaults mirrored from
+/// `ORG_POLICY_DEFAULTS` on the server. `GET /orgs/{id}/policies` returns
+/// every key; the org payload's `policies` carries the same shape.
 class OrgPolicies {
   final bool allowForwardOutsideOrg;
   final bool allowCopy;
+  final bool allowMediaExport;
+  final bool blockScreenshots;
+  final bool showPreviewInBannersDefault;
+  /// Timer every new org group chat starts with; null = off.
+  final int? defaultDisappearSec;
+  /// Messages older than this are expired by the server; null = keep.
+  final int? retentionDays;
+  final bool legalHold;
 
-  const OrgPolicies({this.allowForwardOutsideOrg = true, this.allowCopy = true});
+  const OrgPolicies({
+    this.allowForwardOutsideOrg = true,
+    this.allowCopy = true,
+    this.allowMediaExport = false,
+    this.blockScreenshots = false,
+    this.showPreviewInBannersDefault = false,
+    this.defaultDisappearSec,
+    this.retentionDays,
+    this.legalHold = false,
+  });
 
   static const defaults = OrgPolicies();
 
   factory OrgPolicies.fromJson(Map<String, dynamic>? j) => OrgPolicies(
         allowForwardOutsideOrg: (j?['allow_forward_outside_org'] as bool?) ?? true,
         allowCopy: (j?['allow_copy'] as bool?) ?? true,
+        allowMediaExport: (j?['allow_media_export'] as bool?) ?? false,
+        blockScreenshots: (j?['block_screenshots'] as bool?) ?? false,
+        showPreviewInBannersDefault:
+            (j?['show_preview_in_banners_default'] as bool?) ?? false,
+        defaultDisappearSec: (j?['default_disappear_sec'] as num?)?.toInt(),
+        retentionDays: (j?['retention_days'] as num?)?.toInt(),
+        legalHold: (j?['legal_hold'] as bool?) ?? false,
       );
+
+  Map<String, dynamic> toJson() => {
+        'allow_forward_outside_org': allowForwardOutsideOrg,
+        'allow_copy': allowCopy,
+        'allow_media_export': allowMediaExport,
+        'block_screenshots': blockScreenshots,
+        'show_preview_in_banners_default': showPreviewInBannersDefault,
+        'default_disappear_sec': defaultDisappearSec,
+        'retention_days': retentionDays,
+        'legal_hold': legalHold,
+      };
+
+  /// The policies with [patch] (wire keys) applied — the optimistic value
+  /// the screen shows while the PATCH is in flight.
+  OrgPolicies apply(Map<String, dynamic> patch) =>
+      OrgPolicies.fromJson({...toJson(), ...patch});
 }
 
 class Organization {

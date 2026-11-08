@@ -19,6 +19,7 @@ import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/invite_code_card.dart';
 import '../../widgets/primary_button.dart';
+import '../../widgets/section_card.dart';
 
 class MyOrgScreen extends ConsumerWidget {
   const MyOrgScreen({super.key});
@@ -100,8 +101,16 @@ class MyOrgScreen extends ConsumerWidget {
                             ),
                             const SizedBox(height: AppSpacing.xl),
                           ],
+                          // Compliance (batch 7): admins manage policies,
+                          // access requests and reports; members see the
+                          // policies that apply to them.
                           FadeSlideIn.staggered(
                             lead + (isAdmin ? 1 : 0),
+                            isAdmin ? const _AdminTools() : const _MemberTools(),
+                          ),
+                          const SizedBox(height: AppSpacing.xl),
+                          FadeSlideIn.staggered(
+                            lead + (isAdmin ? 2 : 1),
                             Text(
                               'MEMBERS (${org.memberCount})',
                               style: AppText.label,
@@ -110,7 +119,7 @@ class MyOrgScreen extends ConsumerWidget {
                           const SizedBox(height: AppSpacing.sm),
                           for (final (i, m) in members.indexed)
                             FadeSlideIn.staggered(
-                              i + lead + (isAdmin ? 2 : 1),
+                              i + lead + (isAdmin ? 3 : 2),
                               _MemberRow(
                                 member: m,
                                 colorIndex: i,
@@ -124,6 +133,92 @@ class MyOrgScreen extends ConsumerWidget {
                 ),
     );
   }
+}
+
+/// Admin tools (batch 7): Policies, Access requests, Reports.
+class _AdminTools extends StatelessWidget {
+  const _AdminTools();
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(Strings.myOrgAdminSection.toUpperCase(), style: AppText.label),
+          const SizedBox(height: AppSpacing.sm),
+          SectionCard(
+            padding: EdgeInsets.zero,
+            child: Column(
+              children: [
+                _ToolRow(
+                  keyName: 'my-org-policies',
+                  icon: Icons.policy_outlined,
+                  title: Strings.myOrgPolicies,
+                  subtitle: Strings.myOrgPoliciesHint,
+                  route: AppRoutes.myOrgPolicies,
+                ),
+                const Divider(height: 1, indent: 56),
+                _ToolRow(
+                  keyName: 'my-org-access-requests',
+                  icon: Icons.lock_open_rounded,
+                  title: Strings.myOrgAccessRequests,
+                  subtitle: Strings.myOrgAccessRequestsHint,
+                  route: AppRoutes.myOrgAccessRequests,
+                ),
+                const Divider(height: 1, indent: 56),
+                _ToolRow(
+                  keyName: 'my-org-reports',
+                  icon: Icons.flag_outlined,
+                  title: Strings.myOrgReports,
+                  subtitle: Strings.myOrgReportsHint,
+                  route: AppRoutes.myOrgReports,
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+}
+
+/// What a plain member gets: the read-only policies view.
+class _MemberTools extends StatelessWidget {
+  const _MemberTools();
+
+  @override
+  Widget build(BuildContext context) => SectionCard(
+        padding: EdgeInsets.zero,
+        child: _ToolRow(
+          keyName: 'my-org-member-policies',
+          icon: Icons.policy_outlined,
+          title: Strings.myOrgMemberPolicies,
+          subtitle: Strings.myOrgMemberPoliciesHint,
+          route: AppRoutes.myOrgPolicies,
+        ),
+      );
+}
+
+class _ToolRow extends StatelessWidget {
+  final String keyName;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String route;
+  const _ToolRow({
+    required this.keyName,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.route,
+  });
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+        key: ValueKey(keyName),
+        leading: Icon(icon, color: AppColors.medBlue),
+        title: Text(title, style: AppText.bodyPrimary),
+        subtitle: Text(subtitle, style: AppText.caption),
+        trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+        onTap: () => context.push(route),
+      );
 }
 
 /// A pending org is a state of the org, not of the account: everything else

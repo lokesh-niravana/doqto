@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 
 import '../../core/constants/api_routes.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/security/certificate_pinning.dart';
 import '../services/network_usage.dart';
 import 'token_storage.dart';
 
@@ -38,9 +40,15 @@ DateTime? jwtExpiry(String token) {
 /// signal auth state to flip to signedOut without a circular import.
 typedef SessionEndedCallback = void Function();
 
+/// 401 codes that mean this device's session is gone for good: no refresh
+/// could revive it, so the app wipes its PHI and returns to login at once
+/// (docs/security.md, "Sessions and devices").
+const Set<String> sessionTerminalCodes = {'session_revoked', 'account_deleted'};
+
 class ApiClient {
   final Dio _dio;
   final TokenStorage _tokens;
+  final String _baseUrl;
 
   // One-at-a-time refresh. Future completes when the in-flight refresh
   // finishes; null means no refresh is running. Must be reassigned on every
@@ -52,14 +60,17 @@ class ApiClient {
   /// Bytes up / down for Storage and data (batch 5). Null = not counted.
   final NetworkUsage? usage;
 
-  ApiClient({TokenStorage? tokens, this.usage})
+  /// [baseUrl] defaults to the build's API; tests point it at a local server.
+  ApiClient({TokenStorage? tokens, this.usage, String? baseUrl})
       : _tokens = tokens ?? TokenStorage(),
+        _baseUrl = baseUrl ?? AppConstants.apiBaseUrl,
         _dio = Dio(BaseOptions(
-          baseUrl: AppConstants.apiBaseUrl,
+          baseUrl: baseUrl ?? AppConstants.apiBaseUrl,
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 20),
           contentType: 'application/json',
         )) {
+    _dio.httpClientAdapter = _pinnedAdapter(_baseUrl);
     _dio.interceptors.add(InterceptorsWrapper(
       onResponse: (resp, handler) {
         _count(resp.requestOptions, resp);
@@ -81,6 +92,13 @@ class ApiClient {
         final alreadyRetried = e.requestOptions.extra['retried'] == true;
         final isRefreshCall = e.requestOptions.path.contains(ApiRoutes.authRefresh);
         if (!is401 || alreadyRetried || isRefreshCall) {
+          return handler.next(e);
+        }
+        if (sessionTerminalCodes.contains(_detailOf(e))) {
+          // Remote wipe: the session was revoked from another device or the
+          // account is gone. Do not try to refresh — end the session now.
+          await _tokens.clear();
+          onSessionEnded?.call();
           return handler.next(e);
         }
         try {
@@ -106,6 +124,19 @@ class ApiClient {
         }
       },
     ));
+  }
+
+  /// Transport with the production trust store pinned in release
+  /// (`CertificatePinning`); the post-handshake leaf check runs on every
+  /// response from the pinned host.
+  static HttpClientAdapter _pinnedAdapter(String baseUrl) => IOHttpClientAdapter(
+        createHttpClient: () => CertificatePinning.httpClient(baseUrl),
+        validateCertificate: CertificatePinning.validateLeaf,
+      );
+
+  static String? _detailOf(DioException e) {
+    final data = e.response?.data;
+    return data is Map ? data['detail']?.toString() : null;
   }
 
   /// Network usage: the request body as sent and the response body as
@@ -181,8 +212,9 @@ class ApiClient {
     if (refresh == null || refresh.isEmpty) {
       throw ApiException('no_refresh_token', status: 401);
     }
-    // Bare Dio — no interceptor, no recursion.
-    final bare = Dio(BaseOptions(baseUrl: AppConstants.apiBaseUrl));
+    // Bare Dio — no interceptor, no recursion. Same pinned transport.
+    final bare = Dio(BaseOptions(baseUrl: _baseUrl))
+      ..httpClientAdapter = _pinnedAdapter(_baseUrl);
     try {
       final resp = await bare.post(
         ApiRoutes.authRefresh,

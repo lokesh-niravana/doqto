@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../core/constants/api_routes.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/enums/app_enums.dart';
+import '../../core/security/certificate_pinning.dart';
 
 class WsEvent {
   final WsEventServer type;
@@ -28,9 +30,16 @@ enum WsConnState { connecting, connected, disconnected }
 /// server.
 typedef WsChannelFactory = WebSocketChannel Function(Uri uri);
 
+/// Dials over an `HttpClient` whose trust store is pinned to the production
+/// CA chain in release (batch 7); plain `ws://` for local dev is untouched.
+WebSocketChannel pinnedWsChannel(Uri uri) => IOWebSocketChannel.connect(
+      uri,
+      customClient: CertificatePinning.httpClient(AppConstants.wsBaseUrl),
+    );
+
 class WebsocketClient {
   WebsocketClient({WsChannelFactory? channelFactory, DateTime Function()? now})
-      : _factory = channelFactory ?? WebSocketChannel.connect,
+      : _factory = channelFactory ?? pinnedWsChannel,
         _now = now ?? DateTime.now;
 
   final WsChannelFactory _factory;

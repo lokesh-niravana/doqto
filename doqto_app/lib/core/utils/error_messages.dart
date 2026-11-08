@@ -46,6 +46,20 @@ class ErrorMessages {
     'fetch_failed': 'We couldn\'t reach that link.',
     'not_html': 'That link has nothing to preview.',
     'report_not_found': 'We couldn\'t find that report.',
+    // Compliance (batch 7)
+    'reason_required': 'Please give a reason for the request.',
+    'access_request_pending_exists':
+        'A request for this conversation is already waiting for a decision.',
+    'access_request_not_found': 'We couldn\'t find that access request.',
+    'access_request_not_pending': 'That request has already been decided.',
+    'self_approval_forbidden':
+        'A different admin has to approve your own request.',
+    'not_requester': 'Only the admin who asked can open this view.',
+    'access_request_not_approved': 'This request hasn\'t been approved.',
+    'access_request_expired': 'The 24-hour access window has ended.',
+    'scheduled_message_not_found': 'That scheduled message is gone already.',
+    'retention_days_invalid': 'Retention must be between 1 and 3650 days.',
+    'default_disappear_sec_invalid': 'Pick one of the listed timers.',
     'before_and_before_date_exclusive': 'Pick one date to jump to.',
     // Auth / OTP
     'otp_expired': 'That code has expired. Tap "Resend code" and try again.',

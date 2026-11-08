@@ -19,7 +19,11 @@ import '../../ui/screens/groups/group_info_screen.dart';
 import '../../ui/screens/groups/group_invite_link_screen.dart';
 import '../../ui/screens/groups/groups_tab_screen.dart';
 import '../../ui/screens/home/main_shell.dart';
+import '../../ui/screens/compliance/break_glass_thread_screen.dart';
+import '../../ui/screens/my_org/access_requests_screen.dart';
 import '../../ui/screens/my_org/my_org_screen.dart';
+import '../../ui/screens/my_org/org_policies_screen.dart';
+import '../../ui/screens/my_org/org_reports_screen.dart';
 import '../../ui/screens/network/connections_screen.dart';
 import '../../ui/screens/network/suggestions_screen.dart';
 import '../../ui/screens/network/invitations_screen.dart';
@@ -70,6 +74,16 @@ class AppRoutes {
   static String starredIn(String convId) =>
       Uri(path: starred, queryParameters: {'c': convId}).toString();
   static const myOrg = '/my-org';
+  // Compliance (batch 7): admin tools under My Org, pushed over the shell.
+  static const myOrgPolicies = '/my-org/policies';
+  static const myOrgAccessRequests = '/my-org/access-requests';
+  static String accessRequestMessages(String requestId) =>
+      '/my-org/access-requests/$requestId/messages';
+  static const myOrgReports = '/my-org/reports';
+  // Universal links (https://api.doqto.ai/c/<conversation>, /u/<user>) and
+  // the `doqto://` scheme share these paths; `/g/<token>` is the invite link.
+  static String conversationLink(String convId) => '/c/$convId';
+  static String userLink(String userId) => '/u/$userId';
   // Networking (M2). Network branch of the shell.
   static const network = '/network';
   static const networkInvitations = '/network/invitations';
@@ -203,6 +217,18 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, state) =>
             GroupInviteLinkScreen(token: state.pathParameters['token']!),
       ),
+      // Universal-link landings (AASA on api.doqto.ai, docs/compliance.md):
+      // a chat or a profile, redirected to the in-app route.
+      GoRoute(
+        path: '/c/:id',
+        parentNavigatorKey: rootNavigatorKey,
+        redirect: (_, state) => AppRoutes.chat(state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/u/:userId',
+        parentNavigatorKey: rootNavigatorKey,
+        redirect: (_, state) => AppRoutes.person(state.pathParameters['userId']!),
+      ),
       GoRoute(
         path: AppRoutes.newMessage,
         parentNavigatorKey: rootNavigatorKey,
@@ -291,6 +317,29 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.storageManage,
         parentNavigatorKey: rootNavigatorKey,
         builder: (_, s) => const ManageStorageScreen(),
+      ),
+      // My Org admin tools (batch 7). The audited read precedes the list so
+      // ":rid" never swallows "messages".
+      GoRoute(
+        path: AppRoutes.myOrgPolicies,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const OrgPoliciesScreen(),
+      ),
+      GoRoute(
+        path: '/my-org/access-requests/:rid/messages',
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, state) =>
+            BreakGlassThreadScreen(requestId: state.pathParameters['rid']!),
+      ),
+      GoRoute(
+        path: AppRoutes.myOrgAccessRequests,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const AccessRequestsScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.myOrgReports,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const OrgReportsScreen(),
       ),
       GoRoute(
         path: AppRoutes.storage,

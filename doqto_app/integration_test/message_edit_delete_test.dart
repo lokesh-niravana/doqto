@@ -1,7 +1,11 @@
 // On-device check of message edit/delete against a live local backend.
+// Signs in as the Firebase test number +1 650-555-0198 (OTP 654321), like
+// the newer walks; any prep script that prints CONV_ID for that user's DM
+// (e.g. scripts/compliance_device_prep.py) sets it up.
 //
-// Run (backend on :8010, users/org/DM prepared, see scratchpad/setup_sim.py):
+// Run (backend on :8010):
 //   flutter test integration_test/message_edit_delete_test.dart -d <sim> \
+//     --dart-define=FIREBASE_TEST_NUMBERS=true \
 //     --dart-define=API_BASE_URL=http://localhost:8010 \
 //     --dart-define=WS_BASE_URL=ws://localhost:8010 \
 //     --dart-define=CONV_ID=<conversation uuid>
@@ -40,11 +44,16 @@ void main() {
     final container = ProviderScope.containerOf(
       tester.element(find.byType(MaterialApp)),
     );
-    await container
-        .read(authProvider.notifier)
-        .verifyOtp(phone: '+15550000101', code: '777777');
+    final auth = container.read(authProvider.notifier);
+    if (container.read(authProvider).stage != AuthStage.signedIn) {
+      final challenge = await auth.startPhoneSignIn('+16505550198');
+      await auth.confirmPhoneCode(challenge, '654321');
+    }
     await _settle(tester);
     expect(container.read(authProvider).stage, AuthStage.signedIn);
+    // The XCTest host leaves the app `inactive`; act like a foreground app.
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _settle(tester, 1000);
 
     container.read(routerProvider).go(AppRoutes.chat(_conv));
     await _settle(tester, 2500);

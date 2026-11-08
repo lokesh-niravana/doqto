@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_S3_BUCKET_NAME: str = "doqto"
+    # Envelope encryption (batch 7): when set, per-org data keys are wrapped
+    # by this KMS key (kms:Encrypt/Decrypt on the task role). Empty = the
+    # static MESSAGE_ENCRYPTION_KEY wraps them (local / test / CI).
+    AWS_KMS_KEY_ID: str = ""
 
     # Push notifications — "log" is the dev stub ([FAKE PUSH] log lines);
     # "fcm" requires the FCM_* credentials below.

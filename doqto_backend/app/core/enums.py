@@ -197,6 +197,15 @@ class TranscriptStatus(StrEnum):
     FAILED = "failed"
 
 
+class AccessRequestStatus(StrEnum):
+    """Backend-only — break-glass request lifecycle (batch 7)."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
 class ScheduledMessageStatus(StrEnum):
     PENDING = "pending"
     SENT = "sent"
@@ -256,6 +265,9 @@ class WsEventServer(StrEnum):
     SESSION_CREATED = "session_created"
     SESSION_REVOKED = "session_revoked"
     NOTIFICATION_SETTINGS_UPDATED = "notification_settings_updated"
+    # Compliance (batch 7) — org admins only: a break-glass request was
+    # created / approved / rejected / expired; refetch the list.
+    ACCESS_REQUEST_UPDATED = "access_request_updated"
 
 
 class WsEventClient(StrEnum):
@@ -350,6 +362,14 @@ class AuditAction(StrEnum):
     PIN_RESET_COMPLETED = "pin_reset_completed"
     ACCOUNT_EXPORTED = "account_exported"
     STATUS_UPDATED = "status_updated"
+    # Compliance (batch 7) — backend-only.
+    ACCESS_REQUEST_CREATED = "access_request_created"
+    ACCESS_REQUEST_APPROVED = "access_request_approved"
+    ACCESS_REQUEST_REJECTED = "access_request_rejected"
+    BREAK_GLASS_READ = "break_glass_read"
+    AUDIT_READ = "audit_read"
+    RETENTION_APPLIED = "retention_applied"
+    KEY_ROTATED = "key_rotated"
 
 
 class TranscribeSpecialty(StrEnum):

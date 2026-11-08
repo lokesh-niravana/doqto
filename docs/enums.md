@@ -182,6 +182,18 @@ What a report points at. Backend-only — the client sends the string.
 | `user` | A person (reported from their profile; default) |
 | `message` | A message (batch 4) — reporter must be a conversation member; `context_message_ids` (≤5 ids, never bodies) travel with it |
 
+## AccessRequestStatus (backend-only)
+
+Break-glass request lifecycle (batch 7, `access_requests.status`). Backend-only —
+NOT in the parity SHARED set; the app reads the string.
+
+| Wire value | Meaning |
+|---|---|
+| `pending` | Filed, awaiting a second org admin |
+| `approved` | Approved; `expires_at` = decision + 24 h |
+| `rejected` | Refused by a second org admin |
+| `expired` | Window lapsed (effective immediately, stamped by the job) |
+
 ## ReportStatus (backend-only)
 
 Moderation report lifecycle — set by super-admins through
@@ -333,6 +345,7 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `session_created` | `session_id, device_name, platform, created_at` (batch 6) — the user's OWN devices only: another device signed in; refresh the linked-devices list |
 | `session_revoked` | `session_id` (batch 6) — the user's OWN devices only: if `session_id` is this device's, wipe the cache and return to login immediately |
 | `notification_settings_updated` | full `NotificationSettingsOut` (batch 6) — the user's OWN devices only; replace the local copy |
+| `access_request_updated` | `org_id, access_request_id, status` (batch 7) — org admins involved in a break-glass request (requester + the other admins on create; requester + decider on approve/reject; requester on expiry); refetch the list |
 
 Since batch 5 a `MessageOut` also carries `caption` (image/video/file/voice, encrypted at rest), `thumb_key` (video poster; `GET /messages/{id}/file-url?thumb=1`), `waveform` (base64 of ≤ 64 amplitude bytes, voice notes), `media_width` / `media_height` and `poll`.
 
@@ -422,6 +435,13 @@ Since batch 5 a `MessageOut` also carries `caption` (image/video/file/voice, enc
 | `pin_reset_completed` | The settings loop cleared the PIN after the 7-day cooldown (batch 6) |
 | `account_exported` | Account info export generated (`POST /users/me/export`) — profile, settings, connections, groups; never messages (batch 6) |
 | `status_updated` | Status under the name changed (`PATCH /users/me/status`); meta: `preset`, `custom` (bool — never the text), `expires_in_sec` (batch 6) |
+| `access_request_created` | Org admin filed a break-glass request; meta: `org_id`, `conversation_id` (batch 7) |
+| `access_request_approved` | A second org admin approved it; meta: `org_id`, `conversation_id`, `requester_id` (batch 7) |
+| `access_request_rejected` | A second org admin rejected it (batch 7) |
+| `break_glass_read` | One page of an emergency read; resource = conversation; meta: `access_request_id`, `org_id`, `before_seq`, `count` (batch 7) |
+| `audit_read` | Someone read the audit trail (`GET /admin/audit` or `GET /orgs/{id}/audit`); meta: `scope`, `count`, filters (batch 7) |
+| `retention_applied` | The retention job expired messages for an org (user NULL); meta: `retention_days`, `messages` (batch 7) |
+| `key_rotated` | `scripts/rotate_keys.py` minted a new data key; meta: `scope`, `version` (batch 7) |
 
 ## StatusPreset
 

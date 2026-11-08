@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import (
     ADMIN_LOGIN_MAX_ATTEMPTS,
     ADMIN_LOGIN_WINDOW_SECONDS,
+    AUDIT_PAGE_SIZE,
+    RATE_LIMIT_AUDIT_READS_PER_MINUTE,
     REPORTS_PAGE_SIZE,
 )
 from app.core.dependencies import require_super_admin
@@ -22,6 +24,8 @@ from app.db.postgres import get_db
 from app.db.redis import get_redis
 from app.models import Organization, Report, User
 from app.schemas.admin_auth import AdminLoginIn
+from app.schemas.compliance import AuditPage, AuditRowOut
+from app.services.compliance_service import AuditQueryService
 from app.schemas.auth import TokenPair
 from app.schemas.network import ReportOut, ReportStatusIn
 from app.schemas.organization import OrgApproveIn, OrgOut, OrgRejectIn
@@ -183,3 +187,59 @@ async def set_report_status(
         await db.commit()
         await db.refresh(report)
     return ReportOut.model_validate(report)
+
+
+# --- Audit read (batch 7) ------------------------------------------------------ #
+
+
+@router.get(ApiRoutes.ADMIN_AUDIT, response_model=AuditPage)
+async def read_audit(
+    request: Request,
+    user_id: uuid.UUID | None = Query(default=None),
+    action: str | None = Query(default=None, max_length=100),
+    since: datetime | None = Query(default=None, alias="from"),
+    until: datetime | None = Query(default=None, alias="to"),
+    cursor: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=AUDIT_PAGE_SIZE, ge=1, le=AUDIT_PAGE_SIZE),
+    admin: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+) -> AuditPage:
+    """The whole trail, newest first by `seq`; `cursor` = last seq seen.
+    Rows hold ids and small metadata — never message bodies. Reading the
+    trail is itself audited."""
+    await enforce_rate_limit(admin.id, "admin_audit", RATE_LIMIT_AUDIT_READS_PER_MINUTE)
+    rows, next_cursor = await AuditQueryService.page(
+        db=db, user_id=user_id, action=action, since=since, until=until, cursor=cursor, limit=limit
+    )
+    await AuditService.log_request(
+        request,
+        user_id=admin.id,
+        action=AuditAction.AUDIT_READ,
+        metadata={
+            "scope": "global",
+            "count": len(rows),
+            "cursor": cursor,
+            "user_id": str(user_id) if user_id else None,
+            "action": action,
+        },
+    )
+    return AuditPage(
+        data=[
+            AuditRowOut(
+                id=r.id,
+                seq=r.seq,
+                user_id=r.user_id,
+                action=r.action,
+                resource_type=r.resource_type,
+                resource_id=r.resource_id,
+                ip_address=str(r.ip_address) if r.ip_address else None,
+                user_agent=r.user_agent,
+                metadata=r.meta,
+                prev_hash=r.prev_hash,
+                hash=r.hash,
+                created_at=r.created_at,
+            )
+            for r in rows
+        ],
+        next_cursor=next_cursor,
+    )

@@ -43,6 +43,9 @@ from app.core.constants import (
     PUSH_CHANNEL_INVITATIONS,
     PUSH_CHANNEL_MESSAGES,
     PUSH_TITLE,
+    PUSH_BODY_ACCESS_REQUEST_APPROVED,
+    PUSH_BODY_ACCESS_REQUEST_PENDING,
+    PUSH_BODY_ACCESS_REQUEST_REJECTED,
 )
 from app.db.postgres import SessionLocal
 from app.models import Conversation, ConversationPref, DeviceToken, User
@@ -482,6 +485,33 @@ class PushService:
                 body=f"{actor_name} joined from your invite. You're connected.",
                 data={"type": "invite_joined", "user_id": str(user_id or "")},
                 collapse_key=f"joined:{user_id}",
+                channel_id=PUSH_CHANNEL_INVITATIONS,
+            )
+        )
+
+    @staticmethod
+    def notify_access_request(
+        *,
+        recipient_id: uuid.UUID,
+        request_id: uuid.UUID,
+        pending: bool,
+        approved: bool | None = None,
+    ) -> None:
+        """Break-glass (batch 7): fixed PHI-free copy to one org admin — the
+        other admins when a request is filed, the requester when decided."""
+        if pending:
+            body = PUSH_BODY_ACCESS_REQUEST_PENDING
+        else:
+            body = (
+                PUSH_BODY_ACCESS_REQUEST_APPROVED if approved else PUSH_BODY_ACCESS_REQUEST_REJECTED
+            )
+        asyncio.create_task(
+            PushService._dispatch_simple(
+                recipient_id=recipient_id,
+                title=PUSH_TITLE,
+                body=body,
+                data={"type": "access_request", "access_request_id": str(request_id)},
+                collapse_key=f"access_request:{request_id}",
                 channel_id=PUSH_CHANNEL_INVITATIONS,
             )
         )

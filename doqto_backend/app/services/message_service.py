@@ -38,7 +38,7 @@ from app.core.enums import (
 )
 import emoji as emoji_lib
 
-from app.core.security import decrypt_message, encrypt_message
+from app.core import crypto
 from app.models import (
     Conversation,
     ConversationMember,
@@ -358,12 +358,14 @@ class MessageService:
         db: AsyncSession,
     ) -> Message:
         """Persist an in-chat system banner (e.g. disappearing-messages change). Never expires."""
+        version = await crypto.active_version(db, conv.org_id)
         msg = Message(
             conversation_id=conv.id,
             sender_id=sender_id,
             type=MessageType.SYSTEM,
             seq=await MessageService.next_seq(conversation_id=conv.id, db=db),
-            content_encrypted=encrypt_message(content),
+            content_encrypted=crypto.encrypt(content, version),
+            key_version=version,
             transcript_status=TranscriptStatus.NONE,
             expires_at=None,
         )
@@ -393,9 +395,13 @@ class MessageService:
         receipts). Returns the S3 keys so the caller can delete the objects.
         Reads already exclude these rows (is_deleted/expiry filters), and
         to_out handles NULL content, so nulling is invisible to clients."""
+        from app.services.compliance_service import not_under_legal_hold
+
         cutoff = datetime.now(tz=timezone.utc) - timedelta(seconds=PURGE_CONTENT_GRACE_SEC)
         rows = await db.execute(
             select(Message).where(
+                # Legal hold (batch 7): nothing in a held org's chats is shredded.
+                not_under_legal_hold(),
                 or_(
                     and_(Message.is_deleted.is_(True), Message.created_at <= cutoff),
                     and_(Message.expires_at.is_not(None), Message.expires_at <= cutoff),
@@ -465,13 +471,15 @@ class MessageService:
             db=db,
         )
 
+        version = await crypto.active_version(db, conv.org_id)
         msg = Message(
             conversation_id=conversation_id,
             sender_id=sender_id,
             type=MessageType.TEXT,
             seq=await MessageService.next_seq(conversation_id=conversation_id, db=db),
             client_id=client_id,
-            content_encrypted=encrypt_message(content),
+            content_encrypted=crypto.encrypt(content, version),
+            key_version=version,
             transcript_status=TranscriptStatus.NONE,
             expires_at=MessageService.expiry_for(conv),
             reply_to_id=reply_to_id,
@@ -602,8 +610,14 @@ class MessageService:
         reply_to: ReplyPreviewOut | None = None,
         starred: bool = False,
         poll: PollOut | None = None,
+        reveal_deleted: bool = False,
     ) -> MessageOut:
-        content = decrypt_message(msg.content_encrypted) if msg.content_encrypted else None
+        # Under legal hold a deleted-for-everyone message keeps its content in
+        # the row; members still see a bare tombstone. Only the audited
+        # break-glass read passes reveal_deleted=True.
+        hidden = msg.deleted_at is not None and not reveal_deleted
+        kv = msg.key_version or 0
+        content = None if hidden else crypto.decrypt_opt(msg.content_encrypted, kv)
         return MessageOut(
             id=msg.id,
             conversation_id=msg.conversation_id,
@@ -611,13 +625,11 @@ class MessageService:
             type=msg.type,
             seq=msg.seq,
             content=content,
-            s3_key=msg.s3_key,
-            file_name=msg.file_name,
-            file_size_bytes=msg.file_size_bytes,
+            s3_key=None if hidden else msg.s3_key,
+            file_name=None if hidden else msg.file_name,
+            file_size_bytes=None if hidden else msg.file_size_bytes,
             voice_duration_sec=msg.voice_duration_sec,
-            transcript=(
-                decrypt_message(msg.transcript_encrypted) if msg.transcript_encrypted else None
-            ),
+            transcript=None if hidden else crypto.decrypt_opt(msg.transcript_encrypted, kv),
             transcript_status=msg.transcript_status,
             expires_at=msg.expires_at,
             created_at=msg.created_at,
@@ -634,12 +646,12 @@ class MessageService:
             forward_depth=msg.forward_depth or 0,
             mentions=list(msg.mentions or []),
             starred=starred,
-            caption=(
-                decrypt_message(msg.caption_encrypted) if msg.caption_encrypted else None
-            ),
-            thumb_key=msg.thumb_key,
+            caption=None if hidden else crypto.decrypt_opt(msg.caption_encrypted, kv),
+            thumb_key=None if hidden else msg.thumb_key,
             waveform=(
-                base64.b64encode(msg.waveform).decode("ascii") if msg.waveform else None
+                base64.b64encode(msg.waveform).decode("ascii")
+                if msg.waveform and not hidden
+                else None
             ),
             media_width=msg.media_width,
             media_height=msg.media_height,
@@ -703,6 +715,21 @@ class MessageService:
         return (datetime.now(tz=timezone.utc) - msg.created_at).total_seconds()
 
     @staticmethod
+    async def rekey(msg: Message, db: AsyncSession) -> int:
+        """Lazy key migration (batch 7): before any body write, move every
+        encrypted field of the row to the conversation's active data key so
+        the row never mixes versions. Returns the version to encrypt with."""
+        conv = await db.get(Conversation, msg.conversation_id)
+        version = await crypto.active_version(db, conv.org_id if conv else None)
+        old = msg.key_version or 0
+        if old != version:
+            msg.content_encrypted = crypto.reencrypt(msg.content_encrypted, old, version)
+            msg.transcript_encrypted = crypto.reencrypt(msg.transcript_encrypted, old, version)
+            msg.caption_encrypted = crypto.reencrypt(msg.caption_encrypted, old, version)
+            msg.key_version = version
+        return version
+
+    @staticmethod
     async def edit_message(
         *, message_id: uuid.UUID, user_id: uuid.UUID, content: str, db: AsyncSession
     ) -> Message:
@@ -716,10 +743,17 @@ class MessageService:
             raise MessageError("message_not_editable")
         if MessageService._age_sec(msg) > MESSAGE_EDIT_WINDOW_SEC:
             raise MessageError("edit_window_closed")
-        if decrypt_message(msg.content_encrypted) == content:
+        if crypto.decrypt(msg.content_encrypted, msg.key_version) == content:
             return msg
-        db.add(MessageEdit(message_id=msg.id, content_encrypted=msg.content_encrypted))
-        msg.content_encrypted = encrypt_message(content)
+        db.add(
+            MessageEdit(
+                message_id=msg.id,
+                content_encrypted=msg.content_encrypted,
+                key_version=msg.key_version,
+            )
+        )
+        await MessageService.rekey(msg, db)
+        msg.content_encrypted = crypto.encrypt(content, msg.key_version)
         msg.edited_at = datetime.now(tz=timezone.utc)
         msg.changed_at = msg.edited_at
         await AuditService.log(
@@ -789,19 +823,27 @@ class MessageService:
             raise MessageError("message_not_deletable")
         if not by_admin and MessageService._age_sec(msg) > MESSAGE_DELETE_WINDOW_SEC:
             raise MessageError("delete_window_closed")
-        keys = [k for k in (msg.s3_key, msg.thumb_key) if k]
-        msg.content_encrypted = None
-        msg.transcript_encrypted = None
-        msg.caption_encrypted = None
-        msg.waveform = None
-        msg.s3_key = None
-        msg.thumb_key = None
+        from app.services.compliance_service import RetentionService
+
+        # Legal hold (batch 7): the message becomes a tombstone for every
+        # member (to_out masks it) but its content, media and edit history
+        # stay in place until the hold is lifted.
+        held = await RetentionService.is_held(conv, db)
+        keys = [] if held else [k for k in (msg.s3_key, msg.thumb_key) if k]
+        if not held:
+            msg.content_encrypted = None
+            msg.transcript_encrypted = None
+            msg.caption_encrypted = None
+            msg.waveform = None
+            msg.s3_key = None
+            msg.thumb_key = None
         msg.mentions = None
         msg.deleted_at = datetime.now(tz=timezone.utc)
         msg.changed_at = msg.deleted_at
-        if msg.type == MessageType.POLL:
+        if msg.type == MessageType.POLL and not held:
             await db.execute(delete(PollOption).where(PollOption.message_id == msg.id))
-        await db.execute(delete(MessageEdit).where(MessageEdit.message_id == msg.id))
+        if not held:
+            await db.execute(delete(MessageEdit).where(MessageEdit.message_id == msg.id))
         await db.execute(delete(MessageReaction).where(MessageReaction.message_id == msg.id))
         # A deleted message leaves no bookmark anywhere.
         await db.execute(delete(MessageStar).where(MessageStar.message_id == msg.id))
@@ -815,7 +857,11 @@ class MessageService:
             action=AuditAction.MESSAGE_DELETED,
             resource_type="message",
             resource_id=msg.id,
-            metadata={"by_admin": True, "sender_id": str(msg.sender_id)} if by_admin else None,
+            metadata=(
+                {**({"by_admin": True, "sender_id": str(msg.sender_id)} if by_admin else {}),
+                 **({"legal_hold": True} if held else {})}
+                or None
+            ),
         )
         await db.flush()
         return msg, keys, by_admin
@@ -880,15 +926,17 @@ class MessageService:
         if target.deleted_at is not None:
             preview: str | None = REPLY_PREVIEW_DELETED
         elif target.type in (MessageType.TEXT, MessageType.SYSTEM) and target.content_encrypted:
-            text = decrypt_message(target.content_encrypted).strip()
+            text = crypto.decrypt(target.content_encrypted, target.key_version).strip()
             if len(text) > REPLY_PREVIEW_MAX_LEN:
                 text = text[: REPLY_PREVIEW_MAX_LEN - 1].rstrip() + "…"
             preview = text
         elif target.type == MessageType.POLL and target.content_encrypted:
-            preview = decrypt_message(target.content_encrypted).strip()[:REPLY_PREVIEW_MAX_LEN]
+            preview = crypto.decrypt(target.content_encrypted, target.key_version).strip()[
+                :REPLY_PREVIEW_MAX_LEN
+            ]
         elif target.caption_encrypted:
             # A captioned photo / video / file quotes its caption.
-            text = decrypt_message(target.caption_encrypted).strip()
+            text = crypto.decrypt(target.caption_encrypted, target.key_version).strip()
             if len(text) > REPLY_PREVIEW_MAX_LEN:
                 text = text[: REPLY_PREVIEW_MAX_LEN - 1].rstrip() + "…"
             preview = text
@@ -1038,23 +1086,21 @@ class MessageService:
         created: list[Message] = []
         now = datetime.now(tz=timezone.utc)
         for dest in dests:
+            version = await crypto.active_version(db, dest.org_id)
             copy = Message(
                 conversation_id=dest.id,
                 sender_id=user_id,
                 type=src.type,
                 seq=await MessageService.next_seq(conversation_id=dest.id, db=db),
-                content_encrypted=(
-                    encrypt_message(decrypt_message(src.content_encrypted))
-                    if src.content_encrypted
-                    else None
+                key_version=version,
+                content_encrypted=crypto.reencrypt(
+                    src.content_encrypted, src.key_version, version
                 ),
                 file_name=src.file_name,
                 file_size_bytes=src.file_size_bytes,
                 voice_duration_sec=src.voice_duration_sec,
-                transcript_encrypted=(
-                    encrypt_message(decrypt_message(src.transcript_encrypted))
-                    if src.transcript_encrypted
-                    else None
+                transcript_encrypted=crypto.reencrypt(
+                    src.transcript_encrypted, src.key_version, version
                 ),
                 transcript_status=src.transcript_status,
                 expires_at=MessageService.expiry_for(dest),
@@ -1062,10 +1108,8 @@ class MessageService:
                 forward_depth=(src.forward_depth or 0) + 1,
                 # Batch 5: the caption travels with the media; the waveform
                 # and pixel size are shape data, copied verbatim.
-                caption_encrypted=(
-                    encrypt_message(decrypt_message(src.caption_encrypted))
-                    if src.caption_encrypted
-                    else None
+                caption_encrypted=crypto.reencrypt(
+                    src.caption_encrypted, src.key_version, version
                 ),
                 waveform=src.waveform,
                 media_width=src.media_width,

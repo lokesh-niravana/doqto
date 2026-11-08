@@ -22,9 +22,12 @@ from app.api.v1 import (
     messages,
     network,
     notifications,
+    org_compliance,
     orgs,
     people,
+    scheduled,
     users,
+    well_known,
 )
 from app.core.config import settings
 from app.core.constants import DISAPPEAR_PURGE_INTERVAL_SEC, SCHEDULED_SEND_INTERVAL_SEC
@@ -33,6 +36,7 @@ from app.core.redis_keys import purge_lock_key, scheduled_send_lock_key, setting
 from app.core.routes import ApiPrefix
 from app.db.postgres import SessionLocal
 from app.db.redis import close_redis, get_redis
+from app.services.compliance_service import BreakGlassService, RetentionService
 from app.services.file_service import FileService
 from app.services.media_service import MediaService
 from app.services.message_service import MessageService
@@ -59,6 +63,9 @@ async def _purge_expired_loop() -> None:
             )
             if got_lock:
                 async with SessionLocal() as db:
+                    # Org retention (batch 7) first, so rows it expires enter
+                    # the same soft-delete → grace → shred pipeline.
+                    retained = await RetentionService.apply(db)
                     purged = await MessageService.purge_expired(db)
                     purged_keys = await MessageService.purge_content(db)
                     # Stars never extend retention; pins expire on schedule.
@@ -71,6 +78,8 @@ async def _purge_expired_loop() -> None:
                         for cid, mid in unpinned
                     ]
                     await db.commit()
+                    if retained:
+                        logger.info("retention expired %d messages", sum(retained.values()))
                     if purged:
                         logger.info("purged %d expired messages", purged)
                     if orphan_stars:
@@ -124,7 +133,7 @@ async def _scheduled_send_loop() -> None:
     from sqlalchemy import select
 
     from app.core.enums import ScheduledMessageStatus, WsEventServer
-    from app.core.security import decrypt_message
+    from app.core import crypto
     from app.models import ScheduledMessage
     from app.services.message_service import MessageError
     from app.services.push_service import PushService
@@ -153,7 +162,7 @@ async def _scheduled_send_loop() -> None:
                             msg = await MessageService.send_text(
                                 conversation_id=row.conversation_id,
                                 sender_id=row.sender_id,
-                                content=decrypt_message(row.content_encrypted),
+                                content=crypto.decrypt(row.content_encrypted, row.key_version),
                                 db=db,
                             )
                             row.status = ScheduledMessageStatus.SENT
@@ -196,9 +205,21 @@ async def _settings_jobs_loop() -> None:
                 async with SessionLocal() as db:
                     expired = await StatusService.expire(db)
                     pins_cleared = await PinService.complete_resets(db)
+                    # Break-glass windows past 24 h (batch 7).
+                    lapsed = await BreakGlassService.expire(db)
                     await db.commit()
                     for uid in expired:
                         await StatusService.publish(uid, db)
+                    for req in lapsed:
+                        await ws_manager.publish_to_users(
+                            [req.requester_id],
+                            WsEventServer.ACCESS_REQUEST_UPDATED,
+                            {
+                                "org_id": str(req.org_id),
+                                "access_request_id": str(req.id),
+                                "status": "expired",
+                            },
+                        )
                 if expired:
                     logger.info("cleared %d expired statuses", len(expired))
                 if pins_cleared:
@@ -261,6 +282,9 @@ app.add_middleware(
 app.include_router(auth.router, prefix=ApiPrefix.AUTH, tags=["auth"])
 app.include_router(users.router, prefix=ApiPrefix.USERS, tags=["users"])
 app.include_router(orgs.router, prefix=ApiPrefix.ORGS, tags=["orgs"])
+app.include_router(org_compliance.router, prefix=ApiPrefix.ORGS, tags=["orgs"])
+app.include_router(scheduled.router, prefix=ApiPrefix.V1, tags=["messages"])
+app.include_router(well_known.router, tags=["well-known"])
 app.include_router(conversations.router, prefix=ApiPrefix.CONVERSATIONS, tags=["conversations"])
 app.include_router(messages.router, prefix=ApiPrefix.MESSAGES, tags=["messages"])
 app.include_router(admin.router, prefix=ApiPrefix.ADMIN, tags=["admin"])

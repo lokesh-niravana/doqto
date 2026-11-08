@@ -240,7 +240,10 @@ enum WsEventServer {
   /// A session was revoked; if session_id is mine, wipe and go to login.
   sessionRevoked,
   /// My notification settings changed elsewhere; payload is the full set.
-  notificationSettingsUpdated;
+  notificationSettingsUpdated,
+  // Compliance (batch 7) — org admins only.
+  /// A break-glass access request in one of my orgs changed; refetch.
+  accessRequestUpdated;
 
   String get wire => switch (this) {
         WsEventServer.newMessage => 'new_message',
@@ -283,6 +286,7 @@ enum WsEventServer {
         WsEventServer.sessionRevoked => 'session_revoked',
         WsEventServer.notificationSettingsUpdated =>
           'notification_settings_updated',
+        WsEventServer.accessRequestUpdated => 'access_request_updated',
       };
 
   static WsEventServer? fromWire(String s) => switch (s) {
@@ -326,6 +330,7 @@ enum WsEventServer {
         'session_revoked' => WsEventServer.sessionRevoked,
         'notification_settings_updated' =>
           WsEventServer.notificationSettingsUpdated,
+        'access_request_updated' => WsEventServer.accessRequestUpdated,
         _ => null,
       };
 }

@@ -73,6 +73,13 @@ REPORTS_PAGE_SIZE = 50
 # Org policies (organizations.policies JSONB) and their defaults.
 ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG = "allow_forward_outside_org"
 ORG_POLICY_ALLOW_COPY = "allow_copy"
+# Batch 7 (compliance): banner previews default for members, the timer every
+# new org group chat starts with, retention (days; None = keep forever) and
+# the legal hold that pauses every shred for the org's conversations.
+ORG_POLICY_SHOW_PREVIEW_IN_BANNERS_DEFAULT = "show_preview_in_banners_default"
+ORG_POLICY_DEFAULT_DISAPPEAR_SEC = "default_disappear_sec"
+ORG_POLICY_RETENTION_DAYS = "retention_days"
+ORG_POLICY_LEGAL_HOLD = "legal_hold"
 ORG_POLICY_DEFAULTS = {
     ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG: True,
     ORG_POLICY_ALLOW_COPY: True,
@@ -80,7 +87,43 @@ ORG_POLICY_DEFAULTS = {
     "allow_media_export": False,
     # Batch 6 — key defined below (ORG_POLICY_BLOCK_SCREENSHOTS).
     "block_screenshots": False,
+    ORG_POLICY_SHOW_PREVIEW_IN_BANNERS_DEFAULT: False,
+    ORG_POLICY_DEFAULT_DISAPPEAR_SEC: None,
+    ORG_POLICY_RETENTION_DAYS: None,
+    ORG_POLICY_LEGAL_HOLD: False,
 }
+ORG_POLICY_BOOL_KEYS = (
+    ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG,
+    ORG_POLICY_ALLOW_COPY,
+    "allow_media_export",
+    "block_screenshots",
+    ORG_POLICY_SHOW_PREVIEW_IN_BANNERS_DEFAULT,
+    ORG_POLICY_LEGAL_HOLD,
+)
+RETENTION_DAYS_MIN = 1
+RETENTION_DAYS_MAX = 365 * 10
+RATE_LIMIT_POLICY_WRITES_PER_MINUTE = 20
+
+# --- Compliance (batch 7) -------------------------------------------------- #
+# Break-glass: an approved request lets the requester read for this long.
+ACCESS_REQUEST_WINDOW_SEC = 24 * 3600
+ACCESS_REQUEST_REASON_MAX_LEN = 500
+ACCESS_REQUESTS_PAGE_SIZE = 50
+RATE_LIMIT_ACCESS_REQUESTS_PER_MINUTE = 10
+BREAK_GLASS_SYSTEM_TEXT = "An administrator accessed this conversation under policy"
+PUSH_BODY_ACCESS_REQUEST_PENDING = "An access request needs your review"
+PUSH_BODY_ACCESS_REQUEST_APPROVED = "Your access request was approved"
+PUSH_BODY_ACCESS_REQUEST_REJECTED = "Your access request was rejected"
+# Audit read API.
+AUDIT_PAGE_SIZE = 100
+RATE_LIMIT_AUDIT_READS_PER_MINUTE = 60
+# Universal links / app links served from /.well-known.
+APPLE_TEAM_ID = "3N7394B3B9"
+APPLE_APP_BUNDLE_ID = "com.doqto.ios"
+UNIVERSAL_LINK_PATHS = ("/g/*", "/c/*", "/u/*")
+ANDROID_PACKAGE_NAME = "com.doqto.app"
+# Play App Signing SHA-256 fingerprints — filled in by ops; empty until then.
+ANDROID_CERT_SHA256_FINGERPRINTS: tuple[str, ...] = ()
 
 # Voice notes
 VOICE_NOTE_MIN_DURATION_SECONDS = 1

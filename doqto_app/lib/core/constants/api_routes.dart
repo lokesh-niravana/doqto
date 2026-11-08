@@ -43,6 +43,22 @@ class ApiRoutes {
   static String orgMember(String orgId, String userId) =>
       '$apiV1/orgs/$orgId/members/$userId';
   static String orgInviteCode(String id) => '$apiV1/orgs/$id/invite-code';
+  // Compliance (batch 7)
+  static String orgPolicies(String id) =>
+      '$apiV1/orgs/$id/policies'; // GET member / PATCH admin
+  static String orgAudit(String id) => '$apiV1/orgs/$id/audit'; // GET admin
+  static String orgReports(String id) =>
+      '$apiV1/orgs/$id/reports'; // GET ?status=&cursor= (admin)
+  static String orgReport(String orgId, String reportId) =>
+      '$apiV1/orgs/$orgId/reports/$reportId'; // PATCH {status}
+  static String orgAccessRequests(String id) =>
+      '$apiV1/orgs/$id/access-requests'; // GET list / POST {conversation_id, reason}
+  static String orgAccessRequestApprove(String orgId, String requestId) =>
+      '$apiV1/orgs/$orgId/access-requests/$requestId/approve';
+  static String orgAccessRequestReject(String orgId, String requestId) =>
+      '$apiV1/orgs/$orgId/access-requests/$requestId/reject';
+  static String orgAccessRequestMessages(String orgId, String requestId) =>
+      '$apiV1/orgs/$orgId/access-requests/$requestId/messages'; // GET ?cursor=
 
   // Conversations
   static const String conversations = '$apiV1/conversations';
@@ -53,6 +69,10 @@ class ApiRoutes {
       '$apiV1/conversations/$id/messages';
   static String conversationScheduleMessage(String id) =>
       '$apiV1/conversations/$id/messages/schedule';
+  // My pending scheduled messages in a chat (batch 7); cancel with scheduled().
+  static String conversationScheduled(String id) =>
+      '$apiV1/conversations/$id/scheduled';
+  static String scheduled(String id) => '$apiV1/scheduled/$id'; // DELETE
   static String conversationRead(String id) => '$apiV1/conversations/$id/read';
   static String conversationDelivered(String id) =>
       '$apiV1/conversations/$id/delivered';

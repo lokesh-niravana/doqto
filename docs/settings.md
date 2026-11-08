@@ -18,7 +18,7 @@ content (see `AuditAction` rows in [enums.md](enums.md)).
 |---|---|---|
 | `messages_tone` / `groups_tone` | `default` | One of `NOTIFICATION_TONES` (bundled CAF / raw names, plus `default` and `none`); 422 `tone_invalid` otherwise |
 | `messages_vibrate` / `groups_vibrate` | `default` | `VibratePattern`; Android only |
-| `messages_show_preview` / `groups_show_preview` | **off if the user is in an org**, on otherwise | Stored nullable; NULL resolves per the rule on every read. An explicit choice sticks |
+| `messages_show_preview` / `groups_show_preview` | **off if the user is in an org** (unless every one of their orgs sets the batch 7 policy `show_preview_in_banners_default`), on otherwise | Stored nullable; NULL resolves per the rule on every read. An explicit choice sticks |
 | `messages_high_priority` / `groups_high_priority` | `true` | Android `priority: high` vs `normal` |
 | `reaction_notifications` | `true` | Off → reaction pushes are dropped server-side |
 | `conversation_tones`, `haptics` | `true` | Client-side only; stored for sync |
@@ -162,5 +162,6 @@ automatically (SSE at rest; bucket lifecycle rule recommended).
 ## Background job
 
 `_settings_jobs_loop` in `main.py` (every `DISAPPEAR_PURGE_INTERVAL_SEC`,
-Redis-locked): clears expired statuses (then `profile_updated` per user) and
-completes lapsed PIN resets.
+Redis-locked): clears expired statuses (then `profile_updated` per user),
+completes lapsed PIN resets and stamps lapsed break-glass windows expired
+(batch 7, see compliance.md).

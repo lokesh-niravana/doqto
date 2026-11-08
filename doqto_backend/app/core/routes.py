@@ -45,6 +45,15 @@ class ApiRoutes:
     ORGS_MEMBER_DETAIL = "/{org_id}/members/{user_id}"
     ORGS_INVITE_CODE = "/{org_id}/invite-code"
     ORGS_NETWORKING_SETTINGS = "/{org_id}/settings/networking"
+    # Compliance (batch 7)
+    ORGS_POLICIES = "/{org_id}/policies"  # GET member / PATCH admin
+    ORGS_AUDIT = "/{org_id}/audit"  # GET admin — members' actions on org resources
+    ORGS_REPORTS = "/{org_id}/reports"  # GET admin — reports involving members
+    ORGS_REPORT_DETAIL = "/{org_id}/reports/{report_id}"  # PATCH status
+    ORGS_ACCESS_REQUESTS = "/{org_id}/access-requests"  # GET list / POST create
+    ORGS_ACCESS_REQUEST_APPROVE = "/{org_id}/access-requests/{request_id}/approve"
+    ORGS_ACCESS_REQUEST_REJECT = "/{org_id}/access-requests/{request_id}/reject"
+    ORGS_ACCESS_REQUEST_MESSAGES = "/{org_id}/access-requests/{request_id}/messages"
 
     # Users
     USERS_ME_PHONE = "/me/phone"  # POST link (sign-up) / PATCH change (batch 6)
@@ -94,6 +103,7 @@ class ApiRoutes:
     CONVERSATIONS_CREATE = ""
     CONVERSATIONS_MESSAGES = "/{conversation_id}/messages"
     CONVERSATIONS_MESSAGES_SCHEDULE = "/{conversation_id}/messages/schedule"
+    CONVERSATIONS_SCHEDULED = "/{conversation_id}/scheduled"  # GET my pending (batch 7)
     CONVERSATIONS_READ = "/{conversation_id}/read"
     CONVERSATIONS_DELIVERED = "/{conversation_id}/delivered"
     CONVERSATIONS_MEMBERS = "/{conversation_id}/members"
@@ -150,6 +160,7 @@ class ApiRoutes:
     ADMIN_REJECT_ORG = "/orgs/{org_id}/reject"
     ADMIN_REPORTS = "/reports"  # GET moderation queue (super-admin)
     ADMIN_REPORT_DETAIL = "/reports/{report_id}"  # PATCH status
+    ADMIN_AUDIT = "/audit"  # GET ?user_id=&action=&from=&to=&cursor= (batch 7)
 
     # WebSocket
     WS = "/ws"  # user-scoped socket (A1)
@@ -161,6 +172,13 @@ class ApiRoutes:
     # App metadata (batch 6) — unauthenticated.
     APP_MIN_VERSION = "/min-version"
     APP_LEGAL = "/legal"
+
+    # Scheduled messages (batch 7) — bare V1 prefix.
+    SCHEDULED_DETAIL = "/scheduled/{scheduled_id}"  # DELETE cancel (own, pending)
+
+    # Universal links / app links (batch 7) — root, unauthenticated.
+    WELL_KNOWN_AASA = "/.well-known/apple-app-site-association"
+    WELL_KNOWN_ASSETLINKS = "/.well-known/assetlinks.json"
 
     # Billing
     BILLING_STATUS = ""

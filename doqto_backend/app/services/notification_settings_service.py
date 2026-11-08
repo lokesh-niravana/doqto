@@ -20,7 +20,7 @@ from app.core.constants import (
     PUSH_CHANNEL_MESSAGES,
 )
 from app.core.enums import ConversationType, VibratePattern
-from app.models import OrgMember, UserNotificationSettings
+from app.models import UserNotificationSettings
 from app.schemas.settings import NotificationSettingsOut, NotificationSettingsPatch
 
 _FIELDS = (
@@ -62,9 +62,13 @@ def apns_sound(tone: str | None) -> str | None:
 class NotificationSettingsService:
     @staticmethod
     async def has_org(user_id: uuid.UUID, db: AsyncSession) -> bool:
-        return (
-            await db.scalar(select(OrgMember.id).where(OrgMember.user_id == user_id).limit(1))
-        ) is not None
+        """True when an unset banner-preview toggle should be OFF: the user is
+        in an org and not every one of their orgs sets
+        `show_preview_in_banners_default` (batch 7 policy). Kept under its
+        historical name — every caller reads it as "previews default off"."""
+        from app.services.compliance_service import PolicyService
+
+        return not await PolicyService.banner_preview_default(user_id, db)
 
     @staticmethod
     async def get_row(user_id: uuid.UUID, db: AsyncSession) -> UserNotificationSettings | None:

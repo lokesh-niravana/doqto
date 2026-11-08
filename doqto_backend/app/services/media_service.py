@@ -34,7 +34,7 @@ from app.core.constants import (
     VIDEO_MAX_DURATION_SEC,
 )
 from app.core.enums import AuditAction, MessageType, TranscriptStatus
-from app.core.security import decrypt_message, encrypt_message
+from app.core import crypto
 from app.models import (
     Conversation,
     Message,
@@ -85,9 +85,9 @@ class MediaService:
         return VIDEO_MAX_BYTES if msg_type == MessageType.VIDEO else FILE_MAX_BYTES
 
     @staticmethod
-    def encrypt_caption(caption: str | None) -> bytes | None:
+    def encrypt_caption(caption: str | None, version: int) -> bytes | None:
         text = (caption or "").strip()
-        return encrypt_message(text) if text else None
+        return crypto.encrypt(text, version) if text else None
 
     @staticmethod
     def extract_urls(text: str) -> list[str]:
@@ -319,6 +319,7 @@ class MediaService:
                     await MediaService._clean_image_object(intent.thumb_key, THUMB_CONTENT_TYPE)
                     thumb_key = intent.thumb_key
 
+        version = await crypto.active_version(db, conv.org_id)
         msg = Message(
             id=intent.message_id,
             conversation_id=conv.id,
@@ -331,7 +332,8 @@ class MediaService:
             file_name=intent.file_name,
             file_size_bytes=size,
             voice_duration_sec=body.duration_sec if intent.type == MessageType.VIDEO else None,
-            caption_encrypted=MediaService.encrypt_caption(body.caption),
+            key_version=version,
+            caption_encrypted=MediaService.encrypt_caption(body.caption, version),
             media_width=body.width,
             media_height=body.height,
             transcript_status=TranscriptStatus.NONE,
@@ -391,13 +393,15 @@ class MediaService:
             await MessageService._validate_reply_target(
                 conversation_id=conv.id, reply_to_id=reply_to_id, db=db
             )
+        version = await crypto.active_version(db, conv.org_id)
         msg = Message(
             conversation_id=conv.id,
             sender_id=sender_id,
             type=MessageType.POLL,
             seq=await MessageService.next_seq(conversation_id=conv.id, db=db),
             client_id=client_id,
-            content_encrypted=encrypt_message(poll.question),
+            key_version=version,
+            content_encrypted=crypto.encrypt(poll.question, version),
             poll_multiple=poll.multiple,
             transcript_status=TranscriptStatus.NONE,
             expires_at=MessageService.expiry_for(conv),
@@ -407,7 +411,14 @@ class MediaService:
         conv.updated_at = _now()
         await db.flush()
         for i, text in enumerate(poll.options):
-            db.add(PollOption(message_id=msg.id, position=i, text_encrypted=encrypt_message(text)))
+            db.add(
+                PollOption(
+                    message_id=msg.id,
+                    position=i,
+                    text_encrypted=crypto.encrypt(text, version),
+                    key_version=version,
+                )
+            )
         await db.flush()
         await AuditService.log(
             db,
@@ -456,7 +467,7 @@ class MediaService:
                 PollOptionOut(
                     id=o.id,
                     position=o.position,
-                    text=decrypt_message(o.text_encrypted),
+                    text=crypto.decrypt(o.text_encrypted, o.key_version),
                     vote_count=len(uids),
                     voter_ids=uids,
                 )
@@ -464,7 +475,7 @@ class MediaService:
         out: dict[uuid.UUID, PollOut] = {}
         for m in polls:
             out[m.id] = PollOut(
-                question=decrypt_message(m.content_encrypted) if m.content_encrypted else "",
+                question=crypto.decrypt_opt(m.content_encrypted, m.key_version) or "",
                 multiple=bool(m.poll_multiple),
                 options=by_msg.get(m.id, []),
                 voter_count=len(voters.get(m.id, set())),
@@ -668,7 +679,9 @@ class MediaService:
                 scanned += 1
                 cursor = m.seq
                 try:
-                    urls = MediaService.extract_urls(decrypt_message(m.content_encrypted))
+                    urls = MediaService.extract_urls(
+                        crypto.decrypt(m.content_encrypted, m.key_version)
+                    )
                 except Exception:  # noqa: BLE001 — undecryptable row, skip it
                     continue
                 if urls:

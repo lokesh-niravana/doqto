@@ -21,7 +21,7 @@ from app.core.constants import (
 )
 from app.core import permissions
 from app.core.config import settings
-from app.core.security import decrypt_message, encrypt_message
+from app.core import crypto
 from app.core.dependencies import get_current_user
 from app.core.enums import (
     AuditAction,
@@ -30,6 +30,7 @@ from app.core.enums import (
     MessageType,
     OrgRole,
     OrgStatus,
+    ScheduledMessageStatus,
     WsEventServer,
 )
 from app.core.rate_limit import enforce_rate_limit
@@ -46,6 +47,7 @@ from app.models import (
     UserPrivacySettings,
 )
 from app.schemas.common import OkResponse
+from app.schemas.compliance import ScheduledMessageListOut
 from app.services.relationship_service import RelationshipService
 from app.schemas.conversation import (
     ConversationAddMembersIn,
@@ -56,6 +58,7 @@ from app.schemas.conversation import (
     ConversationSettingsIn,
     UnreadTotalOut,
 )
+from app.services.compliance_service import PolicyService
 from app.services.media_service import MediaService
 from app.schemas.message import (
     ConversationPinIn,
@@ -130,7 +133,7 @@ def _preview_for(msg: Message | None) -> str | None:
     if blob is None:
         return None
     try:
-        text = decrypt_message(blob)
+        text = crypto.decrypt(blob, msg.key_version)
     except Exception:
         return None
     text = text.strip()
@@ -337,6 +340,10 @@ async def create_conversation(
             )
         )
         default_disappear = prefs if prefs in DISAPPEAR_OPTIONS_SEC else None
+    else:
+        # An org group chat starts with the org's default timer (batch 7
+        # policy `default_disappear_sec`); the creator may change it later.
+        default_disappear = await PolicyService.default_disappear_for_org(conv_org, db)
     try:
         conv = await MessageService.create_conversation(
             org_id=conv_org,
@@ -624,10 +631,12 @@ async def schedule_message(
     if scheduled_at <= now + timedelta(seconds=30) or scheduled_at > now + timedelta(days=365):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid_schedule_time")
 
+    version = await crypto.active_version(db, conv.org_id)
     row = ScheduledMessage(
         conversation_id=conversation_id,
         sender_id=user.id,
-        content_encrypted=encrypt_message(body.content),
+        content_encrypted=crypto.encrypt(body.content, version),
+        key_version=version,
         timezone=body.timezone,
         scheduled_at=scheduled_at,
     )
@@ -649,6 +658,40 @@ async def schedule_message(
     )
     await db.commit()
     return out
+
+
+@router.get(ApiRoutes.CONVERSATIONS_SCHEDULED, response_model=list[ScheduledMessageListOut])
+async def list_scheduled(
+    conversation_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ScheduledMessageListOut]:
+    """My own not-yet-sent scheduled messages in this chat (pending and
+    failed), soonest first. Never anyone else's; no content — the client
+    keeps the draft text it scheduled."""
+    await enforce_rate_limit(user.id, "list_scheduled", RATE_LIMIT_READS_PER_MINUTE)
+    await _assert_member(conversation_id, user.id, db)
+    rows = await db.scalars(
+        select(ScheduledMessage)
+        .where(
+            ScheduledMessage.conversation_id == conversation_id,
+            ScheduledMessage.sender_id == user.id,
+            ScheduledMessage.status != ScheduledMessageStatus.SENT,
+        )
+        .order_by(ScheduledMessage.scheduled_at.asc())
+    )
+    return [
+        ScheduledMessageListOut(
+            id=r.id,
+            conversation_id=r.conversation_id,
+            scheduled_at=r.scheduled_at,
+            timezone=r.timezone,
+            status=str(r.status),
+            error=r.error,
+            created_at=r.created_at,
+        )
+        for r in rows.all()
+    ]
 
 
 @router.post(ApiRoutes.CONVERSATIONS_READ, response_model=OkResponse)

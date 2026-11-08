@@ -26,6 +26,9 @@ class Tables:
     POLL_OPTIONS = "poll_options"
     POLL_VOTES = "poll_votes"
     AUDIT_LOGS = "audit_logs"
+    # Compliance (batch 7): wrapped per-org data keys, break-glass requests.
+    DATA_KEYS = "data_keys"
+    ACCESS_REQUESTS = "access_requests"
     DEVICE_TOKENS = "device_tokens"
     # Networking graph (M1)
     CONNECTION_INVITATIONS = "connection_invitations"

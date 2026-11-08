@@ -31,6 +31,7 @@ from app.models import (
     UserPrivacySettings,
 )
 from app.services.audit_service import AuditService
+from app.services.compliance_service import not_under_legal_hold
 from app.services.stripe_client import StripeGateway
 
 logger = logging.getLogger(__name__)
@@ -93,9 +94,11 @@ class AccountDeletionService:
         # 1. PHI in authored content. Messages are kept as tombstones so the
         # other party's thread does not develop holes, but every byte of
         # content, transcript and attachment reference is dropped.
+        # Legal hold (batch 7): messages in a held org's conversations are
+        # tombstoned (hidden) but their content survives until the hold lifts.
         await db.execute(
             update(Message)
-            .where(Message.sender_id == uid)
+            .where(Message.sender_id == uid, not_under_legal_hold())
             .values(
                 content_encrypted=None,
                 transcript_encrypted=None,
@@ -108,11 +111,16 @@ class AccountDeletionService:
                 is_deleted=True,
             )
         )
+        await db.execute(
+            update(Message).where(Message.sender_id == uid).values(is_deleted=True)
+        )
         # Poll option text is PHI too (votes cascade); the user's own votes on
         # other people's polls go with their membership.
         await db.execute(
             delete(PollOption).where(
-                PollOption.message_id.in_(select(Message.id).where(Message.sender_id == uid))
+                PollOption.message_id.in_(
+                    select(Message.id).where(Message.sender_id == uid, not_under_legal_hold())
+                )
             )
         )
         await db.execute(delete(PollVote).where(PollVote.user_id == uid))

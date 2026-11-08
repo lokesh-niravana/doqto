@@ -94,6 +94,11 @@ class Message(Base):
     # Polls: the question is the (encrypted) body; options + votes live in
     # poll_options / poll_votes. multiple = several options per voter.
     poll_multiple: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Batch 7: which data key (data_keys.version) protects content /
+    # transcript / caption. 0 = legacy static key; rewritten on any body write.
+    key_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -116,6 +121,9 @@ class PollOption(Base):
     )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     text_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    key_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
 
 
 class PollVote(Base):
@@ -226,6 +234,10 @@ class MessageEdit(Base):
         index=True,
     )
     content_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    # The version the superseded blob was written under (copied, never rewritten).
+    key_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     replaced_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -298,6 +310,9 @@ class ScheduledMessage(Base):
         PgUUID(as_uuid=True), ForeignKey(f"{Tables.USERS}.id"), nullable=False, index=True
     )
     content_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    key_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
     scheduled_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True

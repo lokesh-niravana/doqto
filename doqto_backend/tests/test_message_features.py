@@ -453,6 +453,11 @@ async def test_forward_respects_org_policy_allow_forward_outside_org(client, cha
         "allow_copy": True,
         "allow_media_export": False,  # batch 5 default
         "block_screenshots": False,  # batch 6 default
+        # batch 7 defaults
+        "show_preview_in_banners_default": False,
+        "default_disappear_sec": None,
+        "retention_days": None,
+        "legal_hold": False,
     }
 
     src2 = await _send(client, org_group.id, chat.bob_headers, "internal protocol v2")

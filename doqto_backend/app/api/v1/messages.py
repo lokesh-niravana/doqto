@@ -43,7 +43,7 @@ from app.core.enums import (
 )
 from app.core.routes import ApiRoutes
 from app.core.rate_limit import enforce_rate_limit
-from app.core.security import decrypt_message, encrypt_message
+from app.core import crypto
 from app.db.postgres import get_db
 from app.models import Conversation, ConversationMember, Message, MessageReceipt, User
 from app.schemas.common import OkResponse
@@ -159,6 +159,7 @@ async def upload_file(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="thumb_too_large")
         thumb_data = strip_image_metadata(thumb_data, THUMB_CONTENT_TYPE) if thumb_data else None
 
+    version = await crypto.active_version(db, conv.org_id)
     msg = Message(
         conversation_id=conversation_id,
         sender_id=user.id,
@@ -168,7 +169,8 @@ async def upload_file(
         file_name=file.filename,
         file_size_bytes=len(data),
         voice_duration_sec=duration_sec if msg_type == MessageType.VIDEO else None,
-        caption_encrypted=MediaService.encrypt_caption(caption),
+        key_version=version,
+        caption_encrypted=MediaService.encrypt_caption(caption, version),
         media_width=width,
         media_height=height,
         expires_at=MessageService.expiry_for(conv),
@@ -311,6 +313,7 @@ async def upload_voice_note(
 
     client_transcript = transcript.strip() if transcript else ""
 
+    version = await crypto.active_version(db, conv.org_id)
     msg = Message(
         conversation_id=conversation_id,
         sender_id=user.id,
@@ -320,11 +323,12 @@ async def upload_voice_note(
         file_name=file.filename,
         file_size_bytes=len(data),
         voice_duration_sec=duration_sec,
-        transcript_encrypted=encrypt_message(client_transcript) if client_transcript else None,
+        key_version=version,
+        transcript_encrypted=crypto.encrypt_opt(client_transcript, version),
         transcript_status=TranscriptStatus.COMPLETED if client_transcript else TranscriptStatus.PENDING,
         expires_at=MessageService.expiry_for(conv),
         waveform=waveform_bytes,
-        caption_encrypted=MediaService.encrypt_caption(caption),
+        caption_encrypted=MediaService.encrypt_caption(caption, version),
     )
     db.add(msg)
     await db.flush()
@@ -372,7 +376,7 @@ async def upload_voice_note(
             )
             server_transcript = None
         if server_transcript:
-            msg.transcript_encrypted = encrypt_message(server_transcript)
+            msg.transcript_encrypted = crypto.encrypt(server_transcript, msg.key_version)
             msg.transcript_status = TranscriptStatus.COMPLETED
             await db.commit()
             await ws_manager.publish_to_users(
@@ -709,7 +713,9 @@ async def list_message_edits(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="message_not_found")
     await _assert_conv_member(msg.conversation_id, user.id, db)
     return [
-        MessageEditOut(content=decrypt_message(e.content_encrypted), replaced_at=e.replaced_at)
+        MessageEditOut(
+            content=crypto.decrypt(e.content_encrypted, e.key_version), replaced_at=e.replaced_at
+        )
         for e in await MessageService.list_edits(message_id=message_id, db=db)
     ]
 

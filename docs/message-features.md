@@ -71,6 +71,9 @@ Audit: `message_forwarded` (source + destinations + copy ids) plus one
 `allow_copy`; audited as `org_policy_changed`. Effective values (defaults filled)
 come back as `policies` on `OrgOut` (`GET /orgs/mine`) and on the settings
 response. `allow_copy` is enforced by the client (hide Copy); the server stores it.
+Batch 7 added a dedicated `GET/PATCH /orgs/{id}/policies` and four more keys
+(banner previews, default timer, retention, legal hold) — see
+[compliance.md](compliance.md).
 
 ## C. Star
 

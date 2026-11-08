@@ -217,7 +217,9 @@ enum WsEventServer {
   invitationWithdrawn,
   orgUpdated,
   groupUpdated,
-  profileUpdated;
+  profileUpdated,
+  /// Conversation preferences (batch 3) — sent only to my own devices.
+  conversationPrefsUpdated;
 
   String get wire => switch (this) {
         WsEventServer.newMessage => 'new_message',
@@ -251,6 +253,7 @@ enum WsEventServer {
         WsEventServer.orgUpdated => 'org_updated',
         WsEventServer.groupUpdated => 'group_updated',
         WsEventServer.profileUpdated => 'profile_updated',
+        WsEventServer.conversationPrefsUpdated => 'conversation_prefs_updated',
       };
 
   static WsEventServer? fromWire(String s) => switch (s) {
@@ -285,6 +288,7 @@ enum WsEventServer {
         'org_updated' => WsEventServer.orgUpdated,
         'group_updated' => WsEventServer.groupUpdated,
         'profile_updated' => WsEventServer.profileUpdated,
+        'conversation_prefs_updated' => WsEventServer.conversationPrefsUpdated,
         _ => null,
       };
 }

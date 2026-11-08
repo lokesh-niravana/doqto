@@ -12,6 +12,7 @@ import '../data/models/conversation.dart';
 import '../data/services/notification_service.dart';
 import 'auth_state.dart';
 import 'chat_state.dart';
+import 'network_state.dart';
 
 final notificationServiceProvider = Provider<NotificationService>(
   (ref) => NotificationService(),
@@ -212,6 +213,9 @@ final notificationListenerProvider = Provider<void>((ref) {
       }
     }
     if (conv == null) return;
+    // Muted chat, or a muted person (batch 3): the message lands silently.
+    if (conv.prefs.isMuted()) return;
+    if (ref.read(mutedUsersProvider).value?.contains(senderId) ?? false) return;
 
     final title = conv.displayName ?? conv.name ?? 'New message';
     // H3: previews are acceptable only because these banners are

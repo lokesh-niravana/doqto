@@ -298,6 +298,7 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `org_updated` | `org_id, status` — org status or details changed; refetch |
 | `group_updated` | `group_id` — group details changed; refetch |
 | `profile_updated` | `user_id` — a profile you can see changed; refetch |
+| `conversation_prefs_updated` | `conversation_id, prefs{pinned_at, archived, muted_until, custom_tone, custom_vibrate, theme, wallpaper, marked_unread, cleared_before_seq, hidden_until_seq}` (batch 3) — sent ONLY to the caller's own devices; patch the conversation's `prefs` in place |
 
 ## WsEventClient (client → server)
 
@@ -365,6 +366,7 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `group_invite_accepted` | A group invite was accepted → membership formed (M5) |
 | `message_receipts_read` | Sender viewed a message's read-by / delivered-to list (`GET /messages/{id}/receipts`) |
 | `privacy_updated` | A privacy setting changed (`PATCH /users/me/privacy`); meta lists the field names only |
+| `conversation_prefs_updated` | A conversation preference changed (`PATCH /conversations/{id}/prefs`: pin / archive / mute / mark unread / clear / delete); meta lists the field names only (batch 3) |
 
 ## TranscribeSpecialty (AWS Transcribe Medical)
 

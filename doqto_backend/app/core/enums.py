@@ -221,6 +221,8 @@ class WsEventServer(StrEnum):
     ORG_UPDATED = "org_updated"
     GROUP_UPDATED = "group_updated"
     PROFILE_UPDATED = "profile_updated"
+    # Conversation preferences (batch 3) — sent ONLY to the user's own devices.
+    CONVERSATION_PREFS_UPDATED = "conversation_prefs_updated"
 
 
 class WsEventClient(StrEnum):
@@ -291,6 +293,8 @@ class AuditAction(StrEnum):
     MESSAGE_RECEIPTS_READ = "message_receipts_read"
     # Privacy screen (batch 2) — backend-only.
     PRIVACY_UPDATED = "privacy_updated"
+    # Conversation preferences (batch 3) — backend-only.
+    CONVERSATION_PREFS_UPDATED = "conversation_prefs_updated"
 
 
 class TranscribeSpecialty(StrEnum):

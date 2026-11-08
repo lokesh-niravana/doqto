@@ -6,9 +6,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/constants/app_constants.dart';
 import '../core/di/providers.dart';
 import '../core/enums/app_enums.dart';
+import '../core/utils/chat_list_filters.dart';
 import '../data/api/api_client.dart';
 import '../data/api/websocket_client.dart';
 import '../data/models/conversation.dart';
+import '../data/models/conversation_prefs.dart';
 import '../data/models/message.dart';
 import '../data/repositories/chat_repository.dart';
 import '../data/services/chat_document_store.dart';
@@ -40,6 +42,15 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
       ref,
       refresh: refresh,
       onEvent: (event, refresh) {
+        if (event.type == WsEventServer.conversationPrefsUpdated) {
+          // My other device changed a pin / mute / …: patch in place, no fetch.
+          final id = event.data['conversation_id'] as String?;
+          final raw = event.data['prefs'];
+          if (id != null && raw is Map) {
+            _applyPrefs(id, ConversationPrefs.fromJson(raw.cast<String, dynamic>()));
+          }
+          return;
+        }
         if (_refreshOn.contains(event.type)) refresh();
       },
     );
@@ -50,6 +61,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     try {
       final fresh = await ref.read(chatRepositoryProvider).listConversations();
       await cache.putConversations(fresh);
+      _scheduleAutoUnarchive(fresh);
       return fresh;
     } catch (_) {
       if (cached != null) return cached;
@@ -64,11 +76,227 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
       state = AsyncData(
         list,
       ); // stays on previous data until this resolves → no flash
+      _scheduleAutoUnarchive(list);
     } catch (_) {
       // Offline refresh: keep showing what we have.
     }
   }
+
+  // ---- Conversation preferences (batch 3) ---------------------------------
+
+  /// "Keep chats archived" off: an archived chat that received something new
+  /// comes back to the list on its own. Bounded — once unarchived it no
+  /// longer matches, and nothing here re-archives.
+  void _scheduleAutoUnarchive(List<Conversation> list) {
+    if (ref.read(keepArchivedProvider)) return;
+    for (final c in list) {
+      if (c.prefs.archived && c.unreadCount > 0) {
+        unawaited(archive(c.id, false).catchError((_) {}));
+      }
+    }
+  }
+
+  Conversation? conversation(String id) {
+    for (final c in state.value ?? const <Conversation>[]) {
+      if (c.id == id) return c;
+    }
+    return null;
+  }
+
+  void _applyPrefs(String convId, ConversationPrefs prefs) {
+    final current = state.value;
+    if (current == null) return;
+    final next = [
+      for (final c in current) c.id == convId ? c.copyWith(prefs: prefs) : c,
+    ];
+    state = AsyncData(next);
+    unawaited(ref.read(chatCacheProvider).putConversations(next));
+  }
+
+  void _remove(String convId) {
+    final current = state.value;
+    if (current == null) return;
+    final next = [for (final c in current) if (c.id != convId) c];
+    state = AsyncData(next);
+    unawaited(ref.read(chatCacheProvider).putConversations(next));
+  }
+
+  /// Optimistic PATCH: show [optimistic] at once, replace it with the
+  /// server's answer, or put the old prefs back and rethrow.
+  Future<ConversationPrefs> setPrefs(
+    String convId, {
+    required ConversationPrefs optimistic,
+    required Map<String, dynamic> patch,
+  }) async {
+    final before = conversation(convId)?.prefs ?? ConversationPrefs.defaults;
+    _applyPrefs(convId, optimistic);
+    try {
+      final saved = await ref.read(chatRepositoryProvider).updatePrefs(convId, patch);
+      _applyPrefs(convId, saved);
+      return saved;
+    } catch (_) {
+      _applyPrefs(convId, before);
+      rethrow;
+    }
+  }
+
+  Future<void> pin(String convId, bool pinned) {
+    final p = conversation(convId)?.prefs ?? ConversationPrefs.defaults;
+    return setPrefs(
+      convId,
+      optimistic: p.copyWith(pinnedAt: () => pinned ? DateTime.now().toUtc() : null),
+      patch: {'pinned': pinned},
+    );
+  }
+
+  Future<void> archive(String convId, bool archived) {
+    final p = conversation(convId)?.prefs ?? ConversationPrefs.defaults;
+    return setPrefs(
+      convId,
+      optimistic: p.copyWith(archived: archived),
+      patch: {'archived': archived},
+    );
+  }
+
+  /// [until] null = unmute.
+  Future<void> mute(String convId, DateTime? until) {
+    final p = conversation(convId)?.prefs ?? ConversationPrefs.defaults;
+    return setPrefs(
+      convId,
+      optimistic: p.copyWith(mutedUntil: () => until?.toUtc()),
+      patch: {'muted_until': until?.toUtc().toIso8601String()},
+    );
+  }
+
+  Future<void> markUnread(String convId, bool unread) {
+    final p = conversation(convId)?.prefs ?? ConversationPrefs.defaults;
+    return setPrefs(
+      convId,
+      optimistic: p.copyWith(markedUnread: unread),
+      patch: {'marked_unread': unread},
+    );
+  }
+
+  /// Hide everything so far from my view only; the thread reloads empty.
+  Future<void> clearChat(String convId) async {
+    final saved = await ref.read(chatRepositoryProvider).updatePrefs(convId, {'clear_chat': true});
+    _applyPrefs(convId, saved);
+    // The preview and unread badge are gone server-side; reflect it now
+    // instead of waiting for the next list fetch.
+    final current = state.value;
+    if (current != null) {
+      state = AsyncData([
+        for (final x in current)
+          if (x.id == convId)
+            Conversation.fromJson({
+              ...x.toJson(),
+              'last_message_at': null,
+              'last_message_preview': null,
+              'last_message_sender_id': null,
+              'last_message_type': null,
+              'unread_count': 0,
+            })
+          else
+            x,
+      ]);
+    }
+    await ref.read(chatCacheProvider).putMessages(convId, const []);
+    ref.invalidate(messagesProvider(convId));
+  }
+
+  /// Direct chat: clear + hide until something new arrives. Group: leave.
+  Future<void> deleteChat(String convId) async {
+    final c = conversation(convId);
+    final meId = ref.read(authProvider).user?.id;
+    if (c != null && c.type == ConversationType.group) {
+      if (meId == null) return;
+      await ref.read(chatRepositoryProvider).removeMember(convId, meId);
+    } else {
+      await ref.read(chatRepositoryProvider).updatePrefs(convId, {'delete_chat': true});
+      await ref.read(chatCacheProvider).putMessages(convId, const []);
+      ref.invalidate(messagesProvider(convId));
+    }
+    _remove(convId);
+  }
 }
+
+/// Settings → "Keep chats archived" (batch 3). Default on. Off means a new
+/// message brings an archived chat back to the list.
+class KeepArchivedNotifier extends Notifier<bool> {
+  @override
+  bool build() {
+    try {
+      return ref.read(chatCacheProvider).keepArchived();
+    } catch (_) {
+      return true;
+    }
+  }
+
+  Future<void> set(bool value) async {
+    state = value;
+    try {
+      await ref.read(chatCacheProvider).setKeepArchived(value);
+    } catch (_) {}
+    if (!value && ref.exists(conversationsProvider)) {
+      // Apply the new rule to what is already archived with unread.
+      unawaited(ref.read(conversationsProvider.notifier).refresh());
+    }
+  }
+}
+
+final keepArchivedProvider =
+    NotifierProvider<KeepArchivedNotifier, bool>(KeepArchivedNotifier.new);
+
+/// Unsent composer text per conversation (batch 3). Backed by the encrypted
+/// chat cache; the thread restores it on open, the list shows "Draft: …".
+class DraftsNotifier extends Notifier<Map<String, String>> {
+  @override
+  Map<String, String> build() {
+    try {
+      return ref.read(chatCacheProvider).drafts();
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  String? of(String convId) => state[convId];
+
+  Future<void> set(String convId, String? text) async {
+    final trimmed = text?.trim() ?? '';
+    final has = state.containsKey(convId);
+    if (trimmed.isEmpty) {
+      if (has) state = {...state}..remove(convId);
+    } else if (state[convId] != text) {
+      state = {...state, convId: text!};
+    }
+    try {
+      await ref.read(chatCacheProvider).putDraft(convId, trimmed.isEmpty ? null : text);
+    } catch (_) {}
+  }
+
+  Future<void> clear(String convId) => set(convId, null);
+}
+
+final draftsProvider =
+    NotifierProvider<DraftsNotifier, Map<String, String>>(DraftsNotifier.new);
+
+/// Icon-badge number derived from the list (see [unreadTotalOf]).
+final unreadTotalProvider = Provider<int>((ref) {
+  final convs = ref.watch(conversationsProvider).asData?.value;
+  return convs == null ? 0 : unreadTotalOf(convs);
+});
+
+/// Keeps the app-icon badge equal to [unreadTotalProvider]; clears it on
+/// sign-out. Activated once by watching it from the root widget.
+final appBadgeSyncProvider = Provider<void>((ref) {
+  final badge = ref.watch(appBadgeProvider);
+  ref.listen<int>(unreadTotalProvider, (_, total) {
+    if (ref.read(authProvider).user != null) unawaited(badge.set(total));
+  }, fireImmediately: true);
+  ref.listen<AuthState>(authProvider, (_, next) {
+    if (next.stage == AuthStage.signedOut) unawaited(badge.clear());
+  });
+});
 
 final conversationsProvider =
     AsyncNotifierProvider<ConversationsNotifier, List<Conversation>>(

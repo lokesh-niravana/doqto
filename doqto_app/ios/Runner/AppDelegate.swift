@@ -1,6 +1,7 @@
 import Flutter
 import QuickLook
 import UIKit
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -17,6 +18,7 @@ import UIKit
     GeneratedPluginRegistrant.register(with: self)
     registerFileProtectionChannel()
     registerDocumentChannel()
+    registerBadgeChannel()
     // Required by flutter_local_notifications so foreground banners and
     // notification taps are routed to the plugin.
     if #available(iOS 10.0, *) {
@@ -90,6 +92,37 @@ import UIKit
       controller.modalPresentationStyle = .fullScreen
       top.present(controller, animated: true)
       result(true)
+    }
+  }
+
+  /// App-icon badge (lib/data/services/app_badge.dart): the unread total
+  /// computed from the conversation list. iOS 16+ goes through
+  /// UNUserNotificationCenter (the only path that is not deprecated); older
+  /// systems set applicationIconBadgeNumber directly.
+  private func registerBadgeChannel() {
+    guard let registrar = self.registrar(forPlugin: "DoqtoBadge") else { return }
+    let channel = FlutterMethodChannel(
+      name: "doqto/badge", binaryMessenger: registrar.messenger())
+    channel.setMethodCallHandler { call, result in
+      guard call.method == "set",
+        let args = call.arguments as? [String: Any],
+        let count = args["count"] as? Int
+      else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      if #available(iOS 16.0, *) {
+        UNUserNotificationCenter.current().setBadgeCount(count) { error in
+          if let error = error {
+            result(FlutterError(code: "badge_failed", message: error.localizedDescription, details: nil))
+          } else {
+            result(nil)
+          }
+        }
+      } else {
+        UIApplication.shared.applicationIconBadgeNumber = count
+        result(nil)
+      }
     }
   }
 

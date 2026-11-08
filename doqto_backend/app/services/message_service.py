@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,7 @@ from app.core.security import decrypt_message, encrypt_message
 from app.models import (
     Conversation,
     ConversationMember,
+    ConversationPref,
     DirectConversationKey,
     Message,
     MessageEdit,
@@ -206,6 +207,7 @@ class MessageService:
                     Message.is_deleted.is_(False),
                     Message.type != MessageType.SYSTEM,
                     MessageService._not_expired(),
+                    MessageService._not_cleared_for(user_id),
                     Message.id.not_in(read_subq),
                 )
                 .group_by(Message.conversation_id)
@@ -228,6 +230,7 @@ class MessageService:
                     Message.is_deleted.is_(False),
                     Message.type != MessageType.SYSTEM,
                     MessageService._not_expired(),
+                    MessageService._not_cleared_for(user_id),
                     Message.seq > ConversationMember.last_read_seq,
                 )
                 .group_by(Message.conversation_id)
@@ -235,6 +238,37 @@ class MessageService:
             out.update(dict(rows.all()))
 
         return out
+
+    @staticmethod
+    async def unread_total(*, user_id: uuid.UUID, db: AsyncSession) -> int:
+        """App-icon badge number: unread messages across every chat on the
+        user's list, skipping muted, archived and deleted-for-me chats, plus
+        one for each chat the user marked unread by hand (batch 3)."""
+        from app.services.conversation_prefs_service import ConversationPrefsService
+
+        convs = await MessageService.list_for_user(user_id=user_id, db=db)
+        prefs = await ConversationPrefsService.for_user(user_id=user_id, db=db)
+        now = datetime.now(tz=timezone.utc)
+        counted: list[Conversation] = []
+        extra = 0
+        for c in convs:
+            p = prefs.get(c.id)
+            if p is None:
+                counted.append(c)
+                continue
+            if (
+                p.archived
+                or ConversationPrefsService.is_muted(p, now)
+                or ConversationPrefsService.is_hidden(p, c)
+            ):
+                continue
+            counted.append(c)
+        counts = await MessageService.unread_counts(conversations=counted, user_id=user_id, db=db)
+        for c in counted:
+            p = prefs.get(c.id)
+            if p is not None and p.marked_unread and counts.get(c.id, 0) == 0:
+                extra += 1
+        return sum(counts.values()) + extra
 
     @staticmethod
     async def member_ids(*, conversation_id: uuid.UUID, db: AsyncSession) -> list[uuid.UUID]:
@@ -421,6 +455,7 @@ class MessageService:
         )
         if user_id is not None:
             stmt = stmt.where(MessageService._not_hidden_for(user_id))
+            stmt = stmt.where(MessageService._not_cleared_for(user_id))
         if changed_since is not None:
             # Post-send changes (edits, deletes, reactions) the client missed
             # while offline; seq catch-up can't see them.
@@ -458,8 +493,22 @@ class MessageService:
         )
         if user_id is not None:
             stmt = stmt.where(MessageService._not_hidden_for(user_id))
+            stmt = stmt.where(MessageService._not_cleared_for(user_id))
         rows = await db.execute(stmt)
         return {m.conversation_id: m for m in rows.scalars().all()}
+
+    @staticmethod
+    def _not_cleared_for(user_id: uuid.UUID):
+        """"Clear chat" (batch 3): everything at or before the user's
+        cleared_before_seq cursor is gone from their view only."""
+        return ~exists(
+            select(ConversationPref.conversation_id).where(
+                ConversationPref.conversation_id == Message.conversation_id,
+                ConversationPref.user_id == user_id,
+                ConversationPref.cleared_before_seq.is_not(None),
+                ConversationPref.cleared_before_seq >= Message.seq,
+            )
+        )
 
     @staticmethod
     def _not_hidden_for(user_id: uuid.UUID):

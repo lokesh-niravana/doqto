@@ -13,7 +13,7 @@ import '../../../state/privacy_state.dart';
 import '../../widgets/app_skeleton.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
-import '../../widgets/section_card.dart';
+import '../../widgets/settings_rows.dart';
 
 /// Settings → Privacy (batch 2). Every row is a switch or a radio sheet; each
 /// change saves on its own with a one-field PATCH, flips at once and rolls
@@ -77,11 +77,11 @@ class _PrivacyBody extends ConsumerWidget {
       children: [
         FadeSlideIn.staggered(
           0,
-          _Section(
+          SettingsSection(
             title: Strings.privacyWhoCanSee,
             footer: Strings.privacyReciprocalHint,
             children: [
-              _ChoiceRow<LastSeenVisibility>(
+              SettingsChoiceRow<LastSeenVisibility>(
                 field: 'last_seen_visibility',
                 title: Strings.privacyLastSeen,
                 value: p.lastSeenVisibility,
@@ -104,7 +104,7 @@ class _PrivacyBody extends ConsumerWidget {
                   patch: {'last_seen_visibility': v.wire},
                 ),
               ),
-              _ChoiceRow<OnlineVisibility>(
+              SettingsChoiceRow<OnlineVisibility>(
                 field: 'online_visibility',
                 title: Strings.privacyOnline,
                 value: p.onlineVisibility,
@@ -120,7 +120,7 @@ class _PrivacyBody extends ConsumerWidget {
                   patch: {'online_visibility': v.wire},
                 ),
               ),
-              _ChoiceRow<ProfileFieldVisibility>(
+              SettingsChoiceRow<ProfileFieldVisibility>(
                 field: 'profile_photo_visibility',
                 title: Strings.privacyProfilePhoto,
                 value: p.profilePhotoVisibility,
@@ -142,7 +142,7 @@ class _PrivacyBody extends ConsumerWidget {
                   patch: {'profile_photo_visibility': v.wire},
                 ),
               ),
-              _ChoiceRow<ProfileFieldVisibility>(
+              SettingsChoiceRow<ProfileFieldVisibility>(
                 field: 'about_visibility',
                 title: Strings.privacyAbout,
                 value: p.aboutVisibility,
@@ -170,10 +170,10 @@ class _PrivacyBody extends ConsumerWidget {
         ),
         FadeSlideIn.staggered(
           1,
-          _Section(
+          SettingsSection(
             title: Strings.privacyMessaging,
             children: [
-              _SwitchRow(
+              SettingsSwitchRow(
                 field: 'read_receipts',
                 title: Strings.privacyReadReceipts,
                 subtitle: Strings.privacyReadReceiptsHint,
@@ -185,7 +185,7 @@ class _PrivacyBody extends ConsumerWidget {
                   patch: {'read_receipts': v},
                 ),
               ),
-              _ChoiceRow<int?>(
+              SettingsChoiceRow<int?>(
                 field: 'default_disappear_sec',
                 title: Strings.privacyDefaultTimer,
                 subtitle: Strings.privacyDefaultTimerHint,
@@ -199,7 +199,7 @@ class _PrivacyBody extends ConsumerWidget {
                   patch: {'default_disappear_sec': v},
                 ),
               ),
-              _SwitchRow(
+              SettingsSwitchRow(
                 field: 'link_previews',
                 title: Strings.privacyLinkPreviews,
                 subtitle: Strings.privacyLinkPreviewsHint,
@@ -217,10 +217,10 @@ class _PrivacyBody extends ConsumerWidget {
         ),
         FadeSlideIn.staggered(
           2,
-          _Section(
+          SettingsSection(
             title: Strings.privacyNetwork,
             children: [
-              _ChoiceRow<InvitePolicy>(
+              SettingsChoiceRow<InvitePolicy>(
                 field: 'invite_policy',
                 title: Strings.privacyInvitePolicy,
                 value: p.invitePolicy,
@@ -241,7 +241,7 @@ class _PrivacyBody extends ConsumerWidget {
                   patch: {'invite_policy': v.wire},
                 ),
               ),
-              _ChoiceRow<Discoverability>(
+              SettingsChoiceRow<Discoverability>(
                 field: 'discoverability',
                 title: Strings.privacyDiscoverability,
                 value: p.discoverability,
@@ -258,7 +258,7 @@ class _PrivacyBody extends ConsumerWidget {
                   patch: {'discoverability': v.wire},
                 ),
               ),
-              _SwitchRow(
+              SettingsSwitchRow(
                 field: 'show_mutual_connections',
                 title: Strings.privacyShowMutuals,
                 subtitle: Strings.privacyShowMutualsHint,
@@ -276,7 +276,7 @@ class _PrivacyBody extends ConsumerWidget {
         ),
         FadeSlideIn.staggered(
           3,
-          _Section(
+          SettingsSection(
             title: Strings.privacyBlocked,
             children: [
               ListTile(
@@ -294,185 +294,6 @@ class _PrivacyBody extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: AppSpacing.xl),
-      ],
-    );
-  }
-}
-
-class _Section extends StatelessWidget {
-  final String title;
-  final String? footer;
-  final List<Widget> children;
-  const _Section({required this.title, required this.children, this.footer});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.screenHorizontal,
-        AppSpacing.sm,
-        AppSpacing.screenHorizontal,
-        AppSpacing.md,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(
-              left: AppSpacing.xs,
-              bottom: AppSpacing.sm,
-            ),
-            child: Text(title.toUpperCase(), style: AppText.label),
-          ),
-          SectionCard(
-            padding: EdgeInsets.zero,
-            child: Column(children: children),
-          ),
-          if (footer != null)
-            Padding(
-              padding: const EdgeInsets.only(
-                left: AppSpacing.xs,
-                top: AppSpacing.sm,
-              ),
-              child: Text(footer!, style: AppText.caption),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SwitchRow extends StatelessWidget {
-  final String field;
-  final String title;
-  final String? subtitle;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-  final bool last;
-
-  const _SwitchRow({
-    required this.field,
-    required this.title,
-    required this.value,
-    required this.onChanged,
-    this.subtitle,
-    this.last = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        SwitchListTile.adaptive(
-          key: ValueKey('privacy-switch-$field'),
-          title: Text(title, style: AppText.bodyPrimary),
-          subtitle: subtitle == null
-              ? null
-              : Text(subtitle!, style: AppText.caption),
-          value: value,
-          activeTrackColor: AppColors.medBlue,
-          onChanged: onChanged,
-        ),
-        if (!last) const Divider(height: 1, indent: AppSpacing.lg),
-      ],
-    );
-  }
-}
-
-/// A row whose value is picked from a bottom sheet of options.
-class _ChoiceRow<T> extends StatelessWidget {
-  final String field;
-  final String title;
-  final String? subtitle;
-  final T value;
-  final List<(T, String)> options;
-  final String Function(T) wire;
-  final ValueChanged<T> onPick;
-  final bool last;
-
-  const _ChoiceRow({
-    required this.field,
-    required this.title,
-    required this.value,
-    required this.options,
-    required this.wire,
-    required this.onPick,
-    this.subtitle,
-    this.last = false,
-  });
-
-  String get _valueLabel {
-    for (final (v, label) in options) {
-      if (v == value) return label;
-    }
-    return '—';
-  }
-
-  Future<void> _open(BuildContext context) async {
-    final picked = await showModalBottomSheet<(T,)>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg,
-                  AppSpacing.lg,
-                  AppSpacing.lg,
-                  AppSpacing.sm,
-                ),
-                child: Text(title, style: AppText.heading),
-              ),
-              if (subtitle != null)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.lg,
-                    0,
-                    AppSpacing.lg,
-                    AppSpacing.sm,
-                  ),
-                  child: Text(subtitle!, style: AppText.caption),
-                ),
-              for (final (v, label) in options)
-                ListTile(
-                  key: ValueKey('privacy-opt-$field-${wire(v)}'),
-                  title: Text(label, style: AppText.bodyPrimary),
-                  trailing: v == value
-                      ? const Icon(Icons.check, color: AppColors.medBlue)
-                      : null,
-                  onTap: () => Navigator.of(ctx).pop((v,)),
-                ),
-              const SizedBox(height: AppSpacing.sm),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (picked == null) return;
-    final next = picked.$1;
-    if (next == value) return;
-    onPick(next);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        ListTile(
-          key: ValueKey('privacy-row-$field'),
-          title: Text(title, style: AppText.bodyPrimary),
-          subtitle: Text(
-            _valueLabel,
-            key: ValueKey('privacy-value-$field'),
-            style: AppText.caption.copyWith(color: AppColors.medBlue),
-          ),
-          trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
-          onTap: () => _open(context),
-        ),
-        if (!last) const Divider(height: 1, indent: AppSpacing.lg),
       ],
     );
   }

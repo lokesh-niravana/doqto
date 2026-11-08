@@ -1,4 +1,5 @@
 import '../../core/enums/app_enums.dart';
+import 'conversation_prefs.dart';
 
 class Conversation {
   final String id;
@@ -42,6 +43,9 @@ class Conversation {
   /// Set when this conversation backs a network group (M5). null otherwise.
   final String? groupId;
 
+  /// My pin / archive / mute / mark-unread state (batch 3). Private to me.
+  final ConversationPrefs prefs;
+
   const Conversation({
     required this.id,
     required this.orgId,
@@ -63,6 +67,7 @@ class Conversation {
     this.isNetwork = false,
     this.isHidden = false,
     this.groupId,
+    this.prefs = ConversationPrefs.defaults,
   });
 
   factory Conversation.fromJson(Map<String, dynamic> j) => Conversation(
@@ -92,6 +97,9 @@ class Conversation {
         isNetwork: (j['is_network'] ?? false) as bool,
         isHidden: (j['is_hidden'] ?? false) as bool,
         groupId: j['group_id'] as String?,
+        prefs: j['prefs'] is Map
+            ? ConversationPrefs.fromJson((j['prefs'] as Map).cast<String, dynamic>())
+            : ConversationPrefs.defaults,
       );
 
   Conversation copyWith({
@@ -100,6 +108,7 @@ class Conversation {
     bool? isNetwork,
     bool? isHidden,
     String? groupId,
+    ConversationPrefs? prefs,
   }) =>
       Conversation(
         id: id,
@@ -122,6 +131,7 @@ class Conversation {
         isNetwork: isNetwork ?? this.isNetwork,
         isHidden: isHidden ?? this.isHidden,
         groupId: groupId ?? this.groupId,
+        prefs: prefs ?? this.prefs,
       );
 
   /// Round-trips through [Conversation.fromJson] — used by the offline cache.
@@ -146,5 +156,6 @@ class Conversation {
         'is_network': isNetwork,
         'is_hidden': isHidden,
         'group_id': groupId,
+        'prefs': prefs.toJson(),
       };
 }

@@ -431,6 +431,60 @@ class Strings {
   static const String privacySaveFailed = "Couldn't save that. Try again.";
   static const String presenceOnline = 'online';
 
+  // Chat list preferences (batch 3)
+  static const String chatPin = 'Pin';
+  static const String chatUnpin = 'Unpin';
+  static const String chatMute = 'Mute';
+  static const String chatUnmute = 'Unmute';
+  static const String chatMuteTitle = 'Mute notifications';
+  static const String chatMuteHint =
+      'Messages still arrive; you just won\'t be notified.';
+  static const String chatArchive = 'Archive';
+  static const String chatUnarchive = 'Unarchive';
+  static const String chatMarkUnread = 'Mark as unread';
+  static const String chatMarkRead = 'Mark as read';
+  static const String chatClear = 'Clear chat';
+  static const String chatClearTitle = 'Clear this chat?';
+  static const String chatClearBody =
+      'Messages are removed from this device and your view only. The other '
+      'members keep their copies.';
+  static const String chatDeleteChat = 'Delete chat';
+  static const String chatDeleteChatTitle = 'Delete this chat?';
+  static const String chatDeleteChatBody =
+      'The chat leaves your list and its messages are cleared for you. It '
+      'comes back if the other person writes again.';
+  static const String chatLeaveGroupTitle = 'Leave this group?';
+  static const String chatLeaveGroupBody =
+      'You\'ll stop receiving its messages. An admin can invite you back.';
+  static const String chatLeave = 'Leave';
+  static const String chatMore = 'More';
+  static String chatArchivedRow(int n) => 'Archived ($n)';
+  static const String chatArchivedEmpty = 'No archived chats';
+  static const String chatArchivedEmptyHint =
+      'Swipe a chat left to archive it.';
+  static const String chatUnreadEmpty = 'You\'re all caught up';
+  static const String chatUnreadEmptyHint = 'No unread chats right now.';
+  static const String chatGroupsEmpty = 'No group chats yet';
+  static const String chatGroupsEmptyHint =
+      'Create a group from the Groups tab.';
+  static const String chatDraftPrefix = 'Draft: ';
+  static const String chatPinnedToast = 'Pinned';
+  static const String chatUnpinnedToast = 'Unpinned';
+  static const String chatArchivedToast = 'Archived';
+  static const String chatUnarchivedToast = 'Unarchived';
+  static const String chatMutedToast = 'Muted';
+  static const String chatUnmutedToast = 'Unmuted';
+  static const String chatClearedToast = 'Chat cleared';
+  static const String chatDeletedToast = 'Chat deleted';
+  static const String settingsKeepArchived = 'Keep chats archived';
+  static const String settingsKeepArchivedHint =
+      'Archived chats stay archived when a new message arrives.';
+  static const String profileMuteNotifications =
+      'Mute notifications from this person';
+  static const String profileUnmuteNotifications = 'Unmute notifications';
+  static const String profileMutedToast = 'Notifications muted';
+  static const String profileUnmutedToast = 'Notifications on';
+
   // Common
   static const String copy = 'Copy';
   static const String cancel = 'Cancel';

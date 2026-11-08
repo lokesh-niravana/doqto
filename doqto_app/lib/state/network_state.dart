@@ -630,3 +630,39 @@ class SuggestionsNotifier extends AsyncNotifier<List<PersonCard>> {
 final suggestionsProvider =
     AsyncNotifierProvider<SuggestionsNotifier, List<PersonCard>>(
         SuggestionsNotifier.new);
+
+
+/// People I muted (M1 `mutes`, surfaced in batch 3): no pushes (server) and
+/// no in-app banners (notification_state) from them. Optimistic with rollback.
+class MutedUsersNotifier extends AsyncNotifier<Set<String>> {
+  @override
+  Future<Set<String>> build() async =>
+      (await ref.read(networkRepositoryProvider).listMutes()).toSet();
+
+  bool isMuted(String userId) => state.value?.contains(userId) ?? false;
+
+  Future<void> setMuted(String userId, bool muted) async {
+    final before = state.value ?? <String>{};
+    final next = {...before};
+    if (muted) {
+      next.add(userId);
+    } else {
+      next.remove(userId);
+    }
+    state = AsyncData(next);
+    try {
+      final repo = ref.read(networkRepositoryProvider);
+      if (muted) {
+        await repo.mute(userId);
+      } else {
+        await repo.unmute(userId);
+      }
+    } catch (_) {
+      state = AsyncData(before);
+      rethrow;
+    }
+  }
+}
+
+final mutedUsersProvider =
+    AsyncNotifierProvider<MutedUsersNotifier, Set<String>>(MutedUsersNotifier.new);

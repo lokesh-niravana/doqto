@@ -22,7 +22,7 @@ class RecordingSender:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def send(self, *, token, title, body, data, collapse_key):
+    async def send(self, *, token, title, body, data, collapse_key, badge=None):
         self.calls.append(
             {"token": token, "body": body, "data": data, "collapse_key": collapse_key}
         )

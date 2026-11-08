@@ -14,6 +14,7 @@ from app.core.constants import (
     CHAT_LIST_PREVIEW_MAX_LEN,
     DISAPPEAR_OPTIONS_SEC,
     MESSAGES_PAGE_SIZE,
+    RATE_LIMIT_PREFS_WRITES_PER_MINUTE,
     RATE_LIMIT_READS_PER_MINUTE,
 )
 from app.core import permissions
@@ -48,7 +49,10 @@ from app.schemas.conversation import (
     ConversationAddMembersIn,
     ConversationCreateIn,
     ConversationOut,
+    ConversationPrefsIn,
+    ConversationPrefsOut,
     ConversationSettingsIn,
+    UnreadTotalOut,
 )
 from app.schemas.message import (
     MessageOut,
@@ -57,6 +61,7 @@ from app.schemas.message import (
     ScheduledMessageOut,
 )
 from app.services.audit_service import AuditService, request_meta
+from app.services.conversation_prefs_service import ConversationPrefsService, PrefsError
 from app.services.group_service import GroupService
 from app.services.message_service import MessageError, MessageService
 from app.services.push_service import PushService
@@ -148,8 +153,12 @@ async def list_conversations(
         # gone, so that tab is always empty rather than mirroring the inbox.
         return []
     convs = await MessageService.list_for_user(user_id=user.id, db=db)
+    # The caller's own pin / archive / mute / … rows (batch 3). A chat deleted
+    # for me stays off the list until something new lands in it.
+    prefs = await ConversationPrefsService.for_user(user_id=user.id, db=db)
+    convs = [c for c in convs if not ConversationPrefsService.is_hidden(prefs.get(c.id), c)]
     conv_ids = [c.id for c in convs]
-    # Batched: 4 queries total regardless of conversation count (was ~2×N).
+    # Batched: 5 queries total regardless of conversation count (was ~2×N).
     latest = await MessageService.latest_per_conversation(
         conversation_ids=conv_ids, db=db, user_id=user.id
     )
@@ -178,7 +187,78 @@ async def list_conversations(
                 None,
             )
         o.unread_count = unread.get(c.id, 0)
+        o.prefs = ConversationPrefsService.to_out(prefs.get(c.id))
         out.append(o)
+    return out
+
+
+@router.get(ApiRoutes.CONVERSATIONS_UNREAD_TOTAL, response_model=UnreadTotalOut)
+async def unread_total(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UnreadTotalOut:
+    """Cheap refresh for the app-icon badge: unread across the list minus
+    muted / archived / deleted-for-me chats (batch 3)."""
+    await enforce_rate_limit(user.id, "unread_total", RATE_LIMIT_READS_PER_MINUTE)
+    return UnreadTotalOut(total=await MessageService.unread_total(user_id=user.id, db=db))
+
+
+@router.patch(ApiRoutes.CONVERSATIONS_PREFS, response_model=ConversationPrefsOut)
+async def update_prefs(
+    conversation_id: uuid.UUID,
+    body: ConversationPrefsIn,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ConversationPrefsOut:
+    """Partial update of the caller's private view of a conversation: pin
+    (max 3), archive, mute until, mark unread, cosmetic choices, clear chat
+    and delete chat (direct only). Other members never see any of it; the
+    caller's other devices get `conversation_prefs_updated`."""
+    await enforce_rate_limit(user.id, "conversation_prefs", RATE_LIMIT_PREFS_WRITES_PER_MINUTE)
+    conv = await db.scalar(select(Conversation).where(Conversation.id == conversation_id))
+    member = (
+        None
+        if conv is None
+        else await db.scalar(
+            select(ConversationMember).where(
+                ConversationMember.conversation_id == conversation_id,
+                ConversationMember.user_id == user.id,
+            )
+        )
+    )
+    # Outsiders get the same 404 as a chat that does not exist (no oracle).
+    if conv is None or member is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="conversation_not_found")
+    try:
+        pref, changed = await ConversationPrefsService.update(
+            conv=conv, user_id=user.id, body=body, db=db
+        )
+    except PrefsError as e:
+        code = str(e)
+        http = {
+            "pin_limit": status.HTTP_409_CONFLICT,
+            "delete_group_use_leave": status.HTTP_400_BAD_REQUEST,
+        }.get(code, status.HTTP_400_BAD_REQUEST)
+        raise HTTPException(http, detail=code) from e
+    out = ConversationPrefsService.to_out(pref)
+    if changed:
+        await AuditService.log_request(
+            request,
+            user_id=user.id,
+            action=AuditAction.CONVERSATION_PREFS_UPDATED,
+            resource_type="conversation",
+            resource_id=conversation_id,
+            db=db,
+            # Field names only — never values (a mute is nobody's business).
+            metadata={"fields": sorted(body.model_fields_set)},
+        )
+        await db.commit()
+        await ws_manager.publish_to_users(
+            [user.id],
+            WsEventServer.CONVERSATION_PREFS_UPDATED,
+            {"conversation_id": str(conversation_id), "prefs": out.model_dump(mode="json")},
+        )
     return out
 
 
@@ -488,7 +568,23 @@ async def mark_conversation_read(
     )
     recipients = await MessageService.member_ids(conversation_id=conversation_id, db=db)
     emit = await MessageService.read_receipts_enabled(conv=conv, db=db)
+    # Reading a chat drops the hand-set unread dot (batch 3) on every device.
+    dot_cleared = await ConversationPrefsService.clear_marked_unread(
+        conversation_id=conversation_id, user_id=user.id, db=db
+    )
     await db.commit()
+    if dot_cleared:
+        pref = await ConversationPrefsService.get(
+            conversation_id=conversation_id, user_id=user.id, db=db
+        )
+        await ws_manager.publish_to_users(
+            [user.id],
+            WsEventServer.CONVERSATION_PREFS_UPDATED,
+            {
+                "conversation_id": str(conversation_id),
+                "prefs": ConversationPrefsService.to_out(pref).model_dump(mode="json"),
+            },
+        )
     # One conversation-level event: senders flip all their ticks to read.
     # Stored regardless; not emitted when either party turned receipts off.
     if emit:

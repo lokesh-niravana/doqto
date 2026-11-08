@@ -11,6 +11,8 @@ class Tables:
     ORG_DIRECTORY_MEMBERS = "org_directory_members"
     CONVERSATIONS = "conversations"
     CONVERSATION_MEMBERS = "conversation_members"
+    # Per-member conversation preferences (pin / archive / mute / clear …), batch 3.
+    CONVERSATION_PREFS = "conversation_prefs"
     DIRECT_CONVERSATION_KEYS = "direct_conversation_keys"
     MESSAGES = "messages"
     SCHEDULED_MESSAGES = "scheduled_messages"

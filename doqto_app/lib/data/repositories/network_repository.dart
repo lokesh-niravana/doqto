@@ -122,6 +122,19 @@ class NetworkRepository {
 
   Future<void> unblock(String userId) => _api.delete(ApiRoutes.block(userId));
 
+  /// People I muted (no pushes or banners from them). Ids only.
+  Future<List<String>> listMutes() async {
+    final list = await _api.getList(ApiRoutes.mutes);
+    return [
+      for (final e in list)
+        if ((e as Map)['muted_user_id'] is String) e['muted_user_id'] as String,
+    ];
+  }
+
+  Future<void> mute(String userId) => _api.post(ApiRoutes.mute(userId));
+
+  Future<void> unmute(String userId) => _api.delete(ApiRoutes.mute(userId));
+
   Future<CursorPage<PersonCard>> listBlocks({String? cursor}) async {
     final j = await _api.get(ApiRoutes.blocks, query: {
       'cursor': ?cursor,

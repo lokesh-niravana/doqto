@@ -33,6 +33,7 @@ from app.core.constants import (
 )
 from app.db.postgres import SessionLocal
 from app.models import Conversation, DeviceToken, User
+from app.services.conversation_prefs_service import ConversationPrefsService
 from app.services.message_service import MessageService
 
 log = logging.getLogger("doqto.push")
@@ -45,10 +46,14 @@ PUSH_TTL_SECONDS = 28 * 24 * 3600
 
 def fcm_message(
     *, token: str, title: str, body: str, data: dict[str, str], collapse_key: str,
-    now: float | None = None,
+    now: float | None = None, badge: int | None = None,
 ) -> dict:
-    """FCM HTTP v1 message. Pure, so the delivery contract is testable."""
+    """FCM HTTP v1 message. Pure, so the delivery contract is testable.
+    `badge` is the recipient's total unread (not content) → `aps.badge`."""
     now = time.time() if now is None else now
+    aps: dict = {"sound": "default"}
+    if badge is not None:
+        aps["badge"] = badge
     return {
         "token": token,
         "notification": {"title": title, "body": body},
@@ -65,7 +70,7 @@ def fcm_message(
                 "apns-push-type": "alert",
                 "apns-expiration": str(int(now) + PUSH_TTL_SECONDS),
             },
-            "payload": {"aps": {"sound": "default"}},
+            "payload": {"aps": aps},
         },
     }
 
@@ -100,7 +105,14 @@ class PushResult(str, Enum):
 
 class PushSender(Protocol):
     async def send(
-        self, *, token: str, title: str, body: str, data: dict[str, str], collapse_key: str
+        self,
+        *,
+        token: str,
+        title: str,
+        body: str,
+        data: dict[str, str],
+        collapse_key: str,
+        badge: int | None = None,
     ) -> PushResult:
         """Deliver one push and say what happened."""
         ...
@@ -110,9 +122,16 @@ class DevLogPushSender:
     """Local dev stub — logs instead of sending."""
 
     async def send(
-        self, *, token: str, title: str, body: str, data: dict[str, str], collapse_key: str
-    ) -> bool:
-        log.info("[FAKE PUSH] %s → %s / %s %s", token[:12], title, body, data)
+        self,
+        *,
+        token: str,
+        title: str,
+        body: str,
+        data: dict[str, str],
+        collapse_key: str,
+        badge: int | None = None,
+    ) -> PushResult:
+        log.info("[FAKE PUSH] %s → %s / %s %s badge=%s", token[:12], title, body, data, badge)
         return PushResult.SENT
 
 
@@ -142,10 +161,17 @@ class FcmPushSender:
         return self._creds.token
 
     async def send(
-        self, *, token: str, title: str, body: str, data: dict[str, str], collapse_key: str
+        self,
+        *,
+        token: str,
+        title: str,
+        body: str,
+        data: dict[str, str],
+        collapse_key: str,
+        badge: int | None = None,
     ) -> PushResult:
         message = fcm_message(
-            token=token, title=title, body=body, data=data, collapse_key=collapse_key
+            token=token, title=title, body=body, data=data, collapse_key=collapse_key, badge=badge
         )
         bearer = await asyncio.to_thread(self._bearer)
         async with httpx.AsyncClient(timeout=10) as client:
@@ -254,6 +280,11 @@ class PushService:
     ) -> None:
         try:
             async with SessionLocal() as db:
+                if await PushService._silenced(
+                    recipient_id=author_id, actor_id=actor_id, conversation_id=conversation_id, db=db
+                ):
+                    log.info("push muted user=%s conv=%s (reaction)", author_id, conversation_id)
+                    return
                 name = await db.scalar(select(User.full_name).where(User.id == actor_id))
         except Exception:  # noqa: BLE001
             log.exception("reaction push name lookup failed")
@@ -331,6 +362,24 @@ class PushService:
         )
 
     @staticmethod
+    async def _silenced(
+        *,
+        recipient_id: uuid.UUID,
+        actor_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        db: AsyncSession,
+    ) -> bool:
+        """True when the recipient muted this chat (conversation_prefs,
+        batch 3) or muted the actor as a person (mutes, M1)."""
+        pref = await ConversationPrefsService.get(
+            conversation_id=conversation_id, user_id=recipient_id, db=db
+        )
+        if ConversationPrefsService.is_muted(pref):
+            return True
+        muted_people = await ConversationPrefsService.muted_user_ids(user_id=recipient_id, db=db)
+        return actor_id in muted_people
+
+    @staticmethod
     async def _dispatch_simple(
         *,
         recipient_id: uuid.UUID,
@@ -339,7 +388,8 @@ class PushService:
         data: dict[str, str],
         collapse_key: str,
     ) -> None:
-        """Presence-gated single-recipient push (fire-and-forget)."""
+        """Single-recipient push (fire-and-forget). Carries the recipient's
+        unread total as the icon badge — a number, never content."""
         try:
             sender = _sender()
             async with SessionLocal() as db:
@@ -348,6 +398,9 @@ class PushService:
                         select(DeviceToken).where(DeviceToken.user_id == recipient_id)
                     )
                 ).all()
+                badge = (
+                    await MessageService.unread_total(user_id=recipient_id, db=db) if rows else None
+                )
                 for row in rows:
                     result = await sender.send(
                         token=row.token,
@@ -355,6 +408,7 @@ class PushService:
                         body=body,
                         data=data,
                         collapse_key=collapse_key,
+                        badge=badge,
                     )
                     log.info("push %s user=%s platform=%s", result.value, recipient_id, row.platform)
                     if result is PushResult.DEAD:
@@ -384,6 +438,13 @@ class PushService:
                 for uid in recipient_ids:
                     if uid == sender_id:
                         continue
+                    # Muted chat, or a muted person (batch 3 / M1): no banner.
+                    # The message still arrives over WS and in the list.
+                    if await PushService._silenced(
+                        recipient_id=uid, actor_id=sender_id, conversation_id=conversation_id, db=db
+                    ):
+                        log.info("push muted user=%s conv=%s", uid, conversation_id)
+                        continue
                     # The banner collapses per conversation, so it carries the
                     # unread count: eight messages read "8 new messages", not
                     # one indistinguishable banner.
@@ -394,6 +455,7 @@ class PushService:
                         )
                         unread = counts.get(conversation_id, 0)
                     body = new_message_body(name, unread)
+                    badge = await MessageService.unread_total(user_id=uid, db=db)
                     # No presence gate: a killed/backgrounded iOS app keeps its
                     # socket "open" for minutes, and FCM already suppresses
                     # foreground display on both platforms — no duplicates.
@@ -409,6 +471,7 @@ class PushService:
                             body=body,
                             data=data,
                             collapse_key=str(conversation_id),
+                            badge=badge,
                         )
                         log.info(
                             "push %s user=%s platform=%s conv=%s",

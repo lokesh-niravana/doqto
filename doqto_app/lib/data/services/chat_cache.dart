@@ -60,5 +60,42 @@ class ChatCache {
   Future<void> setSkinTone(int? tone) =>
       tone == null ? _box.delete(_skinToneKey) : _box.put(_skinToneKey, tone);
 
+  // --- Drafts (batch 3): unsent composer text per conversation. PHI, so it
+  // lives in this encrypted box and is wiped with the session.
+  static const _draftPrefix = 'draft:';
+
+  String? draft(String convId) {
+    final v = _box.get('$_draftPrefix$convId');
+    return v is String && v.isNotEmpty ? v : null;
+  }
+
+  Future<void> putDraft(String convId, String? text) {
+    final key = '$_draftPrefix$convId';
+    if (text == null || text.trim().isEmpty) return _box.delete(key);
+    return _box.put(key, text);
+  }
+
+  /// Every stored draft, keyed by conversation id (chat list previews).
+  Map<String, String> drafts() {
+    final out = <String, String>{};
+    for (final k in _box.keys) {
+      if (k is String && k.startsWith(_draftPrefix)) {
+        final v = _box.get(k);
+        if (v is String && v.isNotEmpty) out[k.substring(_draftPrefix.length)] = v;
+      }
+    }
+    return out;
+  }
+
+  // "Keep chats archived" (batch 3): when off, a new message unarchives.
+  static const _keepArchivedKey = 'keep_archived';
+
+  bool keepArchived() {
+    final v = _box.get(_keepArchivedKey);
+    return v is bool ? v : true;
+  }
+
+  Future<void> setKeepArchived(bool value) => _box.put(_keepArchivedKey, value);
+
   Future<void> clear() => _box.clear();
 }

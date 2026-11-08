@@ -2,6 +2,7 @@ import '../../core/constants/api_routes.dart';
 import '../../core/enums/app_enums.dart';
 import '../api/api_client.dart';
 import '../models/conversation.dart';
+import '../models/conversation_prefs.dart';
 import '../models/message.dart';
 import '../models/message_edit.dart';
 
@@ -14,6 +15,26 @@ class ChatRepository {
     return list
         .map((e) => Conversation.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  /// Partial update of my private view of a chat. [patch] carries wire
+  /// field names (`pinned`, `archived`, `muted_until`, `marked_unread`,
+  /// `clear_chat`, `delete_chat`, …); the server returns the full prefs.
+  Future<ConversationPrefs> updatePrefs(
+    String conversationId,
+    Map<String, dynamic> patch,
+  ) async {
+    final j = await _api.patch(
+      ApiRoutes.conversationPrefs(conversationId),
+      body: patch,
+    );
+    return ConversationPrefs.fromJson(j);
+  }
+
+  /// Unread across my chats minus muted / archived ones — the icon badge.
+  Future<int> unreadTotal() async {
+    final j = await _api.get(ApiRoutes.conversationsUnreadTotal);
+    return (j['total'] as num?)?.toInt() ?? 0;
   }
 
   Future<Conversation> createConversation({

@@ -9,8 +9,10 @@ import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../state/auth_state.dart';
+import '../../../state/chat_state.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
+import '../../widgets/settings_rows.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -105,12 +107,24 @@ class SettingsScreen extends ConsumerWidget {
               onTap: () => context.push(AppRoutes.privacy),
             ),
           ),
+          FadeSlideIn.staggered(
+            6,
+            SettingsSwitchRow(
+              keyPrefix: 'settings',
+              field: 'keep_archived',
+              title: Strings.settingsKeepArchived,
+              subtitle: Strings.settingsKeepArchivedHint,
+              value: ref.watch(keepArchivedProvider),
+              onChanged: (v) => ref.read(keepArchivedProvider.notifier).set(v),
+              last: true,
+            ),
+          ),
           // Destructive zone: visually separated from the info rows above,
           // rendered in red via the danger variant.
           const SizedBox(height: AppSpacing.sm),
           const Divider(),
           FadeSlideIn.staggered(
-            6,
+            7,
             Padding(
               padding: const EdgeInsets.all(AppSpacing.lg),
               child: AppButton(
@@ -126,7 +140,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           FadeSlideIn.staggered(
-            7,
+            8,
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg)
                   .copyWith(bottom: AppSpacing.lg),

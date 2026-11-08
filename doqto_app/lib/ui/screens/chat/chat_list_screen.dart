@@ -11,14 +11,17 @@ import '../../../core/tokens/motion.dart';
 import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
+import '../../../core/utils/chat_list_filters.dart';
 import '../../../core/utils/datetime_format.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../data/models/conversation.dart';
+import '../../../data/models/conversation_prefs.dart';
 import '../../../data/models/organization.dart';
 import '../../../state/auth_state.dart';
 import '../../../state/chat_state.dart';
 import '../../../state/org_state.dart';
 import '../../../state/presence_state.dart';
+import '../../widgets/app_chip.dart';
 import '../../widgets/app_pressable.dart';
 import '../../widgets/app_skeleton.dart';
 import '../../widgets/connectivity_banner.dart';
@@ -26,6 +29,8 @@ import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/search_bar.dart';
+import '../../widgets/settings_rows.dart';
+import '../../widgets/swipe_action_row.dart';
 import '../../widgets/typing_indicator.dart';
 import '_conversation_display.dart';
 
@@ -38,8 +43,9 @@ class ChatListScreen extends ConsumerStatefulWidget {
 
 class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   String _query = '';
+  ChatFilter _filter = ChatFilter.all;
   final Set<String> _selectedIds = {};
-  bool _deleting = false;
+  bool _busy = false;
   // Rows stagger-animate only on the very first data paint; refreshes and
   // scrolled-in rows render instantly.
   bool _entranceDone = false;
@@ -58,50 +64,98 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
 
   void _clearSelection() => setState(() => _selectedIds.clear());
 
-  Future<void> _deleteSelected() async {
+  List<Conversation> get _selectedConvs {
+    final all =
+        ref.read(conversationsProvider).asData?.value ?? const <Conversation>[];
+    return [
+      for (final c in all)
+        if (_selectedIds.contains(c.id)) c,
+    ];
+  }
+
+  /// Run one prefs action over the selection; the first failure is toasted.
+  Future<void> _bulk(Future<void> Function(Conversation c) action) async {
+    final targets = _selectedConvs;
+    setState(() => _busy = true);
+    Object? firstError;
+    for (final c in targets) {
+      try {
+        await action(c);
+      } catch (e) {
+        firstError ??= e;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _selectedIds.clear();
+    });
+    if (firstError != null) ConversationActions.toastError(context, firstError);
+  }
+
+  Future<void> _bulkPin() {
+    final anyUnpinned = _selectedConvs.any((c) => !c.prefs.isPinned);
+    final notifier = ref.read(conversationsProvider.notifier);
+    return _bulk((c) => notifier.pin(c.id, anyUnpinned));
+  }
+
+  Future<void> _bulkMute() async {
+    final anyUnmuted = _selectedConvs.any((c) => !c.prefs.isMuted());
+    final notifier = ref.read(conversationsProvider.notifier);
+    if (!anyUnmuted) {
+      return _bulk((c) => notifier.mute(c.id, null));
+    }
+    final until = await ConversationActions.pickMuteUntil(context);
+    if (until == null || !mounted) return;
+    return _bulk((c) => notifier.mute(c.id, until));
+  }
+
+  Future<void> _bulkArchive() {
+    final anyLive = _selectedConvs.any((c) => !c.prefs.archived);
+    final notifier = ref.read(conversationsProvider.notifier);
+    return _bulk((c) => notifier.archive(c.id, anyLive));
+  }
+
+  Future<void> _bulkMarkUnread() {
+    final anyRead = _selectedConvs.any((c) => !isConversationUnread(c));
+    final notifier = ref.read(conversationsProvider.notifier);
+    return _bulk((c) => notifier.markUnread(c.id, anyRead));
+  }
+
+  Future<void> _bulkDelete() async {
     final count = _selectedIds.length;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Remove $count chat${count == 1 ? '' : 's'}?'),
+        title: Text('Delete $count chat${count == 1 ? '' : 's'}?'),
         content: const Text(
-          "You won't see these conversations anymore, but the other members still can.",
+          'Direct chats are cleared and leave your list until the other person '
+          'writes again. Groups are left.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
+            child: const Text(Strings.cancel),
           ),
           TextButton(
+            key: const ValueKey('chat-confirm-delete'),
             onPressed: () => Navigator.of(ctx).pop(true),
             style: TextButton.styleFrom(foregroundColor: AppColors.red),
-            child: const Text('Remove'),
+            child: const Text('Delete'),
           ),
         ],
       ),
     );
     if (confirmed != true || !mounted) return;
-    setState(() => _deleting = true);
-    final meId = ref.read(authProvider).user?.id;
-    if (meId == null) return;
-    final repo = ref.read(chatRepositoryProvider);
-    for (final convId in _selectedIds.toList()) {
-      try {
-        await repo.removeMember(convId, meId);
-      } catch (_) {}
-    }
-    ref.invalidate(conversationsProvider);
+    final notifier = ref.read(conversationsProvider.notifier);
+    await _bulk((c) => notifier.deleteChat(c.id));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Removed $count chat${count == 1 ? '' : 's'}.'),
+        content: Text('Deleted $count chat${count == 1 ? '' : 's'}.'),
         backgroundColor: AppColors.medBlue,
       ),
     );
-    setState(() {
-      _selectedIds.clear();
-      _deleting = false;
-    });
   }
 
   @override
@@ -126,19 +180,49 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                 onPressed: _clearSelection,
               ),
               title: Text('${_selectedIds.length} selected'),
-              actions: [
-                IconButton(
-                  icon: _deleting
-                      ? const SizedBox(
+              actions: _busy
+                  ? const [
+                      Padding(
+                        padding: EdgeInsets.all(AppSpacing.md),
+                        child: SizedBox(
                           width: 20,
                           height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.delete_outline),
-                  tooltip: 'Remove',
-                  onPressed: _deleting ? null : _deleteSelected,
-                ),
-              ],
+                        ),
+                      ),
+                    ]
+                  : [
+                      IconButton(
+                        key: const ValueKey('chat-select-pin'),
+                        icon: const Icon(Icons.push_pin_outlined),
+                        tooltip: Strings.chatPin,
+                        onPressed: _bulkPin,
+                      ),
+                      IconButton(
+                        key: const ValueKey('chat-select-mute'),
+                        icon: const Icon(Icons.notifications_off_outlined),
+                        tooltip: Strings.chatMute,
+                        onPressed: _bulkMute,
+                      ),
+                      IconButton(
+                        key: const ValueKey('chat-select-archive'),
+                        icon: const Icon(Icons.archive_outlined),
+                        tooltip: Strings.chatArchive,
+                        onPressed: _bulkArchive,
+                      ),
+                      IconButton(
+                        key: const ValueKey('chat-select-unread'),
+                        icon: const Icon(Icons.mark_chat_unread_outlined),
+                        tooltip: Strings.chatMarkUnread,
+                        onPressed: _bulkMarkUnread,
+                      ),
+                      IconButton(
+                        key: const ValueKey('chat-select-delete'),
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: Strings.chatDeleteChat,
+                        onPressed: _bulkDelete,
+                      ),
+                    ],
             )
           : AppBar(
               toolbarHeight: 64,
@@ -170,11 +254,17 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
       body: Column(
         children: [
           const ConnectivityBanner(),
-          if (!_isSelecting)
+          if (!_isSelecting) ...[
             AppSearchBar(
               hint: 'Search chats or people…',
               onChanged: (q) => setState(() => _query = q),
             ),
+            if (_query.isEmpty)
+              _FilterChips(
+                value: _filter,
+                onChanged: (f) => setState(() => _filter = f),
+              ),
+          ],
           Expanded(
             child: AnimatedSwitcher(
               duration: AppMotion.maybe(context, AppMotion.enter),
@@ -191,6 +281,8 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                   : _ConversationList(
                       key: const ValueKey('list'),
                       convs: convs,
+                      filter: _filter,
+                      onFilter: (f) => setState(() => _filter = f),
                       orgMembers: orgMembers,
                       meId: user?.id,
                       selectedIds: _selectedIds,
@@ -206,8 +298,338 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   }
 }
 
+/// All / Unread / Groups / Archived under the search bar.
+class _FilterChips extends StatelessWidget {
+  final ChatFilter value;
+  final ValueChanged<ChatFilter> onChanged;
+  const _FilterChips({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.screenHorizontal,
+        0,
+        AppSpacing.screenHorizontal,
+        AppSpacing.sm,
+      ),
+      child: Row(
+        children: [
+          for (final f in ChatFilter.values) ...[
+            AppChip(
+              key: ValueKey('chat-filter-${f.name}'),
+              label: f.label,
+              selected: f == value,
+              onTap: () => onChanged(f),
+            ),
+            if (f != ChatFilter.values.last)
+              const SizedBox(width: AppSpacing.sm),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Per-conversation actions shared by the swipe buttons, the More sheet and
+/// the multi-select bar. Every call is optimistic through the notifier and
+/// toasts the mapped error on failure.
+class ConversationActions {
+  ConversationActions._();
+
+  static void toastError(BuildContext context, Object e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ErrorMessages.forApi(e)),
+        backgroundColor: AppColors.red,
+      ),
+    );
+  }
+
+  static void _toast(BuildContext context, String text) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(text), backgroundColor: AppColors.medBlue),
+      );
+  }
+
+  static Future<void> _run(
+    BuildContext context,
+    Future<void> Function() action,
+    String toast,
+  ) async {
+    try {
+      await action();
+      if (context.mounted) _toast(context, toast);
+    } catch (e) {
+      if (context.mounted) toastError(context, e);
+    }
+  }
+
+  static Future<void> togglePin(
+    BuildContext context,
+    WidgetRef ref,
+    Conversation c,
+  ) {
+    final next = !c.prefs.isPinned;
+    return _run(
+      context,
+      () => ref.read(conversationsProvider.notifier).pin(c.id, next),
+      next ? Strings.chatPinnedToast : Strings.chatUnpinnedToast,
+    );
+  }
+
+  static Future<void> toggleArchive(
+    BuildContext context,
+    WidgetRef ref,
+    Conversation c,
+  ) {
+    final next = !c.prefs.archived;
+    return _run(
+      context,
+      () => ref.read(conversationsProvider.notifier).archive(c.id, next),
+      next ? Strings.chatArchivedToast : Strings.chatUnarchivedToast,
+    );
+  }
+
+  static Future<void> toggleMarkUnread(
+    BuildContext context,
+    WidgetRef ref,
+    Conversation c,
+  ) {
+    final next = !isConversationUnread(c);
+    return _run(
+      context,
+      () => ref.read(conversationsProvider.notifier).markUnread(c.id, next),
+      next ? Strings.chatMarkUnread : Strings.chatMarkRead,
+    );
+  }
+
+  /// 8 hours / 1 week / Always → the `muted_until` instant, or null if dismissed.
+  static Future<DateTime?> pickMuteUntil(BuildContext context) async {
+    final picked = await showChoiceSheet<MuteDuration>(
+      context,
+      title: Strings.chatMuteTitle,
+      subtitle: Strings.chatMuteHint,
+      options: [for (final d in MuteDuration.values) (d, d.label)],
+      wire: (d) => switch (d) {
+        MuteDuration.eightHours => '8h',
+        MuteDuration.oneWeek => '1w',
+        MuteDuration.always => 'always',
+      },
+      keyPrefix: 'chat',
+      field: 'mute',
+    );
+    return picked?.$1.until();
+  }
+
+  static Future<void> toggleMute(
+    BuildContext context,
+    WidgetRef ref,
+    Conversation c,
+  ) async {
+    if (c.prefs.isMuted()) {
+      return _run(
+        context,
+        () => ref.read(conversationsProvider.notifier).mute(c.id, null),
+        Strings.chatUnmutedToast,
+      );
+    }
+    final until = await pickMuteUntil(context);
+    if (until == null || !context.mounted) return;
+    return _run(
+      context,
+      () => ref.read(conversationsProvider.notifier).mute(c.id, until),
+      Strings.chatMutedToast,
+    );
+  }
+
+  static Future<bool> _confirm(
+    BuildContext context, {
+    required String title,
+    required String body,
+    required String action,
+    required Key key,
+  }) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text(Strings.cancel),
+          ),
+          TextButton(
+            key: key,
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.red),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  static Future<void> clearChat(
+    BuildContext context,
+    WidgetRef ref,
+    Conversation c,
+  ) async {
+    final ok = await _confirm(
+      context,
+      title: Strings.chatClearTitle,
+      body: Strings.chatClearBody,
+      action: Strings.chatClear,
+      key: const ValueKey('chat-confirm-clear'),
+    );
+    if (!ok || !context.mounted) return;
+    return _run(
+      context,
+      () => ref.read(conversationsProvider.notifier).clearChat(c.id),
+      Strings.chatClearedToast,
+    );
+  }
+
+  static Future<void> deleteChat(
+    BuildContext context,
+    WidgetRef ref,
+    Conversation c,
+  ) async {
+    final isGroup = c.type == ConversationType.group;
+    final ok = await _confirm(
+      context,
+      title: isGroup
+          ? Strings.chatLeaveGroupTitle
+          : Strings.chatDeleteChatTitle,
+      body: isGroup ? Strings.chatLeaveGroupBody : Strings.chatDeleteChatBody,
+      action: isGroup ? Strings.chatLeave : Strings.chatDeleteChat,
+      key: const ValueKey('chat-confirm-delete'),
+    );
+    if (!ok || !context.mounted) return;
+    return _run(
+      context,
+      () => ref.read(conversationsProvider.notifier).deleteChat(c.id),
+      Strings.chatDeletedToast,
+    );
+  }
+
+  /// The "More" sheet: Pin · Mute · Mark unread · Clear chat · Delete chat.
+  static Future<void> showSheet(
+    BuildContext context,
+    WidgetRef ref,
+    Conversation c,
+  ) async {
+    final muted = c.prefs.isMuted();
+    final unread = isConversationUnread(c);
+    final isGroup = c.type == ConversationType.group;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      // Root navigator: the tab shell's docked mic button would otherwise
+      // float above the sheet's last row.
+      useRootNavigator: true,
+      builder: (ctx) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                key: const ValueKey('chat-action-pin'),
+                leading: const Icon(Icons.push_pin_outlined),
+                title: Text(
+                  c.prefs.isPinned ? Strings.chatUnpin : Strings.chatPin,
+                ),
+                onTap: () => Navigator.of(ctx).pop('pin'),
+              ),
+              ListTile(
+                key: const ValueKey('chat-action-mute'),
+                leading: Icon(
+                  muted
+                      ? Icons.notifications_active_outlined
+                      : Icons.notifications_off_outlined,
+                ),
+                title: Text(muted ? Strings.chatUnmute : Strings.chatMute),
+                subtitle: muted && !c.prefs.isMutedAlways
+                    ? Text(
+                        'Until ${formatChatListTime(c.prefs.mutedUntil!)}',
+                        style: AppText.caption,
+                      )
+                    : null,
+                onTap: () => Navigator.of(ctx).pop('mute'),
+              ),
+              ListTile(
+                key: const ValueKey('chat-action-unread'),
+                leading: Icon(
+                  unread
+                      ? Icons.mark_chat_read_outlined
+                      : Icons.mark_chat_unread_outlined,
+                ),
+                title: Text(
+                  unread ? Strings.chatMarkRead : Strings.chatMarkUnread,
+                ),
+                onTap: () => Navigator.of(ctx).pop('unread'),
+              ),
+              ListTile(
+                key: const ValueKey('chat-action-archive'),
+                leading: Icon(
+                  c.prefs.archived
+                      ? Icons.unarchive_outlined
+                      : Icons.archive_outlined,
+                ),
+                title: Text(
+                  c.prefs.archived
+                      ? Strings.chatUnarchive
+                      : Strings.chatArchive,
+                ),
+                onTap: () => Navigator.of(ctx).pop('archive'),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                key: const ValueKey('chat-action-clear'),
+                leading: const Icon(Icons.cleaning_services_outlined),
+                title: const Text(Strings.chatClear),
+                onTap: () => Navigator.of(ctx).pop('clear'),
+              ),
+              ListTile(
+                key: const ValueKey('chat-action-delete'),
+                leading: const Icon(Icons.delete_outline, color: AppColors.red),
+                title: Text(
+                  isGroup ? 'Leave group' : Strings.chatDeleteChat,
+                  style: const TextStyle(color: AppColors.red),
+                ),
+                onTap: () => Navigator.of(ctx).pop('delete'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (choice == null || !context.mounted) return;
+    switch (choice) {
+      case 'pin':
+        await togglePin(context, ref, c);
+      case 'mute':
+        await toggleMute(context, ref, c);
+      case 'unread':
+        await toggleMarkUnread(context, ref, c);
+      case 'archive':
+        await toggleArchive(context, ref, c);
+      case 'clear':
+        await clearChat(context, ref, c);
+      case 'delete':
+        await deleteChat(context, ref, c);
+    }
+  }
+}
+
 class _ConversationList extends ConsumerWidget {
   final AsyncValue<List<Conversation>> convs;
+  final ChatFilter filter;
+  final ValueChanged<ChatFilter> onFilter;
   final List<OrgMember> orgMembers;
   final String? meId;
   final Set<String> selectedIds;
@@ -218,6 +640,8 @@ class _ConversationList extends ConsumerWidget {
   const _ConversationList({
     super.key,
     required this.convs,
+    required this.filter,
+    required this.onFilter,
     required this.orgMembers,
     required this.meId,
     required this.selectedIds,
@@ -225,6 +649,33 @@ class _ConversationList extends ConsumerWidget {
     required this.onSelect,
     required this.staggerEntrance,
   });
+
+  Widget _empty(BuildContext context) => switch (filter) {
+    ChatFilter.all => _StatusPane(
+      icon: Icons.chat_bubble_outline_rounded,
+      title: 'No conversations yet',
+      subtitle: 'Message a colleague or start a group to get going.',
+      actionLabel: 'Start a conversation',
+      onAction: () => context.push(AppRoutes.newMessage),
+    ),
+    ChatFilter.unread => const _StatusPane(
+      icon: Icons.mark_chat_read_outlined,
+      title: Strings.chatUnreadEmpty,
+      subtitle: Strings.chatUnreadEmptyHint,
+    ),
+    ChatFilter.groups => _StatusPane(
+      icon: Icons.groups_outlined,
+      title: Strings.chatGroupsEmpty,
+      subtitle: Strings.chatGroupsEmptyHint,
+      actionLabel: 'Open Groups',
+      onAction: () => context.go(AppRoutes.groups),
+    ),
+    ChatFilter.archived => const _StatusPane(
+      icon: Icons.archive_outlined,
+      title: Strings.chatArchivedEmpty,
+      subtitle: Strings.chatArchivedEmptyHint,
+    ),
+  };
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -242,77 +693,115 @@ class _ConversationList extends ConsumerWidget {
         onAction: () => ref.invalidate(conversationsProvider),
       ),
       data: (rawList) {
-        final list = [...rawList]
-          ..sort((a, b) {
-            final ta = a.lastMessageAt ?? a.updatedAt;
-            final tb = b.lastMessageAt ?? b.updatedAt;
-            return tb.compareTo(ta);
-          });
+        final sorted = sortConversations(rawList);
+        final list = applyChatFilter(sorted, filter);
+        final archivedCount = rawList.where((c) => c.prefs.archived).length;
+        // Archived (n) row: top when pinned chats lead the list, bottom
+        // otherwise. Never inside the Archived view itself.
+        final showArchivedRow =
+            filter != ChatFilter.archived && archivedCount > 0;
+        final archivedOnTop =
+            showArchivedRow && list.isNotEmpty && list.first.prefs.isPinned;
+        final drafts = ref.watch(draftsProvider);
         // Follow presence for the direct peers on screen (newest chats
         // first; the notifier caps one call at 50 ids).
-        final peers = <String>[
-          for (final c in list) ?directPeerId(c, meId),
-        ];
+        final peers = <String>[for (final c in list) ?directPeerId(c, meId)];
         if (peers.isNotEmpty) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             ref.read(presenceProvider.notifier).track(peers);
           });
         }
+        final archivedRow = showArchivedRow
+            ? _ArchivedRow(
+                count: archivedCount,
+                onTap: () => onFilter(ChatFilter.archived),
+              )
+            : null;
+        final bottom = MediaQuery.paddingOf(context).bottom + AppSpacing.sm;
         return RefreshIndicator(
           onRefresh: () => ref.read(conversationsProvider.notifier).refresh(),
           child: list.isEmpty
               ? ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
                   children: [
-                    SizedBox(height: MediaQuery.of(context).size.height * 0.22),
-                    _StatusPane(
-                      icon: Icons.chat_bubble_outline_rounded,
-                      title: 'No conversations yet',
-                      subtitle:
-                          'Message a colleague or start a group to get going.',
-                      actionLabel: 'Start a conversation',
-                      onAction: () => context.push(AppRoutes.newMessage),
-                    ),
+                    ?archivedRow,
+                    SizedBox(height: MediaQuery.of(context).size.height * 0.18),
+                    _empty(context),
                   ],
                 )
               : ListView.separated(
                   physics: const AlwaysScrollableScrollPhysics(),
                   // extendBody: keep last row clear of the floating nav bar.
-                  padding: EdgeInsets.only(
-                    top: AppSpacing.sm,
-                    bottom:
-                        MediaQuery.paddingOf(context).bottom + AppSpacing.sm,
-                  ),
-                  itemCount: list.length,
+                  padding: EdgeInsets.only(top: AppSpacing.sm, bottom: bottom),
+                  itemCount: list.length + (archivedRow != null ? 1 : 0),
                   separatorBuilder: (ctx, i) => const Divider(
                     indent: AppSpacing.xxl + AppSpacing.lg,
                     height: 0,
                   ),
                   itemBuilder: (ctx, i) {
-                    final c = list[i];
+                    if (archivedRow != null) {
+                      if (archivedOnTop && i == 0) return archivedRow;
+                      if (!archivedOnTop && i == list.length) {
+                        return archivedRow;
+                      }
+                    }
+                    final idx = archivedRow != null && archivedOnTop
+                        ? i - 1
+                        : i;
+                    final c = list[idx];
                     final display = conversationDisplay(
                       c: c,
                       orgMembers: orgMembers,
                       meId: meId,
-                      fallbackColorIndex: i,
+                      fallbackColorIndex: idx,
                     );
                     return FadeSlideIn.staggered(
-                      i,
+                      idx,
                       _ChatRow(
                         conversation: c,
                         display: display,
                         orgMembers: orgMembers,
                         meId: meId,
+                        draft: drafts[c.id],
                         isSelected: selectedIds.contains(c.id),
                         isSelecting: isSelecting,
                         onSelect: onSelect,
+                        swipeable: !isSelecting,
                       ),
-                      enabled: staggerEntrance && i <= AppMotion.staggerCap,
+                      enabled: staggerEntrance && idx <= AppMotion.staggerCap,
                     );
                   },
                 ),
         );
       },
+    );
+  }
+}
+
+/// "Archived (n)" — opens the Archived filter.
+class _ArchivedRow extends StatelessWidget {
+  final int count;
+  final VoidCallback onTap;
+  const _ArchivedRow({required this.count, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return AppPressable(
+      key: const ValueKey('chat-archived-row'),
+      onTap: onTap,
+      child: ListTile(
+        leading: const SizedBox(
+          width: 48,
+          child: Center(
+            child: Icon(Icons.archive_outlined, color: AppColors.medBlue),
+          ),
+        ),
+        title: Text(
+          Strings.chatArchivedRow(count),
+          style: AppText.heading.copyWith(color: AppColors.medBlue),
+        ),
+        trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+      ),
     );
   }
 }
@@ -505,8 +994,10 @@ class _ChatRow extends ConsumerWidget {
   final ConversationDisplay display;
   final List<OrgMember> orgMembers;
   final String? meId;
+  final String? draft;
   final bool isSelected;
   final bool isSelecting;
+  final bool swipeable;
   final ValueChanged<String>? onSelect;
 
   const _ChatRow({
@@ -514,8 +1005,10 @@ class _ChatRow extends ConsumerWidget {
     required this.display,
     required this.orgMembers,
     required this.meId,
+    this.draft,
     this.isSelected = false,
     this.isSelecting = false,
+    this.swipeable = false,
     this.onSelect,
   });
 
@@ -566,13 +1059,14 @@ class _ChatRow extends ConsumerWidget {
   }
 
   /// The other member of a direct chat; null for groups.
-  String? get peerId => display.isDirect ? directPeerId(conversation, meId) : null;
+  String? get peerId =>
+      display.isDirect ? directPeerId(conversation, meId) : null;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final c = conversation;
     final hasMsg = c.lastMessageType != null;
-    final isUnread = c.unreadCount > 0;
+    final isUnread = isConversationUnread(c);
     final isTyping = ref.watch(typingProvider(c.id));
     final peer = peerId;
     final titleStyle = isUnread
@@ -586,27 +1080,53 @@ class _ChatRow extends ConsumerWidget {
         : hasMsg
         ? AppText.caption.copyWith(color: AppColors.textSecondary)
         : AppText.caption.copyWith(fontStyle: FontStyle.italic);
-    final subtitle = isTyping
-        ? Row(
-            children: [
-              Text(
-                'typing',
-                style: AppText.caption.copyWith(
-                  color: AppColors.medBlue,
-                  fontWeight: FontWeight.w600,
-                ),
+    final draftText = draft?.trim();
+    final Widget subtitle;
+    if (isTyping) {
+      subtitle = Row(
+        children: [
+          Text(
+            'typing',
+            style: AppText.caption.copyWith(
+              color: AppColors.medBlue,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 5),
+          const TypingDots(color: AppColors.medBlue, size: 6),
+        ],
+      );
+    } else if (draftText != null && draftText.isNotEmpty) {
+      // Unsent text wins over the last message, like every messenger.
+      subtitle = Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: Strings.chatDraftPrefix,
+              style: AppText.caption.copyWith(
+                color: AppColors.red,
+                fontWeight: FontWeight.w600,
               ),
-              const SizedBox(width: 5),
-              const TypingDots(color: AppColors.medBlue, size: 6),
-            ],
-          )
-        : Text(
-            _previewText(),
-            style: previewStyle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          );
-    return AppPressable(
+            ),
+            TextSpan(
+              text: draftText,
+              style: AppText.caption.copyWith(color: AppColors.textSecondary),
+            ),
+          ],
+        ),
+        key: ValueKey('chat-draft-${c.id}'),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    } else {
+      subtitle = Text(
+        _previewText(),
+        style: previewStyle,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+    final tile = AppPressable(
       onTap: () {
         if (isSelecting) {
           onSelect?.call(c.id);
@@ -625,7 +1145,8 @@ class _ChatRow extends ConsumerWidget {
           presence: peer == null
               ? null
               : PresenceStatusDot.forStatus(
-                  ref.watch(presenceOfProvider(peer))?.status),
+                  ref.watch(presenceOfProvider(peer))?.status,
+                ),
         ),
         title: Text(
           display.title,
@@ -640,43 +1161,99 @@ class _ChatRow extends ConsumerWidget {
           children: [
             Text(
               formatChatListTime(c.lastMessageAt ?? c.updatedAt),
-              style: c.unreadCount > 0
+              style: isUnread
                   ? AppText.timestamp.copyWith(
                       color: AppColors.medBlue,
                       fontWeight: FontWeight.w600,
                     )
                   : AppText.timestamp,
             ),
-            if (c.unreadCount > 0) ...[
-              const SizedBox(height: 4),
-              // Badge pill scales in when a row first becomes unread.
-              TweenAnimationBuilder<double>(
-                tween: Tween(begin: 0.0, end: 1.0),
-                duration: AppMotion.maybe(context, AppMotion.micro),
-                curve: AppMotion.standard,
-                builder: (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
+            const SizedBox(height: 4),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (c.prefs.isMuted())
+                  Padding(
+                    padding: const EdgeInsets.only(right: AppSpacing.xs),
+                    child: Icon(
+                      Icons.notifications_off_outlined,
+                      key: ValueKey('chat-muted-${c.id}'),
+                      size: 16,
+                      color: AppColors.textMuted,
+                    ),
                   ),
-                  decoration: BoxDecoration(
-                    color: AppColors.medBlue,
-                    borderRadius: AppRadii.rFull,
+                if (c.prefs.isPinned)
+                  Padding(
+                    padding: const EdgeInsets.only(right: AppSpacing.xs),
+                    child: Icon(
+                      Icons.push_pin,
+                      key: ValueKey('chat-pinned-${c.id}'),
+                      size: 16,
+                      color: AppColors.textMuted,
+                    ),
                   ),
-                  constraints: const BoxConstraints(minWidth: 20),
-                  child: Text(
-                    c.unreadCount > 99 ? '99+' : '${c.unreadCount}',
-                    style: AppText.badge.copyWith(color: AppColors.white),
-                    textAlign: TextAlign.center,
+                if (c.unreadCount > 0)
+                  // Badge pill scales in when a row first becomes unread.
+                  TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0.0, end: 1.0),
+                    duration: AppMotion.maybe(context, AppMotion.micro),
+                    curve: AppMotion.standard,
+                    builder: (context, scale, child) =>
+                        Transform.scale(scale: scale, child: child),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.medBlue,
+                        borderRadius: AppRadii.rFull,
+                      ),
+                      constraints: const BoxConstraints(minWidth: 20),
+                      child: Text(
+                        c.unreadCount > 99 ? '99+' : '${c.unreadCount}',
+                        style: AppText.badge.copyWith(color: AppColors.white),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  )
+                else if (c.prefs.markedUnread)
+                  // Hand-set unread: a dot, no number.
+                  Container(
+                    key: ValueKey('chat-unread-dot-${c.id}'),
+                    width: 10,
+                    height: 10,
+                    decoration: const BoxDecoration(
+                      color: AppColors.medBlue,
+                      shape: BoxShape.circle,
+                    ),
                   ),
-                ),
-              ),
-            ],
+              ],
+            ),
           ],
         ),
       ),
+    );
+    if (!swipeable) return tile;
+    return SwipeActionRow(
+      key: ValueKey('chat-row-${c.id}'),
+      leading: SwipeAction(
+        key: ValueKey('chat-swipe-more-${c.id}'),
+        icon: Icons.more_horiz,
+        label: Strings.chatMore,
+        color: AppColors.gray600,
+        onTap: () => ConversationActions.showSheet(context, ref, c),
+      ),
+      trailing: SwipeAction(
+        key: ValueKey('chat-swipe-archive-${c.id}'),
+        icon: c.prefs.archived
+            ? Icons.unarchive_outlined
+            : Icons.archive_outlined,
+        label: c.prefs.archived ? Strings.chatUnarchive : Strings.chatArchive,
+        color: AppColors.medBlue,
+        onTap: () => ConversationActions.toggleArchive(context, ref, c),
+      ),
+      child: tile,
     );
   }
 }

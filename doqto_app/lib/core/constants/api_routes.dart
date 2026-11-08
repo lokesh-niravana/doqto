@@ -33,6 +33,9 @@ class ApiRoutes {
 
   // Conversations
   static const String conversations = '$apiV1/conversations';
+  // Badge number: unread across the list minus muted / archived (batch 3).
+  static const String conversationsUnreadTotal =
+      '$apiV1/conversations/unread-total';
   static String conversationMessages(String id) =>
       '$apiV1/conversations/$id/messages';
   static String conversationScheduleMessage(String id) =>
@@ -46,6 +49,9 @@ class ApiRoutes {
       '$apiV1/conversations/$convId/members/$userId';
   static String conversationSettings(String id) =>
       '$apiV1/conversations/$id/settings';
+  // My pin / archive / mute / mark unread / clear / delete (batch 3).
+  static String conversationPrefs(String id) =>
+      '$apiV1/conversations/$id/prefs';
 
   // Messages
   static String messageUpload(String convId) =>
@@ -84,6 +90,9 @@ class ApiRoutes {
       '$apiV1/network/connections/mutual/$userId';
   static String block(String userId) => '$apiV1/network/blocks/$userId';
   static const String blocks = '$apiV1/network/blocks';
+  // Mute a person: no pushes or banners from them, anywhere (M1 table).
+  static const String mutes = '$apiV1/network/mutes';
+  static String mute(String userId) => '$apiV1/network/mutes/$userId';
   static const String reports = '$apiV1/network/reports';
   static const String suggestions = '$apiV1/network/suggestions';
   static String suggestionDismiss(String userId) =>

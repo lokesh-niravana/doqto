@@ -28,6 +28,7 @@ import '../../../data/models/message_edit.dart';
 import '../../../data/models/organization.dart';
 import '../../../state/auth_state.dart';
 import '../../../state/chat_state.dart';
+import '../../../data/api/websocket_client.dart';
 import '../../../state/groups_state.dart';
 import '../../../state/notification_state.dart';
 import '../../../state/org_state.dart';
@@ -73,6 +74,10 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   Timer? _typingPing;
   // Composer edit mode: the sent message whose text is being replaced.
   Message? _editing;
+  // Draft (batch 3): unsent text survives leaving the thread. Saved a beat
+  // after typing stops and again on dispose; cleared on send.
+  Timer? _draftSave;
+  String _draftBeforeEdit = '';
 
   /// WhatsApp-style selection mode: long-press starts it, taps toggle.
   final _selected = <String>{};
@@ -122,10 +127,27 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     if (state == AppLifecycleState.resumed && _readOwed) _markReadIfVisible();
   }
 
+  // Captured up front: `ref` is already unusable by the time dispose() runs,
+  // and leaving the thread must still send typing_stop, save the draft and
+  // release the active chat.
+  late final WebsocketClient _ws;
+  late final DraftsNotifier _drafts;
+  late final StateController<String?> _activeChat;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _ws = ref.read(websocketClientProvider);
+    _drafts = ref.read(draftsProvider.notifier);
+    _activeChat = ref.read(activeConversationProvider.notifier);
+    // Restore an unsent draft (encrypted cache) exactly as it was left.
+    final draft = ref.read(draftsProvider)[widget.conversationId];
+    if (draft != null && draft.isNotEmpty) {
+      _input.text = draft;
+      _hasText = draft.trim().isNotEmpty;
+      _input.selection = TextSelection.collapsed(offset: draft.length);
+    }
     // Infinite scroll-back: nearing the top (= end of the reversed list)
     // pulls the next older page.
     _scroll.addListener(() {
@@ -155,13 +177,22 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    // ponytail: ref is gone when the whole tree is torn down (app exit /
-    // test teardown); clearing the active chat is moot then.
-    try {
-      if (ref.read(activeConversationProvider) == widget.conversationId) {
-        ref.read(activeConversationProvider.notifier).state = null;
+    _draftSave?.cancel();
+    // Providers must not change while the tree is being torn down; the
+    // values are read now and written a microtask later.
+    final draft = _editing == null ? _input.text : _draftBeforeEdit;
+    final convId = widget.conversationId;
+    scheduleMicrotask(() {
+      // The container itself may be gone when the whole app is torn down
+      // (exit / test teardown); nothing is left to update then.
+      try {
+        if (_activeChat.state == convId) _activeChat.state = null;
+        // Whatever was in the composer (not an edit in progress) is the draft.
+        _drafts.set(convId, draft);
+      } on StateError {
+        // provider disposed
       }
-    } catch (_) {}
+    });
     _stopTyping();
     _input.dispose();
     _scroll.dispose();
@@ -335,6 +366,8 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   }
 
   void _startEdit(Message m) {
+    _draftSave?.cancel();
+    if (_editing == null) _draftBeforeEdit = _input.text;
     setState(() {
       _editing = m;
       _input.text = m.content ?? '';
@@ -344,10 +377,13 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   }
 
   void _cancelEdit() {
+    // Back to the draft that was there before editing started.
+    final restore = _draftBeforeEdit;
+    _draftBeforeEdit = '';
     setState(() {
       _editing = null;
-      _input.clear();
-      _hasText = false;
+      _input.text = restore;
+      _hasText = restore.trim().isNotEmpty;
     });
     _stopTyping();
   }
@@ -425,7 +461,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   }
 
   void _wsTyping(bool typing) {
-    ref.read(websocketClientProvider).send({
+    _ws.send({
       'type': typing
           ? WsEventClient.typingStart.wire
           : WsEventClient.typingStop.wire,
@@ -442,9 +478,19 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     }
   }
 
+  void _saveDraftSoon(String value) {
+    if (_editing != null) return;
+    _draftSave?.cancel();
+    _draftSave = Timer(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+      ref.read(draftsProvider.notifier).set(widget.conversationId, value);
+    });
+  }
+
   void _onInputChanged(String value) {
     final hasText = value.trim().isNotEmpty;
     if (hasText != _hasText) setState(() => _hasText = hasText);
+    _saveDraftSoon(value);
     if (hasText) {
       if (!_typing) {
         _typing = true;
@@ -470,6 +516,8 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     _input.clear();
     setState(() => _hasText = false); // clear() doesn't fire onChanged
     _stopTyping();
+    _draftSave?.cancel();
+    unawaited(ref.read(draftsProvider.notifier).clear(widget.conversationId));
     await ref
         .read(messagesProvider(widget.conversationId).notifier)
         .sendText(text);
@@ -608,6 +656,8 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     _input.clear();
     setState(() => _hasText = false);
     _stopTyping();
+    _draftSave?.cancel();
+    unawaited(ref.read(draftsProvider.notifier).clear(widget.conversationId));
     final zoneLabel = zone == _deviceZone
         ? ''
         : ' (${zone.replaceAll('_', ' ')})';

@@ -85,6 +85,9 @@ class ErrorMessages {
 
     // Conversations / messages
     'conversation_not_found': 'This conversation no longer exists.',
+    // Conversation preferences (batch 3)
+    'pin_limit': 'You can pin up to 3 chats. Unpin one first.',
+    'delete_group_use_leave': 'Leave the group to remove it from your chats.',
     'not_a_conversation_member': 'You\'re not part of this conversation.',
     'message_not_found': 'We couldn\'t find that message.',
     'rate_limited':

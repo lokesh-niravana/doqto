@@ -1,5 +1,7 @@
 """TTLs, limits, and other magic numbers — defined ONCE. No inline numbers in services."""
 
+from datetime import datetime, timezone
+
 # JWT lifetimes
 ACCESS_TOKEN_TTL_SECONDS = 60 * 60  # 1 hour
 REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
@@ -76,6 +78,13 @@ ADMIN_LOGIN_WINDOW_SECONDS = 15 * 60
 PUSH_TITLE = "Doqto"
 PUSH_BODY_NEW_MESSAGE = "New message"
 # Message-request push copy — generic, PHI-free, NO content/preview ever (M4).
+
+# --- Conversation preferences (batch 3) ------------------------------------ #
+# At most this many pinned chats per user (409 pin_limit beyond it).
+PINNED_CONVERSATIONS_MAX = 3
+RATE_LIMIT_PREFS_WRITES_PER_MINUTE = 60
+# muted_until at or beyond this instant means "always" (no expiry).
+MUTE_ALWAYS_UNTIL = datetime(9999, 12, 31, tzinfo=timezone.utc)
 
 # Chat list preview
 CHAT_LIST_PREVIEW_MAX_LEN = 140

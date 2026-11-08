@@ -1,5 +1,10 @@
 from app.models.audit import AuditLog
-from app.models.conversation import Conversation, ConversationMember, DirectConversationKey
+from app.models.conversation import (
+    Conversation,
+    ConversationMember,
+    ConversationPref,
+    DirectConversationKey,
+)
 from app.models.device_token import DeviceToken
 from app.models.group import Group, GroupInvite, GroupMember
 from app.models.message import (
@@ -35,6 +40,7 @@ __all__ = [
     "ConnectionRemoval",
     "Conversation",
     "ConversationMember",
+    "ConversationPref",
     "DeviceToken",
     "DirectConversationKey",
     "Group",

@@ -5,12 +5,14 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
     String,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
@@ -116,3 +118,47 @@ class DirectConversationKey(Base):
     )
     user_lo: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
     user_hi: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+
+
+class ConversationPref(Base):
+    """One member's private view of a conversation (batch 3): pin, archive,
+    mute, mark-unread, clear / delete-for-me cursors and cosmetic choices.
+    Row absent = defaults. Never visible to the other members."""
+
+    __tablename__ = Tables.CONVERSATION_PREFS
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.CONVERSATIONS}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.USERS}.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    # NULL = not muted; MUTE_ALWAYS_UNTIL (far future) = always.
+    muted_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    custom_tone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    custom_vibrate: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    theme: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    wallpaper: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    marked_unread: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    # "Clear chat": messages with seq <= this are hidden from this user only.
+    cleared_before_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # "Delete chat" (direct): the conversation stays off the list until a
+    # message with a higher seq arrives.
+    hidden_until_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

@@ -78,12 +78,26 @@ class PersonProfileScreen extends ConsumerWidget {
     final blocked = ref.read(relationshipProvider(userId)).valueOrNull?.relationship
             .connectionState ==
         RelationshipState.blocked;
+    final muted = ref.read(mutedUsersProvider).value?.contains(userId) ?? false;
     showModalBottomSheet<void>(
       context: context,
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            ListTile(
+              key: const ValueKey('profile-mute'),
+              leading: Icon(
+                muted ? Icons.notifications_active_outlined : Icons.notifications_off_outlined,
+              ),
+              title: Text(
+                muted ? Strings.profileUnmuteNotifications : Strings.profileMuteNotifications,
+              ),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _toggleMute(context, ref, !muted);
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.flag_outlined),
               title: const Text(Strings.netReport),
@@ -138,6 +152,24 @@ class PersonProfileScreen extends ConsumerWidget {
     final done = await BlockedListScreen.confirmUnblock(context, ref, card);
     if (done && ref.exists(relationshipProvider(userId))) {
       ref.read(relationshipProvider(userId).notifier).refresh();
+    }
+  }
+
+  /// Mute a person (M1 `mutes`): no pushes or in-app banners from them in
+  /// any chat. Nothing else changes — they can still message and see me.
+  Future<void> _toggleMute(BuildContext context, WidgetRef ref, bool mute) async {
+    try {
+      await ref.read(mutedUsersProvider.notifier).setMuted(userId, mute);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(mute ? Strings.profileMutedToast : Strings.profileUnmutedToast),
+      ));
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(ErrorMessages.forApi(e)),
+        backgroundColor: AppColors.red,
+      ));
     }
   }
 

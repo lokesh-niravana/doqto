@@ -73,6 +73,8 @@ class ApiRoutes:
 
     # Conversations
     CONVERSATIONS_LIST = ""
+    # Total unread across the list, minus muted / archived chats (app icon badge).
+    CONVERSATIONS_UNREAD_TOTAL = "/unread-total"
     CONVERSATIONS_CREATE = ""
     CONVERSATIONS_MESSAGES = "/{conversation_id}/messages"
     CONVERSATIONS_MESSAGES_SCHEDULE = "/{conversation_id}/messages/schedule"
@@ -81,6 +83,8 @@ class ApiRoutes:
     CONVERSATIONS_MEMBERS = "/{conversation_id}/members"
     CONVERSATIONS_MEMBER_DETAIL = "/{conversation_id}/members/{user_id}"
     CONVERSATIONS_SETTINGS = "/{conversation_id}/settings"
+    # Per-member preferences: pin / archive / mute / mark unread / clear / delete.
+    CONVERSATIONS_PREFS = "/{conversation_id}/prefs"
     # Message-request tier (M4) — recipient-only accept / decline.
 
     # Messages

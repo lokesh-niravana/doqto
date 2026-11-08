@@ -124,6 +124,8 @@ class _DoqtoAppState extends ConsumerState<DoqtoApp>
     ref.watch(notificationListenerProvider);
     // Resend queued messages on start + every reconnect.
     ref.watch(outboxDrainerProvider);
+    // App-icon badge follows the unread total; cleared on sign-out.
+    ref.watch(appBadgeSyncProvider);
     return MaterialApp.router(
       title: Strings.appName,
       debugShowCheckedModeBanner: false,

@@ -32,7 +32,8 @@ class RecordingSender:
         self.failing_tokens: set[str] = set()
 
     async def send(
-        self, *, token: str, title: str, body: str, data: dict[str, str], collapse_key: str
+        self, *, token: str, title: str, body: str, data: dict[str, str], collapse_key: str,
+        badge: int | None = None,
     ) -> PushResult:
         self.calls.append(
             {

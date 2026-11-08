@@ -11,6 +11,7 @@ import '../../data/repositories/groups_repository.dart';
 import '../../data/repositories/network_repository.dart';
 import '../../data/repositories/org_repository.dart';
 import '../../data/repositories/user_repository.dart';
+import '../../data/services/app_badge.dart';
 import '../../data/services/chat_cache.dart';
 import '../../data/services/chat_document_store.dart';
 import '../../data/services/chat_media_cache.dart';
@@ -81,6 +82,9 @@ final pushTokenProviderProvider = Provider<PushTokenProvider>(
 );
 
 final chatCacheProvider = Provider<ChatCache>((ref) => ChatCache());
+
+/// App-icon badge (batch 3). Overridden in tests.
+final appBadgeProvider = Provider<AppBadge>((ref) => AppBadge());
 
 /// Chat images on the phone, keyed by message id: downloaded once, wiped on
 /// sign-out. Overridden with a temp-dir backend in tests.

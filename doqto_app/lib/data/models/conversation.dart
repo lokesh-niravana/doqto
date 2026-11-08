@@ -46,6 +46,10 @@ class Conversation {
   /// My pin / archive / mute / mark-unread state (batch 3). Private to me.
   final ConversationPrefs prefs;
 
+  /// Pinned message (batch 4): shared by every member; null = nothing pinned.
+  final String? pinnedMessageId;
+  final DateTime? pinnedUntil;
+
   const Conversation({
     required this.id,
     required this.orgId,
@@ -68,7 +72,17 @@ class Conversation {
     this.isHidden = false,
     this.groupId,
     this.prefs = ConversationPrefs.defaults,
+    this.pinnedMessageId,
+    this.pinnedUntil,
   });
+
+  /// The pin the thread banner shows — none once it has lapsed.
+  String? activePinnedMessageId([DateTime? now]) {
+    if (pinnedMessageId == null) return null;
+    final until = pinnedUntil;
+    if (until != null && !until.isAfter((now ?? DateTime.now()).toUtc())) return null;
+    return pinnedMessageId;
+  }
 
   factory Conversation.fromJson(Map<String, dynamic> j) => Conversation(
         id: j['id'] as String,
@@ -100,6 +114,10 @@ class Conversation {
         prefs: j['prefs'] is Map
             ? ConversationPrefs.fromJson((j['prefs'] as Map).cast<String, dynamic>())
             : ConversationPrefs.defaults,
+        pinnedMessageId: j['pinned_message_id'] as String?,
+        pinnedUntil: j['pinned_until'] != null
+            ? DateTime.parse(j['pinned_until'] as String)
+            : null,
       );
 
   Conversation copyWith({
@@ -109,6 +127,8 @@ class Conversation {
     bool? isHidden,
     String? groupId,
     ConversationPrefs? prefs,
+    String? Function()? pinnedMessageId,
+    DateTime? Function()? pinnedUntil,
   }) =>
       Conversation(
         id: id,
@@ -132,6 +152,9 @@ class Conversation {
         isHidden: isHidden ?? this.isHidden,
         groupId: groupId ?? this.groupId,
         prefs: prefs ?? this.prefs,
+        pinnedMessageId:
+            pinnedMessageId != null ? pinnedMessageId() : this.pinnedMessageId,
+        pinnedUntil: pinnedUntil != null ? pinnedUntil() : this.pinnedUntil,
       );
 
   /// Round-trips through [Conversation.fromJson] — used by the offline cache.
@@ -157,5 +180,7 @@ class Conversation {
         'is_hidden': isHidden,
         'group_id': groupId,
         'prefs': prefs.toJson(),
+        'pinned_message_id': pinnedMessageId,
+        'pinned_until': pinnedUntil?.toIso8601String(),
       };
 }

@@ -31,6 +31,7 @@ class _Repo extends ChatRepository {
     DateTime? before,
     int? afterSeq,
     DateTime? changedSince,
+    DateTime? beforeDate,
   }) async =>
       [_msg('mine', 'me'), _msg('theirs', 'them')];
 }

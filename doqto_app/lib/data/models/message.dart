@@ -99,6 +99,106 @@ class MessageReceipt {
       );
 }
 
+/// The quoted message on a reply, rendered live by the server from the
+/// target's current row (`ReplyPreviewOut`). [preview] is "Message deleted"
+/// for a tombstone; the whole object is null once the target expired.
+class ReplyPreview {
+  final String id;
+  final String senderId;
+  final MessageType type;
+  final String? preview;
+
+  const ReplyPreview({
+    required this.id,
+    required this.senderId,
+    required this.type,
+    required this.preview,
+  });
+
+  factory ReplyPreview.fromJson(Map<String, dynamic> j) => ReplyPreview(
+        id: j['id'] as String,
+        senderId: j['sender_id'] as String,
+        type: MessageType.fromWire((j['type'] as String?) ?? 'text'),
+        preview: j['preview'] as String?,
+      );
+
+  Map<String, dynamic> toJson() =>
+      {'id': id, 'sender_id': senderId, 'type': type.wire, 'preview': preview};
+
+  /// What the quote strip shows for a target of this [type].
+  static String previewFor(Message m) {
+    if (m.isDeleted) return 'Message deleted';
+    return switch (m.type) {
+      MessageType.image => 'Photo',
+      MessageType.voiceNote => 'Voice note',
+      MessageType.file => m.fileName ?? 'File',
+      _ => (m.content ?? '').length > 140
+          ? (m.content ?? '').substring(0, 140)
+          : (m.content ?? ''),
+    };
+  }
+
+  factory ReplyPreview.of(Message m) => ReplyPreview(
+        id: m.id,
+        senderId: m.senderId,
+        type: m.type,
+        preview: previewFor(m),
+      );
+}
+
+/// One row of GET /messages/starred: the message plus where it lives.
+class StarredMessage {
+  final Message message;
+  final String conversationId;
+  final ConversationType conversationType;
+  final String? conversationName;
+  final DateTime starredAt;
+
+  const StarredMessage({
+    required this.message,
+    required this.conversationId,
+    required this.conversationType,
+    required this.conversationName,
+    required this.starredAt,
+  });
+
+  factory StarredMessage.fromJson(Map<String, dynamic> j) => StarredMessage(
+        message: Message.fromJson((j['message'] as Map).cast<String, dynamic>()),
+        conversationId: j['conversation_id'] as String,
+        conversationType:
+            ConversationType.fromWire((j['conversation_type'] as String?) ?? 'direct'),
+        conversationName: j['conversation_name'] as String?,
+        starredAt: DateTime.parse(j['starred_at'] as String),
+      );
+}
+
+/// GET /link-preview — fetched server-side, image proxied as a data: URL.
+class LinkPreview {
+  final String url;
+  final String? title;
+  final String? description;
+  final String? siteName;
+  final String? imageDataUrl;
+
+  const LinkPreview({
+    required this.url,
+    this.title,
+    this.description,
+    this.siteName,
+    this.imageDataUrl,
+  });
+
+  bool get isEmpty => title == null && description == null && imageDataUrl == null;
+
+  factory LinkPreview.fromJson(Map<String, dynamic> j) => LinkPreview(
+        url: (j['url'] ?? '') as String,
+        title: j['title'] as String?,
+        description: j['description'] as String?,
+        siteName: j['site_name'] as String?,
+        imageDataUrl: j['image_data_url'] as String?,
+      );
+}
+
 class Message {
   final String id;
   final String conversationId;
@@ -127,6 +227,13 @@ class Message {
   // Outbox media file on disk — lets pending image bubbles show a real
   // preview instead of a filename. Never serialized; rebuilt from the outbox.
   final String? localPath;
+  // Batch 4. [replyTo] is the server's live rendering of the quoted row.
+  final String? replyToId;
+  final ReplyPreview? replyTo;
+  final bool forwarded;
+  final int forwardDepth;
+  final List<String> mentions; // user ids named with `@[uuid]` in the body
+  final bool starred; // by me — the only per-viewer field
 
   const Message({
     required this.id,
@@ -152,13 +259,37 @@ class Message {
     this.deletedAt,
     this.reactions = const [],
     this.changedAt,
+    this.replyToId,
+    this.replyTo,
+    this.forwarded = false,
+    this.forwardDepth = 0,
+    this.mentions = const [],
+    this.starred = false,
   });
 
   /// Sender may edit a text message this long after sending (server-enforced).
-  static const editWindow = Duration(minutes: 5);
+  static const editWindow = Duration(minutes: 15);
 
   /// Sender may delete any message this long after sending (server-enforced).
-  static const deleteWindow = Duration(minutes: 3);
+  /// Group admins are not bound by it (see [canDelete]).
+  static const deleteWindow = Duration(hours: 48);
+
+  /// Copies at this depth cannot be forwarded again (server `forward_limit`).
+  static const forwardMaxDepth = 5;
+
+  /// "Forwarded many times" once a copy has travelled this far.
+  bool get forwardedManyTimes => forwarded && forwardDepth >= forwardMaxDepth;
+  bool get canForward =>
+      type != MessageType.system &&
+      !isDeleted &&
+      status == MessageStatus.sent &&
+      seq != null &&
+      forwardDepth < forwardMaxDepth;
+
+  /// Live, persisted, non-system rows can be starred / pinned / replied to.
+  bool get canStar => canReact;
+  bool get canPin => canReact;
+  bool get canReply => canReact;
 
   bool get isDeleted => deletedAt != null;
 
@@ -188,9 +319,14 @@ class Message {
       type == MessageType.text &&
       _own(me, (now ?? DateTime.now()).toUtc(), editWindow);
 
-  bool canDelete({required String me, DateTime? now}) =>
-      type != MessageType.system &&
-      _own(me, (now ?? DateTime.now()).toUtc(), deleteWindow);
+  /// Sender within [deleteWindow]; a group admin ([isAdmin]) at any age.
+  bool canDelete({required String me, DateTime? now, bool isAdmin = false}) {
+    if (type == MessageType.system || isDeleted || status != MessageStatus.sent) {
+      return false;
+    }
+    if (isAdmin && seq != null) return true;
+    return _own(me, (now ?? DateTime.now()).toUtc(), deleteWindow);
+  }
 
   /// Optimistic local message (text, media, or voice): shown with a clock tick
   /// while the outbox delivers it. `id` is the clientId until the server row
@@ -206,6 +342,7 @@ class Message {
     String? transcript,
     MessageStatus status = MessageStatus.sending,
     String? localPath,
+    ReplyPreview? replyTo,
   }) =>
       Message(
         id: clientId,
@@ -224,6 +361,8 @@ class Message {
         status: status,
         clientId: clientId,
         localPath: localPath,
+        replyToId: replyTo?.id,
+        replyTo: replyTo,
       );
 
   factory Message.fromJson(Map<String, dynamic> j) => Message(
@@ -249,6 +388,14 @@ class Message {
         deletedAt: j['deleted_at'] != null ? DateTime.parse(j['deleted_at'] as String) : null,
         reactions: MessageReaction.listFromJson(j['reactions']),
         changedAt: j['changed_at'] != null ? DateTime.parse(j['changed_at'] as String) : null,
+        replyToId: j['reply_to_id'] as String?,
+        replyTo: j['reply_to'] is Map
+            ? ReplyPreview.fromJson((j['reply_to'] as Map).cast<String, dynamic>())
+            : null,
+        forwarded: (j['forwarded'] as bool?) ?? false,
+        forwardDepth: (j['forward_depth'] as num?)?.toInt() ?? 0,
+        mentions: [for (final u in (j['mentions'] as List? ?? const [])) u.toString()],
+        starred: (j['starred'] as bool?) ?? false,
       );
 
   Map<String, dynamic> toJson() => {
@@ -273,6 +420,12 @@ class Message {
         'deleted_at': deletedAt?.toIso8601String(),
         'reactions': [for (final r in reactions) r.toJson()],
         'changed_at': changedAt?.toIso8601String(),
+        'reply_to_id': replyToId,
+        'reply_to': replyTo?.toJson(),
+        'forwarded': forwarded,
+        'forward_depth': forwardDepth,
+        'mentions': mentions,
+        'starred': starred,
       };
 
   Message copyWith({
@@ -283,6 +436,8 @@ class Message {
     MessageStatus? status,
     List<MessageReaction>? reactions,
     DateTime? changedAt,
+    bool? starred,
+    ReplyPreview? replyTo,
   }) =>
       Message(
         id: id,
@@ -308,5 +463,11 @@ class Message {
         deletedAt: deletedAt,
         reactions: reactions ?? this.reactions,
         changedAt: changedAt ?? this.changedAt,
+        replyToId: replyToId,
+        replyTo: replyTo ?? this.replyTo,
+        forwarded: forwarded,
+        forwardDepth: forwardDepth,
+        mentions: mentions,
+        starred: starred ?? this.starred,
       );
 }

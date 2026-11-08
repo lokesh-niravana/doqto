@@ -59,6 +59,7 @@ class _Repo extends ChatRepository {
     DateTime? before,
     int? afterSeq,
     DateTime? changedSince,
+    DateTime? beforeDate,
   }) async {
     if (changedSince != null) {
       lastChangedSince = changedSince;

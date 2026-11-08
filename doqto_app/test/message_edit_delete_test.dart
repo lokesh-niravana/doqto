@@ -32,14 +32,17 @@ void main() {
     expect(d.isDeleted, isTrue);
   });
 
-  test('edit window is 5 min, delete window is 3 min, own text only', () {
+  test('edit window is 15 min, delete window is 48 h, own text only; admins any age', () {
     final t0 = DateTime.utc(2026, 9, 5, 10);
     final m = _msg(createdAt: t0);
-    expect(m.canEdit(me: 'u1', now: t0.add(const Duration(minutes: 4, seconds: 59))), isTrue);
-    expect(m.canEdit(me: 'u1', now: t0.add(const Duration(minutes: 5, seconds: 1))), isFalse);
+    expect(m.canEdit(me: 'u1', now: t0.add(const Duration(minutes: 14, seconds: 59))), isTrue);
+    expect(m.canEdit(me: 'u1', now: t0.add(const Duration(minutes: 15, seconds: 1))), isFalse);
     expect(m.canEdit(me: 'u2', now: t0), isFalse);
-    expect(m.canDelete(me: 'u1', now: t0.add(const Duration(minutes: 2, seconds: 59))), isTrue);
-    expect(m.canDelete(me: 'u1', now: t0.add(const Duration(minutes: 3, seconds: 1))), isFalse);
+    expect(m.canDelete(me: 'u1', now: t0.add(const Duration(hours: 47, minutes: 59))), isTrue);
+    expect(m.canDelete(me: 'u1', now: t0.add(const Duration(hours: 48, seconds: 1))), isFalse);
+    // A group admin deletes anyone's message at any age; a plain member can't.
+    expect(m.canDelete(me: 'u2', now: t0.add(const Duration(days: 30)), isAdmin: true), isTrue);
+    expect(m.canDelete(me: 'u2', now: t0, isAdmin: false), isFalse);
 
     final deleted = _msg(createdAt: t0, deletedAt: t0.toIso8601String());
     expect(deleted.canEdit(me: 'u1', now: t0), isFalse);

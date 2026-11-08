@@ -189,7 +189,9 @@ void main() {
     // ---- 5. Tray shows my custom reaction selected.
     await tester.longPress(find.text(text));
     await _until(tester, 'tray shows 🔥 slot', () => find.byKey(const ValueKey('reaction-pick-🔥')).evaluate().isNotEmpty);
-    await tester.tap(find.byKey(const ValueKey('select-close')));
+    // The tray lives in the long-press sheet since batch 4: dismiss via the barrier.
+    await tester.tapAt(const Offset(20, 80));
+    await _until(tester, 'sheet closed', () => find.byKey(const ValueKey('message-context-menu')).evaluate().isEmpty);
     await _settle(tester, 500);
 
     // ---- 6. Who reacted → my row first → tap to remove.

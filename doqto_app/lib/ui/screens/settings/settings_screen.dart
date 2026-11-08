@@ -109,6 +109,16 @@ class SettingsScreen extends ConsumerWidget {
           ),
           FadeSlideIn.staggered(
             6,
+            ListTile(
+              key: const ValueKey('settings-starred'),
+              leading: const Icon(Icons.star_outline_rounded, color: AppColors.medBlue),
+              title: const Text(Strings.chatStarredMessages),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push(AppRoutes.starred),
+            ),
+          ),
+          FadeSlideIn.staggered(
+            7,
             SettingsSwitchRow(
               keyPrefix: 'settings',
               field: 'keep_archived',
@@ -124,7 +134,7 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: AppSpacing.sm),
           const Divider(),
           FadeSlideIn.staggered(
-            7,
+            8,
             Padding(
               padding: const EdgeInsets.all(AppSpacing.lg),
               child: AppButton(
@@ -140,7 +150,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           FadeSlideIn.staggered(
-            8,
+            9,
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg)
                   .copyWith(bottom: AppSpacing.lg),

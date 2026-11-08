@@ -629,6 +629,11 @@ async def test_pin_group_admin_only_and_auto_unpin(client, db, ws_events):
     r = await client.put(f"{CONVS}/{conv_id}/pin", json={"message_id": msg["id"]}, headers=owner_h)
     assert r.status_code == 200, r.text
     assert r.json()["pinned_until"] is not None  # default: the longest option (30d)
+    assert r.json()["group_id"] == str(group.id)
+    # The chat list names the group row too (the app opens group threads from it).
+    r = await client.get(CONVS, headers=member_h)
+    listed = next(c for c in r.json() if c["id"] == str(conv_id))
+    assert listed["group_id"] == str(group.id)
     r = await client.delete(f"{CONVS}/{conv_id}/pin", headers=member_h)
     assert r.status_code == 403
 

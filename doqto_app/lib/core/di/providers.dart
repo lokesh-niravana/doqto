@@ -12,6 +12,7 @@ import '../../data/repositories/network_repository.dart';
 import '../../data/repositories/org_repository.dart';
 import '../../data/repositories/user_repository.dart';
 import '../../data/services/app_badge.dart';
+import '../../data/services/app_clipboard.dart';
 import '../../data/services/chat_cache.dart';
 import '../../data/services/chat_document_store.dart';
 import '../../data/services/chat_media_cache.dart';
@@ -106,6 +107,9 @@ final npiLookupProvider = Provider<NpiLookup>((ref) => NpiLookup());
 final networkCacheProvider = Provider<NetworkCache>((ref) => NetworkCache());
 
 final groupsCacheProvider = Provider<GroupsCache>((ref) => GroupsCache());
+
+/// Copy-to-clipboard (batch 4): local-only pasteboard on iOS. Faked in tests.
+final clipboardProvider = Provider<AppClipboard>((ref) => const SystemClipboard());
 
 final urlOpenerProvider = Provider<UrlOpener>(
   (ref) => const ExternalUrlOpener(),

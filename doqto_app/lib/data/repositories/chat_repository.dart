@@ -5,6 +5,7 @@ import '../models/conversation.dart';
 import '../models/conversation_prefs.dart';
 import '../models/message.dart';
 import '../models/message_edit.dart';
+import '../models/network_profile.dart' show CursorPage;
 
 class ChatRepository {
   final ApiClient _api;
@@ -51,16 +52,22 @@ class ChatRepository {
 
   /// [before] pages backwards (history); [afterSeq] pages forwards in seq
   /// order (catch-up after offline). The server rejects both together.
+  /// [beforeDate] (jump to date, batch 4) returns the usual descending page
+  /// ending at the end of that UTC day; exclusive with [before].
   Future<List<Message>> listMessages(
     String conversationId, {
     DateTime? before,
     int? afterSeq,
     DateTime? changedSince,
+    DateTime? beforeDate,
   }) async {
     final query = <String, dynamic>{
       'before': ?before?.toUtc().toIso8601String(),
       'after_seq': ?afterSeq,
       'changed_since': ?changedSince?.toUtc().toIso8601String(),
+      if (beforeDate != null)
+        'before_date':
+            '${beforeDate.year.toString().padLeft(4, '0')}-${beforeDate.month.toString().padLeft(2, '0')}-${beforeDate.day.toString().padLeft(2, '0')}',
     };
     final list = await _api.getList(
       ApiRoutes.conversationMessages(conversationId),
@@ -71,10 +78,13 @@ class ChatRepository {
         .toList();
   }
 
+  /// [replyToId] quotes a live message of the same conversation
+  /// (422 `reply_target_invalid` otherwise).
   Future<Message> sendText(
     String conversationId,
     String content, {
     String? clientId,
+    String? replyToId,
   }) async {
     final j = await _api.post(
       ApiRoutes.conversationMessages(conversationId),
@@ -83,9 +93,68 @@ class ChatRepository {
         'content': content,
         // Outbox idempotency key — retries return the original row.
         'client_id': ?clientId,
+        'reply_to_id': ?replyToId,
       },
     );
     return Message.fromJson(j);
+  }
+
+  // ---- Batch 4 -------------------------------------------------------------
+
+  /// Copy a message into up to five chats; one new row per destination.
+  Future<List<Message>> forward(String messageId, List<String> conversationIds) async {
+    final r = await _api.postList(
+      ApiRoutes.messageForward(messageId),
+      body: {'conversation_ids': conversationIds},
+    );
+    return [for (final e in r) Message.fromJson((e as Map).cast<String, dynamic>())];
+  }
+
+  /// Star / unstar for me only. Idempotent; returns the row with `starred`.
+  Future<Message> setStarred(String messageId, bool starred) async {
+    final j = starred
+        ? await _api.put(ApiRoutes.messageStar(messageId))
+        : await _api.delete(ApiRoutes.messageStar(messageId));
+    return Message.fromJson(j);
+  }
+
+  /// My starred messages across every chat, newest star first.
+  Future<CursorPage<StarredMessage>> starred({String? cursor, int? limit}) async {
+    final j = await _api.get(ApiRoutes.messagesStarred, query: {
+      'cursor': ?cursor,
+      'limit': ?limit,
+    });
+    return CursorPage(
+      [
+        for (final e in (j['data'] as List? ?? const []))
+          StarredMessage.fromJson((e as Map).cast<String, dynamic>()),
+      ],
+      j['next_cursor'] as String?,
+    );
+  }
+
+  /// Pin [messageId] for everyone for [durationSec] (24 h / 7 d / 30 d).
+  Future<Conversation> pinMessage(
+    String conversationId,
+    String messageId,
+    int durationSec,
+  ) async {
+    final j = await _api.put(
+      ApiRoutes.conversationPin(conversationId),
+      body: {'message_id': messageId, 'duration_sec': durationSec},
+    );
+    return Conversation.fromJson(j);
+  }
+
+  Future<Conversation> unpinMessage(String conversationId) async {
+    final j = await _api.delete(ApiRoutes.conversationPin(conversationId));
+    return Conversation.fromJson(j);
+  }
+
+  /// Server-side link preview (SSRF-guarded, image proxied as base64).
+  Future<LinkPreview> linkPreview(String url) async {
+    final j = await _api.get(ApiRoutes.linkPreview, query: {'url': url});
+    return LinkPreview.fromJson(j);
   }
 
   /// Queue [content] for future delivery. [scheduledLocal] is the wall-clock
@@ -152,7 +221,7 @@ class ChatRepository {
     return Message.fromJson(j);
   }
 
-  /// Sender-only, within 5 min of sending; the server keeps the history.
+  /// Sender-only, within 15 min of sending; the server keeps the history.
   Future<Message> editMessage(String messageId, String content) async {
     final j = await _api.patch(
       ApiRoutes.message(messageId),
@@ -176,7 +245,7 @@ class ChatRepository {
     return Message.fromJson(j);
   }
 
-  /// Sender-only, within 3 min of sending; returns the tombstone row.
+  /// Sender within 48 h, or a group admin at any age; returns the tombstone.
   Future<Message> deleteMessage(String messageId) async {
     final j = await _api.delete(ApiRoutes.message(messageId));
     return Message.fromJson(j);

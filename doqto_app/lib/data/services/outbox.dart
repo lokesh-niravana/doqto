@@ -44,6 +44,9 @@ class OutboxEntry {
   final int? durationSec;
   final String? transcript;
 
+  // Text only: the message this one quotes (batch 4).
+  final String? replyToId;
+
   const OutboxEntry({
     required this.clientId,
     required this.conversationId,
@@ -55,6 +58,7 @@ class OutboxEntry {
     this.mimeType,
     this.durationSec,
     this.transcript,
+    this.replyToId,
   });
 
   Map<String, dynamic> toMap() => {
@@ -68,6 +72,7 @@ class OutboxEntry {
         'mime_type': mimeType,
         'duration_sec': durationSec,
         'transcript': transcript,
+        'reply_to_id': replyToId,
       };
 
   factory OutboxEntry.fromMap(Map<dynamic, dynamic> m) => OutboxEntry(
@@ -81,6 +86,7 @@ class OutboxEntry {
         mimeType: m['mime_type'] as String?,
         durationSec: m['duration_sec'] as int?,
         transcript: m['transcript'] as String?,
+        replyToId: m['reply_to_id'] as String?,
       );
 }
 

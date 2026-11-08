@@ -1,6 +1,7 @@
 import Flutter
 import QuickLook
 import UIKit
+import UniformTypeIdentifiers
 import UserNotifications
 
 @main
@@ -19,6 +20,7 @@ import UserNotifications
     registerFileProtectionChannel()
     registerDocumentChannel()
     registerBadgeChannel()
+    registerClipboardChannel()
     // Required by flutter_local_notifications so foreground banners and
     // notification taps are routed to the plugin.
     if #available(iOS 10.0, *) {
@@ -123,6 +125,28 @@ import UserNotifications
         UIApplication.shared.applicationIconBadgeNumber = count
         result(nil)
       }
+    }
+  }
+
+  /// Copy a message (lib/data/services/app_clipboard.dart): the text lands on
+  /// the pasteboard with `.localOnly`, so Universal Clipboard never carries
+  /// PHI across to the doctor's other Apple devices.
+  private func registerClipboardChannel() {
+    guard let registrar = self.registrar(forPlugin: "DoqtoClipboard") else { return }
+    let channel = FlutterMethodChannel(
+      name: "doqto/clipboard", binaryMessenger: registrar.messenger())
+    channel.setMethodCallHandler { call, result in
+      guard call.method == "setLocalOnly",
+        let args = call.arguments as? [String: Any],
+        let text = args["text"] as? String
+      else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      UIPasteboard.general.setItems(
+        [[UTType.plainText.identifier: text]],
+        options: [.localOnly: true])
+      result(nil)
     }
   }
 

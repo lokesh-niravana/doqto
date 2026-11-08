@@ -142,15 +142,23 @@ class NetworkRepository {
     return _page(j, PersonCard.fromJson);
   }
 
+  /// Report a person (default) or, with [subjectType] `message`, a message —
+  /// then [contextMessageIds] carries the last few ids in the thread (ids
+  /// only, never bodies).
   Future<void> report({
     required String subjectId,
     required String reason,
     String? details,
+    String subjectType = 'user',
+    List<String>? contextMessageIds,
   }) =>
       _api.post(ApiRoutes.reports, body: {
+        'subject_type': subjectType,
         'subject_id': subjectId,
         'reason': reason,
         if (details != null && details.isNotEmpty) 'details': details,
+        if (contextMessageIds != null && contextMessageIds.isNotEmpty)
+          'context_message_ids': contextMessageIds,
       });
 
   // --- Privacy settings ---

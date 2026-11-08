@@ -476,6 +476,64 @@ class Strings {
   static const String chatUnmutedToast = 'Unmuted';
   static const String chatClearedToast = 'Chat cleared';
   static const String chatDeletedToast = 'Chat deleted';
+  // Message features (batch 4)
+  static const String chatReply = 'Reply';
+  static const String chatForward = 'Forward';
+  static const String chatCopy = 'Copy';
+  static const String chatCopied = 'Copied';
+  static const String chatStar = 'Star';
+  static const String chatUnstar = 'Unstar';
+  static const String chatPinMessage = 'Pin';
+  static const String chatUnpinMessage = 'Unpin';
+  static const String chatInfo = 'Info';
+  static const String chatEdit = 'Edit';
+  static const String chatDelete = 'Delete';
+  static const String chatReport = 'Report';
+  static const String chatSelect = 'Select';
+  static const String chatReplyingTo = 'Replying to';
+  static const String chatYou = 'You';
+  static const String chatForwarded = 'Forwarded';
+  static const String chatForwardedManyTimes = 'Forwarded many times';
+  static const String chatForwardTitle = 'Forward to…';
+  static const String chatForwardHint = 'Search chats and people';
+  static const String chatForwardLimit = 'Up to 5 chats';
+  static const String chatForwardedToast = 'Forwarded';
+  static const String chatStarredToast = 'Starred';
+  static const String chatUnstarredToast = 'Unstarred';
+  static const String chatStarredMessages = 'Starred messages';
+  static const String chatStarredEmpty = 'No starred messages';
+  static const String chatStarredEmptyHint =
+      'Long-press a message and tap Star to keep it here.';
+  static const String chatPinTitle = 'Pin message';
+  static const String chatPinHint = 'Everyone in the chat sees it at the top.';
+  static const String chatPinnedMessage = 'Pinned message';
+  static const String chatPinnedToastMessage = 'Message pinned';
+  static const String chatUnpinnedToastMessage = 'Message unpinned';
+  static const String chatOpenLinkTitle = 'Open link?';
+  static const String chatOpenLinkBody =
+      'This opens outside Doqto. Only open links you trust.';
+  static const String chatOpenLink = 'Open';
+  static const String chatCallNumberTitle = 'Call this number?';
+  static const String chatSearch = 'Search';
+  static const String chatSearchHint = 'Search in chat';
+  static const String chatSearchNone = 'No matches';
+  static const String chatJumpToDate = 'Jump to date';
+  static const String chatJumpToDateNone = 'Nothing on or before that day.';
+  static String chatUnreadDivider(int n) =>
+      n == 1 ? '1 unread message' : '$n unread messages';
+  static const String chatReportTitle = 'Report message';
+  static const String chatReportHint =
+      'The message and the few before it are sent to Doqto for review. The '
+      'sender is not told.';
+  static const String chatReportDetails = 'Details (optional)';
+  static const String chatReportSubmit = 'Send report';
+  static const String chatReportedToast = 'Report sent. Thank you.';
+  static const String chatAdminRemoved = 'Admin removed a message';
+  static const String chatFormatBold = 'Bold';
+  static const String chatFormatItalic = 'Italic';
+  static const String chatFormatStrike = 'Strikethrough';
+  static const String chatFormatMono = 'Monospace';
+  static const String chatMentionHint = 'Mention someone';
   static const String settingsKeepArchived = 'Keep chats archived';
   static const String settingsKeepArchivedHint =
       'Archived chats stay archived when a new message arrives.';

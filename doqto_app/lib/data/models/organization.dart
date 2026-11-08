@@ -1,5 +1,20 @@
 import '../../core/enums/app_enums.dart';
 
+/// Org content policies (batch 4), defaults filled in by the server.
+class OrgPolicies {
+  final bool allowForwardOutsideOrg;
+  final bool allowCopy;
+
+  const OrgPolicies({this.allowForwardOutsideOrg = true, this.allowCopy = true});
+
+  static const defaults = OrgPolicies();
+
+  factory OrgPolicies.fromJson(Map<String, dynamic>? j) => OrgPolicies(
+        allowForwardOutsideOrg: (j?['allow_forward_outside_org'] as bool?) ?? true,
+        allowCopy: (j?['allow_copy'] as bool?) ?? true,
+      );
+}
+
 class Organization {
   final String id;
   final String name;
@@ -13,6 +28,7 @@ class Organization {
   final DateTime? verifiedAt;
   final DateTime createdAt;
   final int memberCount;
+  final OrgPolicies policies;
 
   const Organization({
     required this.id,
@@ -27,6 +43,7 @@ class Organization {
     required this.verifiedAt,
     required this.createdAt,
     required this.memberCount,
+    this.policies = OrgPolicies.defaults,
   });
 
   factory Organization.fromJson(Map<String, dynamic> j) => Organization(
@@ -42,6 +59,9 @@ class Organization {
         verifiedAt: j['verified_at'] != null ? DateTime.parse(j['verified_at'] as String) : null,
         createdAt: DateTime.parse(j['created_at'] as String),
         memberCount: (j['member_count'] ?? 0) as int,
+        policies: OrgPolicies.fromJson(
+          j['policies'] is Map ? (j['policies'] as Map).cast<String, dynamic>() : null,
+        ),
       );
 }
 

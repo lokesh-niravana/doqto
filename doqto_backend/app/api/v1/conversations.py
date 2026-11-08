@@ -37,6 +37,7 @@ from app.db.postgres import get_db
 from app.models import (
     Conversation,
     ConversationMember,
+    Group,
     Message,
     Organization,
     OrgMember,
@@ -72,8 +73,12 @@ from app.services.push_service import PushService
 router = APIRouter()
 
 
-async def _assert_member(conversation_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> Conversation:
-    conv = await db.scalar(select(Conversation).where(Conversation.id == conversation_id))
+async def _assert_member(
+    conversation_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession
+) -> Conversation:
+    conv = await db.scalar(
+        select(Conversation).where(Conversation.id == conversation_id)
+    )
     if conv is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="conversation_not_found")
     member = await db.scalar(
@@ -83,7 +88,9 @@ async def _assert_member(conversation_id: uuid.UUID, user_id: uuid.UUID, db: Asy
         )
     )
     if member is None:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="not_a_conversation_member")
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, detail="not_a_conversation_member"
+        )
     return conv
 
 
@@ -103,7 +110,9 @@ async def _assert_users_in_org(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="member_not_in_org")
 
 
-async def _is_org_admin(org_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> bool:
+async def _is_org_admin(
+    org_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession
+) -> bool:
     member = await db.scalar(
         select(OrgMember).where(
             OrgMember.org_id == org_id, OrgMember.user_id == user_id
@@ -115,9 +124,14 @@ async def _is_org_admin(org_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession)
 def _preview_for(msg: Message | None) -> str | None:
     if msg is not None and msg.deleted_at is not None:
         return MESSAGE_DELETED_PREVIEW
-    if msg is None or msg.content_encrypted is None or msg.type not in (
-        MessageType.TEXT,
-        MessageType.SYSTEM,
+    if (
+        msg is None
+        or msg.content_encrypted is None
+        or msg.type
+        not in (
+            MessageType.TEXT,
+            MessageType.SYSTEM,
+        )
     ):
         return None
     try:
@@ -130,13 +144,29 @@ def _preview_for(msg: Message | None) -> str | None:
     return text
 
 
+async def _group_ids(
+    convs: list[Conversation], db: AsyncSession
+) -> dict[uuid.UUID, uuid.UUID]:
+    """conversation id → groups.id for the network group chats among [convs]
+    (one query; legacy org group chats have no row and stay absent)."""
+    ids = [c.id for c in convs if c.type == ConversationType.GROUP]
+    if not ids:
+        return {}
+    rows = await db.execute(
+        select(Group.conversation_id, Group.id).where(Group.conversation_id.in_(ids))
+    )
+    return dict(rows.all())
+
+
 def _to_out(
     conv: Conversation,
     member_ids: list[uuid.UUID],
     last_msg: Message | None = None,
+    group_id: uuid.UUID | None = None,
 ) -> ConversationOut:
     out = ConversationOut.model_validate(conv)
     out.member_ids = member_ids
+    out.group_id = group_id
     out.pinned_message_id, out.pinned_until = MessageService.effective_pin(conv)
     if last_msg is not None:
         out.last_message_at = last_msg.created_at
@@ -160,7 +190,9 @@ async def list_conversations(
     # The caller's own pin / archive / mute / … rows (batch 3). A chat deleted
     # for me stays off the list until something new lands in it.
     prefs = await ConversationPrefsService.for_user(user_id=user.id, db=db)
-    convs = [c for c in convs if not ConversationPrefsService.is_hidden(prefs.get(c.id), c)]
+    convs = [
+        c for c in convs if not ConversationPrefsService.is_hidden(prefs.get(c.id), c)
+    ]
     conv_ids = [c.id for c in convs]
     # Batched: 5 queries total regardless of conversation count (was ~2×N).
     latest = await MessageService.latest_per_conversation(
@@ -182,12 +214,17 @@ async def list_conversations(
             select(User.id, User.full_name).where(User.id.in_(other_ids))
         )
         names = dict(rows.all())
+    group_ids = await _group_ids(convs, db)
     out: list[ConversationOut] = []
     for c in convs:
-        o = _to_out(c, conv_members[c.id], latest.get(c.id))
+        o = _to_out(c, conv_members[c.id], latest.get(c.id), group_ids.get(c.id))
         if c.type == ConversationType.DIRECT:
             o.display_name = next(
-                (names[uid] for uid in conv_members[c.id] if uid != user.id and uid in names),
+                (
+                    names[uid]
+                    for uid in conv_members[c.id]
+                    if uid != user.id and uid in names
+                ),
                 None,
             )
         o.unread_count = unread.get(c.id, 0)
@@ -204,7 +241,9 @@ async def unread_total(
     """Cheap refresh for the app-icon badge: unread across the list minus
     muted / archived / deleted-for-me chats (batch 3)."""
     await enforce_rate_limit(user.id, "unread_total", RATE_LIMIT_READS_PER_MINUTE)
-    return UnreadTotalOut(total=await MessageService.unread_total(user_id=user.id, db=db))
+    return UnreadTotalOut(
+        total=await MessageService.unread_total(user_id=user.id, db=db)
+    )
 
 
 @router.patch(ApiRoutes.CONVERSATIONS_PREFS, response_model=ConversationPrefsOut)
@@ -219,8 +258,12 @@ async def update_prefs(
     (max 3), archive, mute until, mark unread, cosmetic choices, clear chat
     and delete chat (direct only). Other members never see any of it; the
     caller's other devices get `conversation_prefs_updated`."""
-    await enforce_rate_limit(user.id, "conversation_prefs", RATE_LIMIT_PREFS_WRITES_PER_MINUTE)
-    conv = await db.scalar(select(Conversation).where(Conversation.id == conversation_id))
+    await enforce_rate_limit(
+        user.id, "conversation_prefs", RATE_LIMIT_PREFS_WRITES_PER_MINUTE
+    )
+    conv = await db.scalar(
+        select(Conversation).where(Conversation.id == conversation_id)
+    )
     member = (
         None
         if conv is None
@@ -261,7 +304,10 @@ async def update_prefs(
         await ws_manager.publish_to_users(
             [user.id],
             WsEventServer.CONVERSATION_PREFS_UPDATED,
-            {"conversation_id": str(conversation_id), "prefs": out.model_dump(mode="json")},
+            {
+                "conversation_id": str(conversation_id),
+                "prefs": out.model_dump(mode="json"),
+            },
         )
     return out
 
@@ -284,13 +330,13 @@ async def create_conversation(
         decision = permissions.can_start_direct(ctx)
         if decision.mode == "denied":
             # Blocks are never observable (HIPAA silence rule) — surface generic.
-            reason = "user_unavailable" if decision.reason == "blocked" else decision.reason
+            reason = (
+                "user_unavailable" if decision.reason == "blocked" else decision.reason
+            )
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail=reason)
         # Connected cross-org pairs are staged behind the network flag.
         if not ctx.shared_org_ids and not settings.NETWORK_DM_ENABLED:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN, detail="network_dm_disabled"
-            )
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="network_dm_disabled")
         create_access = ConversationAccess.OPEN
         create_initiator = None
         # Direct conversations are always network-scoped (org_id=NULL, forced by
@@ -307,7 +353,9 @@ async def create_conversation(
             )
         ).all()
         if not orgs:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="user_not_in_any_org")
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, detail="user_not_in_any_org"
+            )
         caller_org = next((o for o, st in orgs if st == OrgStatus.ACTIVE), None)
         if caller_org is None:
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="org_not_verified")
@@ -342,7 +390,12 @@ async def create_conversation(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
     members = await MessageService.conversation_members(conversation_id=conv.id, db=db)
-    out = _to_out(conv, [m.user_id for m in members])
+    out = _to_out(
+        conv,
+        [m.user_id for m in members],
+        None,
+        (await _group_ids([conv], db)).get(conv.id),
+    )
     if conv.type == ConversationType.DIRECT:
         other_id = next((m.user_id for m in members if m.user_id != user.id), None)
         if other_id is not None:
@@ -370,9 +423,9 @@ async def list_messages(
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, detail="before_and_before_date_exclusive"
             )
-        before = datetime.combine(before_date, datetime.min.time(), tzinfo=timezone.utc) + timedelta(
-            days=1
-        )
+        before = datetime.combine(
+            before_date, datetime.min.time(), tzinfo=timezone.utc
+        ) + timedelta(days=1)
     if before is not None and after_seq is not None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, detail="before_and_after_seq_exclusive"
@@ -481,7 +534,9 @@ async def send_message(
             reply_to_id=body.reply_to_id,
         )
     except MessageError as e:
-        raise HTTPException(_SEND_STATUS.get(str(e), status.HTTP_400_BAD_REQUEST), detail=str(e)) from e
+        raise HTTPException(
+            _SEND_STATUS.get(str(e), status.HTTP_400_BAD_REQUEST), detail=str(e)
+        ) from e
 
     # The quote travels with the message so receivers render it without a
     # second fetch; `starred` is per-viewer and stays false in the fan-out.
@@ -519,7 +574,9 @@ _SEND_STATUS = {
 }
 
 
-@router.post(ApiRoutes.CONVERSATIONS_MESSAGES_SCHEDULE, response_model=ScheduledMessageOut)
+@router.post(
+    ApiRoutes.CONVERSATIONS_MESSAGES_SCHEDULE, response_model=ScheduledMessageOut
+)
 async def schedule_message(
     conversation_id: uuid.UUID,
     body: MessageScheduleIn,
@@ -541,12 +598,16 @@ async def schedule_message(
         local = datetime.fromisoformat(body.scheduled_local)
         tz = ZoneInfo(body.timezone)
     except (ValueError, KeyError) as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid_schedule_time") from e
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail="invalid_schedule_time"
+        ) from e
     if local.tzinfo is None:
         local = local.replace(tzinfo=tz)
     scheduled_at = local.astimezone(timezone.utc)
     now = datetime.now(tz=timezone.utc)
-    if scheduled_at <= now + timedelta(seconds=30) or scheduled_at > now + timedelta(days=365):
+    if scheduled_at <= now + timedelta(seconds=30) or scheduled_at > now + timedelta(
+        days=365
+    ):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid_schedule_time")
 
     row = ScheduledMessage(
@@ -638,7 +699,9 @@ async def mark_conversation_delivered(
         conversation_id=conversation_id, user_id=user.id, db=db
     )
     if changed:
-        recipients = await MessageService.member_ids(conversation_id=conversation_id, db=db)
+        recipients = await MessageService.member_ids(
+            conversation_id=conversation_id, db=db
+        )
         await db.commit()
         await ws_manager.publish_to_users(
             recipients,
@@ -681,7 +744,9 @@ async def add_members(
                 db=db,
                 metadata={"member_id": str(uid)},
             )
-        recipients = await MessageService.member_ids(conversation_id=conversation_id, db=db)
+        recipients = await MessageService.member_ids(
+            conversation_id=conversation_id, db=db
+        )
         for uid in added:
             await ws_manager.publish_to_users(
                 recipients,
@@ -767,7 +832,9 @@ async def update_settings(
             f"{user.full_name} turned on disappearing messages. New messages will "
             f"disappear from this chat {DISAPPEAR_OPTIONS_SEC[val]} after they're sent."
         )
-    msg = await MessageService.send_system(conv=conv, sender_id=user.id, content=text, db=db)
+    msg = await MessageService.send_system(
+        conv=conv, sender_id=user.id, content=text, db=db
+    )
     out = MessageService.to_out(msg)
     recipients = await MessageService.member_ids(conversation_id=conversation_id, db=db)
     await db.commit()  # flush before broadcasting so receivers can query
@@ -777,8 +844,6 @@ async def update_settings(
         recipients, WsEventServer.NEW_MESSAGE, out.model_dump(mode="json")
     )
     return OkResponse()
-
-
 
 
 # --- Pinned message (batch 4) ------------------------------------------------ #
@@ -803,12 +868,16 @@ async def _publish_pin(
     payload = MessagePinnedEvent(
         conversation_id=conv.id,
         message_id=message_id,
-        pinned_until=conv.pinned_until if event == WsEventServer.MESSAGE_PINNED else None,
+        pinned_until=conv.pinned_until
+        if event == WsEventServer.MESSAGE_PINNED
+        else None,
         actor_id=actor_id,
     )
     await db.commit()
     await db.refresh(conv)  # commit expired the row; the response reads it
-    await ws_manager.publish_to_users(recipients, event, payload.model_dump(mode="json"))
+    await ws_manager.publish_to_users(
+        recipients, event, payload.model_dump(mode="json")
+    )
 
 
 @router.put(ApiRoutes.CONVERSATIONS_PIN, response_model=ConversationOut)
@@ -831,10 +900,12 @@ async def pin_message(
             db=db,
         )
     except MessageError as e:
-        raise HTTPException(_PIN_STATUS.get(str(e), status.HTTP_409_CONFLICT), detail=str(e)) from e
+        raise HTTPException(
+            _PIN_STATUS.get(str(e), status.HTTP_409_CONFLICT), detail=str(e)
+        ) from e
     await _publish_pin(conv, WsEventServer.MESSAGE_PINNED, msg.id, user.id, db)
     members = await MessageService.member_ids(conversation_id=conversation_id, db=db)
-    return _to_out(conv, members)
+    return _to_out(conv, members, None, (await _group_ids([conv], db)).get(conv.id))
 
 
 @router.delete(ApiRoutes.CONVERSATIONS_PIN, response_model=ConversationOut)
@@ -849,8 +920,10 @@ async def unpin_message(
     try:
         previous = await MessageService.unpin_message(conv=conv, user_id=user.id, db=db)
     except MessageError as e:
-        raise HTTPException(_PIN_STATUS.get(str(e), status.HTTP_409_CONFLICT), detail=str(e)) from e
+        raise HTTPException(
+            _PIN_STATUS.get(str(e), status.HTTP_409_CONFLICT), detail=str(e)
+        ) from e
     if previous is not None:
         await _publish_pin(conv, WsEventServer.MESSAGE_UNPINNED, previous, user.id, db)
     members = await MessageService.member_ids(conversation_id=conversation_id, db=db)
-    return _to_out(conv, members)
+    return _to_out(conv, members, None, (await _group_ids([conv], db)).get(conv.id))

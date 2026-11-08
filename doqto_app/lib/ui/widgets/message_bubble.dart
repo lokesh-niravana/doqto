@@ -10,6 +10,7 @@ import '../../core/tokens/radii.dart';
 import '../../core/tokens/spacing.dart';
 import '../../core/tokens/typography.dart';
 import '../../data/models/message.dart';
+import 'quote_strip.dart';
 
 /// Status tick shown on own messages: clock (sending) → check (sent) →
 /// gray double-check (delivered) → blue double-check (read) → red ! (failed).
@@ -168,6 +169,28 @@ class MessageBubble extends StatelessWidget {
   final bool edited;
   final VoidCallback? onEditedTap;
 
+  // Batch 4 ------------------------------------------------------------------
+  /// Rich body (formatting, mentions, links). When null, [text] renders plain.
+  final Widget? body;
+
+  /// The quoted message, shown above the body; tap jumps to it.
+  final ReplyPreview? quote;
+  final String? quoteSenderName;
+  final VoidCallback? onQuoteTap;
+  final String? Function(String userId)? nameFor;
+
+  /// "Forwarded" / "Forwarded many times" above the body.
+  final String? forwardedLabel;
+
+  /// Starred by me: small star next to the time.
+  final bool starred;
+
+  /// Under the body (a link preview card).
+  final Widget? footer;
+
+  /// Search hit / jump target: tinted outline that fades.
+  final bool highlighted;
+
   const MessageBubble({
     super.key,
     required this.text,
@@ -182,6 +205,15 @@ class MessageBubble extends StatelessWidget {
     this.deleted = false,
     this.edited = false,
     this.onEditedTap,
+    this.body,
+    this.quote,
+    this.quoteSenderName,
+    this.onQuoteTap,
+    this.nameFor,
+    this.forwardedLabel,
+    this.starred = false,
+    this.footer,
+    this.highlighted = false,
   });
 
   @override
@@ -207,12 +239,40 @@ class MessageBubble extends StatelessWidget {
       decoration: BoxDecoration(
         color: bg,
         borderRadius: radius,
-        border: isMine ? null : Border.all(color: AppColors.gray100),
+        border: highlighted
+            ? Border.all(color: AppColors.amber, width: 2)
+            : isMine
+                ? null
+                : Border.all(color: AppColors.gray100),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (forwardedLabel != null && !deleted)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Row(
+                key: const ValueKey('forwarded-label'),
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.shortcut_rounded, size: 13, color: muted),
+                  const SizedBox(width: 3),
+                  Text(
+                    forwardedLabel!,
+                    style: AppText.timestamp.copyWith(color: muted, fontStyle: FontStyle.italic),
+                  ),
+                ],
+              ),
+            ),
+          if (quote != null && !deleted)
+            QuoteStrip(
+              quote: quote,
+              senderName: quoteSenderName ?? '',
+              isMine: isMine,
+              onTap: onQuoteTap,
+              nameFor: nameFor,
+            ),
           if (senderName != null && !isMine)
             Padding(
               padding: const EdgeInsets.only(bottom: 2),
@@ -240,7 +300,8 @@ class MessageBubble extends StatelessWidget {
               ],
             )
           else
-            Text(text, style: AppText.messageBody.copyWith(color: fg)),
+            body ?? Text(text, style: AppText.messageBody.copyWith(color: fg)),
+          if (footer != null && !deleted) footer!,
           const SizedBox(height: 2),
           Align(
             alignment: Alignment.bottomRight,
@@ -261,6 +322,15 @@ class MessageBubble extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 4),
+                ],
+                if (starred && !deleted) ...[
+                  Icon(
+                    Icons.star_rounded,
+                    key: const ValueKey('bubble-star'),
+                    size: 13,
+                    color: timeColor,
+                  ),
+                  const SizedBox(width: 3),
                 ],
                 Text(
                   DateFormat.jm().format(timestamp),

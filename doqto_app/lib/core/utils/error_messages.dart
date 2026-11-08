@@ -23,11 +23,30 @@ class ErrorMessages {
     // Message edit / delete (sender-only, time-boxed)
     'not_connected': 'Connect with this doctor to message them.',
     'edit_window_closed':
-        'Messages can only be edited within 5 minutes of sending.',
+        'Messages can only be edited within 15 minutes of sending.',
     'delete_window_closed':
-        'Messages can only be deleted within 3 minutes of sending.',
+        'Messages can only be deleted for everyone within 48 hours of sending.',
     'message_deleted': 'This message was already deleted.',
     'not_message_sender': 'You can only change your own messages.',
+    // Message features (batch 4)
+    'reply_target_invalid': 'That message can\'t be replied to any more.',
+    'forward_limit': 'This message has been forwarded too many times.',
+    'forward_blocked_by_org':
+        'Your organization doesn\'t allow forwarding messages outside it.',
+    'message_not_forwardable': 'This message can\'t be forwarded.',
+    'message_not_starrable': 'This message can\'t be starred.',
+    'message_not_pinnable': 'This message can\'t be pinned.',
+    'invalid_pin_duration': 'Pick 24 hours, 7 days or 30 days.',
+    'mention_not_member': 'You can only mention people in this chat.',
+    'too_many_mentions': 'That\'s too many mentions for one message.',
+    'link_previews_disabled': 'Link previews are off in your privacy settings.',
+    'invalid_url': 'That link doesn\'t look right.',
+    'url_not_allowed': 'That link can\'t be previewed.',
+    'too_large': 'That page is too large to preview.',
+    'fetch_failed': 'We couldn\'t reach that link.',
+    'not_html': 'That link has nothing to preview.',
+    'report_not_found': 'We couldn\'t find that report.',
+    'before_and_before_date_exclusive': 'Pick one date to jump to.',
     // Auth / OTP
     'otp_expired': 'That code has expired. Tap "Resend code" and try again.',
     'otp_invalid':

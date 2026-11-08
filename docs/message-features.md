@@ -107,7 +107,9 @@ response. `allow_copy` is enforced by the client (hide Copy); the server stores 
   it for real and fans out `message_unpinned`. Deleting the pinned message
   clears the pin.
 * `ConversationOut` (list / create / pin responses) carries `pinned_message_id`
-  and `pinned_until`.
+  and `pinned_until`, plus `group_id` (the `groups` row of a network group
+  chat; null for direct and legacy org group chats) so a thread opened from
+  the chat list can load members for @mentions and admin actions.
 
 ## G. Delete for everyone
 

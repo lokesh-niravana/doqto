@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
@@ -20,6 +21,7 @@ import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
 import '../../../core/utils/datetime_format.dart';
 import '../../../core/utils/error_messages.dart';
+import '../../../core/utils/rich_text.dart';
 import '../../../data/api/api_client.dart';
 import '../../../data/models/conversation.dart';
 import '../../../data/models/group.dart';
@@ -33,6 +35,7 @@ import '../../../state/groups_state.dart';
 import '../../../state/notification_state.dart';
 import '../../../state/org_state.dart';
 import '../../../state/presence_state.dart';
+import '../../../state/link_preview_state.dart';
 import '../../widgets/app_pressable.dart';
 import '../../widgets/attachment_bubbles.dart';
 import '../../widgets/connectivity_banner.dart';
@@ -41,11 +44,31 @@ import '../../widgets/emoji_picker_sheet.dart';
 import '../../widgets/inline_banner.dart';
 import '../../widgets/message_bubble.dart';
 import '../../widgets/message_receipts_sheet.dart';
+import '../../widgets/external_link_confirm.dart';
+import '../../widgets/link_preview_card.dart';
+import '../../widgets/mention_autocomplete.dart';
+import '../../widgets/mention_controller.dart';
+import '../../widgets/message_context_menu.dart';
+import '../../widgets/message_text.dart';
+import '../../widgets/pinned_banner.dart';
+import '../../widgets/quote_strip.dart';
 import '../../widgets/reactions.dart';
+import '../../widgets/report_message_sheet.dart';
+import '../../widgets/settings_rows.dart';
+import '../../widgets/swipe_to_reply.dart';
 import '../../widgets/typing_indicator.dart';
+import '../../widgets/unread_divider.dart';
 import '../../widgets/voice_note_bubble.dart';
 import '_conversation_display.dart';
+import 'forward_picker_sheet.dart';
 import 'voice_recorder_panel.dart';
+
+/// Pin durations — mirror of PIN_DURATIONS_SEC on the backend.
+const List<(int, String)> kPinDurations = [
+  (86400, '24 hours'),
+  (604800, '7 days'),
+  (2592000, '30 days'),
+];
 
 class ChatThreadScreen extends ConsumerStatefulWidget {
   final String conversationId;
@@ -54,10 +77,14 @@ class ChatThreadScreen extends ConsumerStatefulWidget {
   /// it (the group route). Otherwise it comes from the conversation.
   final String? groupId;
 
+  /// Open scrolled to (and highlighting) this message — the starred list.
+  final String? initialMessageId;
+
   const ChatThreadScreen({
     super.key,
     required this.conversationId,
     this.groupId,
+    this.initialMessageId,
   });
 
   @override
@@ -66,7 +93,7 @@ class ChatThreadScreen extends ConsumerStatefulWidget {
 
 class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     with WidgetsBindingObserver {
-  final _input = TextEditingController();
+  final _input = MentionController();
   final _scroll = ScrollController();
   bool _showRecorder = false;
   bool _typing = false;
@@ -74,6 +101,38 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   Timer? _typingPing;
   // Composer edit mode: the sent message whose text is being replaced.
   Message? _editing;
+
+  // ---- Batch 4 ------------------------------------------------------------
+  // Composer reply mode: the message the next send quotes.
+  ReplyPreview? _replyingTo;
+  // One GlobalKey per message row so a jump can bring it into view.
+  final _rowKeys = <String, GlobalKey>{};
+  // The row a jump landed on (quote tap, pin banner, search hit): amber outline
+  // that clears after a moment.
+  String? _highlightId;
+  Timer? _highlightTimer;
+  bool _jumping = false;
+  // In-chat search (on-device over loaded pages).
+  bool _searching = false;
+  final _searchInput = TextEditingController();
+  final _searchFocus = FocusNode();
+  Timer? _searchDebounce;
+  String _searchQuery = '';
+  List<String> _hits = const [];
+  int _hitIndex = -1;
+  bool _searchBusy = false;
+  // Jump to first unread: the unread count when the thread opened and the
+  // message the divider sits above (oldest unread).
+  int? _unreadAtOpen;
+  String? _unreadDividerId;
+  bool _unreadResolved = false;
+  bool _initialJumpDone = false;
+  // Composer link preview (debounced while typing; dismissable per URL).
+  Timer? _previewDebounce;
+  String? _composerPreviewUrl;
+  String? _dismissedPreviewUrl;
+  // @mention autocomplete (groups): the query under the caret, if any.
+  ({String query, int start})? _mentionActive;
   // Draft (batch 3): unsent text survives leaving the thread. Saved a beat
   // after typing stops and again on dispose; cleared on send.
   Timer? _draftSave;
@@ -141,9 +200,19 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     _ws = ref.read(websocketClientProvider);
     _drafts = ref.read(draftsProvider.notifier);
     _activeChat = ref.read(activeConversationProvider.notifier);
+    // Unread position before opening marks the chat read (jump to unread).
+    _unreadAtOpen = ref
+        .read(conversationsProvider.notifier)
+        .conversation(widget.conversationId)
+        ?.unreadCount;
+    if ((_unreadAtOpen ?? 0) == 0 || widget.initialMessageId != null) {
+      _unreadResolved = true;
+    }
     // Restore an unsent draft (encrypted cache) exactly as it was left.
     final draft = ref.read(draftsProvider)[widget.conversationId];
     if (draft != null && draft.isNotEmpty) {
+      // Drafts hold the wire form; names resolve once members are known
+      // (see [_restoreDraftMentions]).
       _input.text = draft;
       _hasText = draft.trim().isNotEmpty;
       _input.selection = TextSelection.collapsed(offset: draft.length);
@@ -178,9 +247,14 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _draftSave?.cancel();
+    _highlightTimer?.cancel();
+    _searchDebounce?.cancel();
+    _previewDebounce?.cancel();
+    _searchInput.dispose();
+    _searchFocus.dispose();
     // Providers must not change while the tree is being torn down; the
     // values are read now and written a microtask later.
-    final draft = _editing == null ? _input.text : _draftBeforeEdit;
+    final draft = _editing == null ? _input.wireText : _draftBeforeEdit;
     final convId = widget.conversationId;
     scheduleMicrotask(() {
       // The container itself may be gone when the whole app is torn down
@@ -255,13 +329,42 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     return sel.first;
   }
 
-  /// WhatsApp's dialog: "Delete for me" always; "Delete for everyone" only
-  /// when every selected message is mine and inside the 3-minute window.
+  /// Owner / admin of a network group: may delete anyone's message at any
+  /// age (server `can_moderate`) and pin.
+  bool get _isGroupAdmin {
+    final groupId = _groupId;
+    if (groupId == null) return false;
+    return ref.read(groupDetailProvider(groupId)).asData?.value.canManage ?? false;
+  }
+
+  Conversation? get _conv =>
+      ref.read(conversationsProvider.notifier).conversation(widget.conversationId);
+
+  /// The group behind this thread: passed in from the Groups tab, or the
+  /// `group_id` the conversation carries when the chat list opened it. Null
+  /// for direct and legacy org group chats.
+  String? get _groupId => widget.groupId ?? _conv?.groupId;
+
+  /// Org policy `allow_copy` (batch 4): hidden when my org forbids copying
+  /// and this chat belongs to it.
+  bool get _allowCopy {
+    final org = ref.read(orgProvider).current;
+    if (org == null || org.policies.allowCopy) return true;
+    final conv = _conv;
+    final groupId = _groupId;
+    final group = groupId == null ? null : ref.read(groupDetailProvider(groupId)).asData?.value;
+    return conv?.orgId != org.id && group?.orgId != org.id;
+  }
+
+  /// WhatsApp's dialog: "Delete for me" always; "Delete for everyone" when
+  /// every selected message is mine and inside the 48-hour window — or I am
+  /// a group admin.
   Future<void> _deleteSelected() async {
     final me = ref.read(authProvider).user?.id;
     final sel = _selectedMessages();
     if (me == null || sel.isEmpty) return;
-    final forEveryone = sel.every((m) => m.canDelete(me: me));
+    final admin = _isGroupAdmin;
+    final forEveryone = sel.every((m) => m.canDelete(me: me, isAdmin: admin));
     final choice = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -328,10 +431,13 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   }
 
   /// Selection-mode app bar: count, info (single own message), pencil
-  /// (single editable), trash.
+  /// (single editable), forward, star, trash.
   PreferredSizeWidget _selectionBar() {
     final editable = _editable();
     final infoable = _infoable();
+    final sel = _selectedMessages();
+    final forwardable = sel.isNotEmpty && sel.every((m) => m.canForward);
+    final starrable = sel.isNotEmpty && sel.every((m) => m.canStar);
     return AppBar(
       leading: IconButton(
         key: const ValueKey('select-close'),
@@ -340,6 +446,31 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       ),
       title: Text('${_selected.length}'),
       actions: [
+        if (forwardable)
+          IconButton(
+            key: const ValueKey('select-forward'),
+            icon: const Icon(Icons.shortcut_rounded),
+            tooltip: Strings.chatForward,
+            onPressed: () {
+              final picked = _selectedMessages();
+              _clearSelection();
+              _forward(picked);
+            },
+          ),
+        if (starrable)
+          IconButton(
+            key: const ValueKey('select-star'),
+            icon: Icon(sel.every((m) => m.starred) ? Icons.star_rounded : Icons.star_border_rounded),
+            tooltip: Strings.chatStar,
+            onPressed: () {
+              final picked = _selectedMessages();
+              final unstar = picked.every((m) => m.starred);
+              _clearSelection();
+              for (final m in picked) {
+                _star(m, !unstar);
+              }
+            },
+          ),
         if (infoable != null)
           IconButton(
             key: const ValueKey('select-info'),
@@ -370,10 +501,10 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     if (_editing == null) _draftBeforeEdit = _input.text;
     setState(() {
       _editing = m;
-      _input.text = m.content ?? '';
+      _replyingTo = null;
+      _input.setFromWire(m.content ?? '', _nameFor);
       _hasText = _input.text.trim().isNotEmpty;
     });
-    _input.selection = TextSelection.collapsed(offset: _input.text.length);
   }
 
   void _cancelEdit() {
@@ -483,7 +614,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     _draftSave?.cancel();
     _draftSave = Timer(const Duration(milliseconds: 400), () {
       if (!mounted) return;
-      ref.read(draftsProvider.notifier).set(widget.conversationId, value);
+      ref.read(draftsProvider.notifier).set(widget.conversationId, _input.wireText);
     });
   }
 
@@ -491,6 +622,8 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     final hasText = value.trim().isNotEmpty;
     if (hasText != _hasText) setState(() => _hasText = hasText);
     _saveDraftSoon(value);
+    _updateMentionState();
+    _updateComposerPreview(value);
     if (hasText) {
       if (!_typing) {
         _typing = true;
@@ -507,20 +640,570 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   }
 
   Future<void> _send() async {
-    final text = _input.text.trim();
+    final text = _input.wireText.trim();
     if (text.isEmpty) return;
     final editing = _editing;
     if (editing != null) {
       return _submitEdit(editing, text);
     }
+    final replyTo = _replyingTo;
     _input.clear();
-    setState(() => _hasText = false); // clear() doesn't fire onChanged
+    setState(() {
+      _hasText = false; // clear() doesn't fire onChanged
+      _replyingTo = null;
+      _composerPreviewUrl = null;
+      _dismissedPreviewUrl = null;
+      _mentionActive = null;
+    });
     _stopTyping();
     _draftSave?.cancel();
     unawaited(ref.read(draftsProvider.notifier).clear(widget.conversationId));
     await ref
         .read(messagesProvider(widget.conversationId).notifier)
-        .sendText(text);
+        .sendText(text, replyTo: replyTo);
+  }
+
+  // ---- Batch 4: reply / forward / star / pin / copy / report ---------------
+
+  /// Name shown for [uid] in quotes, mentions, the pin banner. Null when we
+  /// don't know them (a former member).
+  String? _nameFor(String uid) {
+    if (uid == ref.read(authProvider).user?.id) return Strings.chatYou;
+    final member = _members[uid];
+    if (member != null) return member.fullName;
+    if (_members.isEmpty && uid != ref.read(authProvider).user?.id) return _peerName;
+    return null;
+  }
+
+  String _quoteSender(ReplyPreview q) => _nameFor(q.senderId) ?? 'Former member';
+
+  void _startReply(Message m) {
+    if (!m.canReply) return;
+    if (_editing != null) _cancelEdit();
+    setState(() => _replyingTo = ReplyPreview.of(m));
+    HapticFeedback.selectionClick();
+  }
+
+  void _cancelReply() => setState(() => _replyingTo = null);
+
+  /// Long-press: WhatsApp-style sheet — reaction tray on top, then every
+  /// action that applies to this message.
+  Future<void> _onLongPress(Message m) async {
+    final me = ref.read(authProvider).user?.id;
+    if (me == null) return;
+    HapticFeedback.mediumImpact();
+    final conv = _conv;
+    final pinned = conv?.activePinnedMessageId() == m.id;
+    final canPin = conv != null &&
+        (conv.type != ConversationType.group || _isGroupAdmin || _groupId == null);
+    final own = m.senderId == me && m.status == MessageStatus.sent;
+    final actions = <MessageAction>[
+      if (m.canReply) MessageAction.reply,
+      if (m.canForward) MessageAction.forward,
+      if (m.type == MessageType.text && !m.isDeleted && _allowCopy) MessageAction.copy,
+      if (m.canStar) (m.starred ? MessageAction.unstar : MessageAction.star),
+      if (m.canPin && canPin) (pinned ? MessageAction.unpin : MessageAction.pin),
+      if (own && !m.isDeleted) MessageAction.info,
+      if (m.canEdit(me: me)) MessageAction.edit,
+      if (!m.isDeleted || own) MessageAction.delete,
+      if (!own && !m.isDeleted && m.type != MessageType.system) MessageAction.report,
+      MessageAction.select,
+    ];
+    final result = await showMessageContextMenu(
+      context,
+      actions: actions,
+      reactable: m.canReact,
+      currentReaction: m.myReaction(me),
+    );
+    if (!mounted || result == null) return;
+    switch (result) {
+      case ContextMenuReaction(:final emoji):
+        if (emoji == null) {
+          await _moreReactions(m.id);
+        } else {
+          await _react(m.id, emoji);
+        }
+      case ContextMenuAction(:final action):
+        switch (action) {
+          case MessageAction.reply:
+            _startReply(m);
+          case MessageAction.forward:
+            await _forward([m]);
+          case MessageAction.copy:
+            await _copy(m);
+          case MessageAction.star:
+            await _star(m, true);
+          case MessageAction.unstar:
+            await _star(m, false);
+          case MessageAction.pin:
+            await _pin(m);
+          case MessageAction.unpin:
+            await _unpin();
+          case MessageAction.info:
+            showMessageReceiptsSheet(context: context, message: m);
+          case MessageAction.edit:
+            _startEdit(m);
+          case MessageAction.delete:
+            setState(() => _selected.add(m.id));
+            await _deleteSelected();
+          case MessageAction.report:
+            await _report(m);
+          case MessageAction.select:
+            setState(() => _selected.add(m.id));
+        }
+    }
+  }
+
+  Future<void> _copy(Message m) async {
+    final text = (m.content ?? '').replaceAllMapped(
+      mentionTokenPattern,
+      (x) => '@${_nameFor(x.group(1)!.toLowerCase()) ?? 'someone'}',
+    );
+    await ref.read(clipboardProvider).copy(text);
+    _toast(Strings.chatCopied);
+  }
+
+  Future<void> _star(Message m, bool starred) async {
+    try {
+      await ref.read(messagesProvider(widget.conversationId).notifier).star(m.id, starred);
+      _toast(starred ? Strings.chatStarredToast : Strings.chatUnstarredToast);
+    } catch (e) {
+      _toast(ErrorMessages.forApi(e));
+    }
+  }
+
+  Future<void> _pin(Message m) async {
+    final picked = await showChoiceSheet<int>(
+      context,
+      title: Strings.chatPinTitle,
+      subtitle: Strings.chatPinHint,
+      options: kPinDurations,
+      wire: (v) => '$v',
+      value: 2592000,
+      keyPrefix: 'pin',
+      field: 'duration',
+    );
+    if (picked == null || !mounted) return;
+    try {
+      await ref
+          .read(conversationsProvider.notifier)
+          .pinMessage(widget.conversationId, m.id, picked.$1);
+      _toast(Strings.chatPinnedToastMessage);
+    } catch (e) {
+      _toast(ErrorMessages.forApi(e));
+    }
+  }
+
+  Future<void> _unpin() async {
+    try {
+      await ref.read(conversationsProvider.notifier).unpinMessage(widget.conversationId);
+      _toast(Strings.chatUnpinnedToastMessage);
+    } catch (e) {
+      _toast(ErrorMessages.forApi(e));
+    }
+  }
+
+  Future<void> _forward(List<Message> messages) async {
+    final targets = await showForwardPicker(context, excludeConversationId: widget.conversationId);
+    if (targets == null || targets.isEmpty || !mounted) return;
+    try {
+      final repo = ref.read(chatRepositoryProvider);
+      final convIds = <String>[];
+      for (final t in targets) {
+        if (t.conversationId != null) {
+          convIds.add(t.conversationId!);
+        } else if (t.userId != null) {
+          // A person without a chat yet: open (or reuse) the direct chat.
+          final c = await repo.createConversation(
+            type: ConversationType.direct,
+            name: null,
+            memberIds: [t.userId!],
+          );
+          convIds.add(c.id);
+        }
+      }
+      await ref
+          .read(messagesProvider(widget.conversationId).notifier)
+          .forward([for (final m in messages) m.id], convIds);
+      unawaited(ref.read(conversationsProvider.notifier).refresh());
+      _toast(Strings.chatForwardedToast);
+    } catch (e) {
+      _toast(ErrorMessages.forApi(e));
+    }
+  }
+
+  Future<void> _report(Message m) async {
+    final report = await showReportMessageSheet(context);
+    if (report == null || !mounted) return;
+    // Context: this message and the few before it — ids only, never bodies.
+    final all = ref.read(messagesProvider(widget.conversationId)).value ?? const <Message>[];
+    final i = all.indexWhere((x) => x.id == m.id);
+    final context5 = <String>[
+      for (final x in (i < 0 ? [m] : all.skip(i).take(5)))
+        if (x.status == MessageStatus.sent && x.type != MessageType.system) x.id,
+    ];
+    try {
+      await ref.read(networkRepositoryProvider).report(
+            subjectType: 'message',
+            subjectId: m.id,
+            reason: report.reason.wire,
+            details: report.details,
+            contextMessageIds: context5,
+          );
+      _toast(Strings.chatReportedToast);
+    } catch (e) {
+      _toast(ErrorMessages.forApi(e));
+    }
+  }
+
+  // ---- Batch 4: links / mentions -----------------------------------------
+
+  Future<void> _openLink(String href) async {
+    await confirmAndOpenExternal(context, url: href, opener: ref.read(urlOpenerProvider));
+  }
+
+  Future<void> _callNumber(String digits) async {
+    await confirmAndOpenExternal(
+      context,
+      url: 'tel:$digits',
+      opener: ref.read(urlOpenerProvider),
+      isPhone: true,
+    );
+  }
+
+  void _openProfile(String userId) {
+    if (userId == ref.read(authProvider).user?.id) return;
+    context.push(AppRoutes.person(userId));
+  }
+
+  void _updateMentionState() {
+    final next = _groupId == null ? null : _input.activeMention();
+    final changed = (next == null) != (_mentionActive == null) ||
+        next?.query != _mentionActive?.query;
+    if (changed) setState(() => _mentionActive = next);
+  }
+
+  void _pickMention(GroupMember m) {
+    _input.insertMention(userId: m.userId, name: m.fullName);
+    setState(() {
+      _mentionActive = null;
+      _hasText = true;
+    });
+    _saveDraftSoon(_input.text);
+  }
+
+  /// A restored draft carries `@[uuid]` tokens; turn them into chips once the
+  /// member list is here.
+  bool _draftMentionsRestored = false;
+  void _restoreDraftMentions() {
+    if (_draftMentionsRestored || _members.isEmpty) return;
+    _draftMentionsRestored = true;
+    if (!mentionTokenPattern.hasMatch(_input.text)) return;
+    _input.setFromWire(_input.text, _nameFor);
+  }
+
+  void _updateComposerPreview(String value) {
+    _previewDebounce?.cancel();
+    _previewDebounce = Timer(const Duration(milliseconds: 600), () {
+      if (!mounted) return;
+      final urls = extractUrls(value);
+      final first = urls.isEmpty ? null : urls.first;
+      final next = first == _dismissedPreviewUrl ? null : first;
+      if (next != _composerPreviewUrl) setState(() => _composerPreviewUrl = next);
+    });
+  }
+
+  /// Formatting toolbar on text selection: Bold / Italic / Strike / Mono
+  /// insert the WhatsApp markers around the selection.
+  Widget _composerContextMenu(BuildContext context, EditableTextState state) {
+    void wrap(String marker) {
+      final v = _input.value;
+      final r = wrapSelection(v.text, v.selection.start, v.selection.end, marker);
+      _input.value = TextEditingValue(
+        text: r.text,
+        selection: TextSelection(baseOffset: r.start, extentOffset: r.end),
+      );
+      _onInputChanged(r.text);
+      ContextMenuController.removeAny();
+    }
+    final items = [
+      ...state.contextMenuButtonItems,
+      ContextMenuButtonItem(label: Strings.chatFormatBold, onPressed: () => wrap('*')),
+      ContextMenuButtonItem(label: Strings.chatFormatItalic, onPressed: () => wrap('_')),
+      ContextMenuButtonItem(label: Strings.chatFormatStrike, onPressed: () => wrap('~')),
+      ContextMenuButtonItem(label: Strings.chatFormatMono, onPressed: () => wrap('`')),
+    ];
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: state.contextMenuAnchors,
+      buttonItems: items,
+    );
+  }
+
+  // ---- Batch 4: jumping, search, unread --------------------------------------
+
+  GlobalKey _rowKey(String id) => _rowKeys.putIfAbsent(id, GlobalKey.new);
+
+  void _highlight(String id) {
+    _highlightTimer?.cancel();
+    setState(() => _highlightId = id);
+    _highlightTimer = Timer(const Duration(milliseconds: 1800), () {
+      if (mounted && _highlightId == id) setState(() => _highlightId = null);
+    });
+  }
+
+  /// Bring [messageId] into view: load older pages until it is held, then
+  /// step the list up until its row is built and ensureVisible can finish.
+  Future<bool> _jumpTo(String messageId, {double alignment = 0.5, bool highlight = true}) async {
+    if (_jumping) return false;
+    _jumping = true;
+    try {
+      final notifier = ref.read(messagesProvider(widget.conversationId).notifier);
+      if (!await notifier.ensureLoaded(messageId)) return false;
+      if (!mounted) return false;
+      for (var step = 0; step < 400; step++) {
+        final ctx = _rowKey(messageId).currentContext;
+        if (ctx != null && ctx.mounted) {
+          await Scrollable.ensureVisible(
+            ctx,
+            alignment: alignment,
+            duration: AppMotion.reduced(context) ? Duration.zero : AppMotion.micro,
+          );
+          if (highlight && mounted) _highlight(messageId);
+          return true;
+        }
+        if (!_scroll.hasClients) return false;
+        final pos = _scroll.position;
+        if (pos.pixels >= pos.maxScrollExtent - 1) {
+          // At the very top and still not built: one more frame for layout.
+          await WidgetsBinding.instance.endOfFrame;
+          if (_rowKey(messageId).currentContext == null) return false;
+          continue;
+        }
+        _scroll.jumpTo((pos.pixels + pos.viewportDimension * 0.9).clamp(0, pos.maxScrollExtent));
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted) return false;
+      }
+      return false;
+    } finally {
+      _jumping = false;
+    }
+  }
+
+  /// Work out where the "N unread" divider goes (oldest unread message) and
+  /// scroll there. Runs once, after the first page is on screen.
+  Future<void> _resolveUnread(List<Message> msgs, String? me) async {
+    if (_unreadResolved) return;
+    _unreadResolved = true;
+    final n = _unreadAtOpen ?? 0;
+    if (n <= 0 || me == null) return;
+    final notifier = ref.read(messagesProvider(widget.conversationId).notifier);
+    String? oldestUnread(List<Message> list) {
+      var count = 0;
+      for (final m in list) {
+        if (m.senderId == me || m.type == MessageType.system || m.isDeleted) continue;
+        count++;
+        if (count == n) return m.id;
+      }
+      return null;
+    }
+    var id = oldestUnread(msgs);
+    if (id == null) {
+      await notifier.loadOlderWhile((loaded) => oldestUnread(loaded) == null);
+      id = oldestUnread(ref.read(messagesProvider(widget.conversationId)).value ?? const []);
+    }
+    if (id == null || !mounted) return;
+    setState(() => _unreadDividerId = id);
+    await WidgetsBinding.instance.endOfFrame;
+    if (mounted) await _jumpTo(id, alignment: 0.85, highlight: false);
+  }
+
+  void _enterSearch() {
+    setState(() {
+      _searching = true;
+      _searchQuery = '';
+      _hits = const [];
+      _hitIndex = -1;
+    });
+    _searchInput.clear();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
+  }
+
+  void _exitSearch() {
+    _searchDebounce?.cancel();
+    _searchFocus.unfocus();
+    setState(() {
+      _searching = false;
+      _searchQuery = '';
+      _hits = const [];
+      _hitIndex = -1;
+      _highlightId = null;
+    });
+  }
+
+  static bool _matches(Message m, String q) {
+    if (m.isDeleted || m.status != MessageStatus.sent) return false;
+    final hay = switch (m.type) {
+      MessageType.text => plainText(m.content ?? ''),
+      MessageType.file => m.fileName ?? '',
+      MessageType.voiceNote => m.transcript ?? '',
+      _ => '',
+    };
+    return hay.toLowerCase().contains(q);
+  }
+
+  List<String> _findHits(List<Message> msgs, String q) =>
+      [for (final m in msgs) if (_matches(m, q)) m.id];
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 350), () => _runSearch(value));
+  }
+
+  Future<void> _runSearch(String value) async {
+    final q = value.trim().toLowerCase();
+    if (!mounted) return;
+    if (q.isEmpty) {
+      setState(() {
+        _searchQuery = '';
+        _hits = const [];
+        _hitIndex = -1;
+      });
+      return;
+    }
+    setState(() {
+      _searchQuery = q;
+      _searchBusy = true;
+    });
+    final notifier = ref.read(messagesProvider(widget.conversationId).notifier);
+    var hits = _findHits(ref.read(messagesProvider(widget.conversationId)).value ?? const [], q);
+    if (hits.isEmpty) {
+      // Nothing on screen: pull older pages until a hit or history ends.
+      await notifier.loadOlderWhile((loaded) => _findHits(loaded, q).isEmpty);
+      hits = _findHits(ref.read(messagesProvider(widget.conversationId)).value ?? const [], q);
+    }
+    if (!mounted || _searchQuery != q) return;
+    setState(() {
+      _hits = hits;
+      _hitIndex = hits.isEmpty ? -1 : 0;
+      _searchBusy = false;
+    });
+    if (hits.isNotEmpty) await _jumpTo(hits.first);
+  }
+
+  /// Older hit (up arrow). Past the last loaded hit, pull more history.
+  Future<void> _searchOlder() async {
+    if (_searchQuery.isEmpty || _searchBusy) return;
+    if (_hitIndex + 1 < _hits.length) {
+      setState(() => _hitIndex++);
+      await _jumpTo(_hits[_hitIndex]);
+      return;
+    }
+    final notifier = ref.read(messagesProvider(widget.conversationId).notifier);
+    if (!notifier.hasMore) return;
+    setState(() => _searchBusy = true);
+    final before = _hits.length;
+    await notifier.loadOlderWhile(
+      (loaded) => _findHits(loaded, _searchQuery).length <= before,
+    );
+    if (!mounted) return;
+    final hits = _findHits(ref.read(messagesProvider(widget.conversationId)).value ?? const [], _searchQuery);
+    setState(() {
+      _hits = hits;
+      _searchBusy = false;
+      if (hits.length > before) _hitIndex = before;
+    });
+    if (hits.length > before) await _jumpTo(hits[before]);
+  }
+
+  Future<void> _searchNewer() async {
+    if (_hitIndex <= 0) return;
+    setState(() => _hitIndex--);
+    await _jumpTo(_hits[_hitIndex]);
+  }
+
+  Future<void> _jumpToDate() async {
+    final conv = _conv;
+    final now = DateTime.now();
+    final first = conv?.createdAt.toLocal() ?? now.subtract(const Duration(days: 365));
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: now,
+      firstDate: DateTime(first.year, first.month, first.day),
+      lastDate: now,
+      helpText: Strings.chatJumpToDate.toUpperCase(),
+    );
+    if (picked == null || !mounted) return;
+    final id = await ref
+        .read(messagesProvider(widget.conversationId).notifier)
+        .jumpToDate(DateTime.utc(picked.year, picked.month, picked.day));
+    if (!mounted) return;
+    if (id == null) {
+      _toast(Strings.chatJumpToDateNone);
+      return;
+    }
+    await _jumpTo(id);
+  }
+
+  /// Search-mode app bar: query field, hit counter, older / newer, calendar.
+  PreferredSizeWidget _searchBar() {
+    final counter = _searchQuery.isEmpty
+        ? ''
+        : _hits.isEmpty
+            ? Strings.chatSearchNone
+            : '${_hitIndex + 1}/${_hits.length}';
+    return AppBar(
+      leading: IconButton(
+        key: const ValueKey('search-close'),
+        icon: const Icon(Icons.arrow_back),
+        onPressed: _exitSearch,
+      ),
+      titleSpacing: 0,
+      title: TextField(
+        key: const ValueKey('thread-search-field'),
+        controller: _searchInput,
+        focusNode: _searchFocus,
+        autofocus: true,
+        textInputAction: TextInputAction.search,
+        onTapOutside: (_) => _searchFocus.unfocus(),
+        decoration: const InputDecoration(
+          hintText: Strings.chatSearchHint,
+          border: InputBorder.none,
+          isDense: true,
+        ),
+        onChanged: _onSearchChanged,
+        onSubmitted: (v) => _runSearch(v),
+      ),
+      actions: [
+        if (_searchBusy)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+            child: Center(child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))),
+          )
+        else if (counter.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
+            child: Center(child: Text(counter, key: const ValueKey('search-counter'), style: AppText.caption)),
+          ),
+        IconButton(
+          key: const ValueKey('search-older'),
+          tooltip: 'Older',
+          icon: const Icon(Icons.keyboard_arrow_up_rounded),
+          onPressed: _searchQuery.isEmpty ? null : _searchOlder,
+        ),
+        IconButton(
+          key: const ValueKey('search-newer'),
+          tooltip: 'Newer',
+          icon: const Icon(Icons.keyboard_arrow_down_rounded),
+          onPressed: _hitIndex > 0 ? _searchNewer : null,
+        ),
+        IconButton(
+          key: const ValueKey('search-calendar'),
+          tooltip: Strings.chatJumpToDate,
+          icon: const Icon(Icons.calendar_month_outlined),
+          onPressed: _jumpToDate,
+        ),
+      ],
+    );
   }
 
   // ---- Scheduled send (long-press on the send button) ---------------------
@@ -948,6 +1631,12 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       horizontal: AppSpacing.screenHorizontal + AppSpacing.sm,
     );
     Widget content = AbsorbPointer(absorbing: _selecting, child: row);
+    if (_unreadDividerId == m.id) {
+      content = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [UnreadDivider(count: _unreadAtOpen ?? 0), content],
+      );
+    }
     if (m.reactions.isNotEmpty && !m.isDeleted) {
       content = Column(
         mainAxisSize: MainAxisSize.min,
@@ -973,40 +1662,24 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         ],
       );
     }
-    if (selected && _selected.length == 1 && m.canReact) {
-      content = Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Align(
-            alignment: side,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.screenHorizontal, AppSpacing.xs,
-                AppSpacing.screenHorizontal, AppSpacing.xs,
-              ),
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: ReactionTray(
-                  current: me == null ? null : m.myReaction(me),
-                  onPick: (e) => _react(m.id, e),
-                  onMore: () => _moreReactions(m.id),
-                ),
-              ),
-            ),
-          ),
-          content,
-        ],
-      );
-    }
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onLongPress: _selecting ? null : () => _toggleSelect(m),
-      onTap: _selecting ? () => _toggleSelect(m) : null,
-      child: ColoredBox(
-        color: selected
-            ? AppColors.medBlue.withValues(alpha: 0.18)
-            : Colors.transparent,
-        child: content,
+    final highlighted = _highlightId == m.id;
+    return SwipeToReply(
+      enabled: !_selecting && !m.isDeleted,
+      onReply: m.canReply ? () => _startReply(m) : null,
+      child: GestureDetector(
+        key: _rowKey(m.id),
+        behavior: HitTestBehavior.opaque,
+        onLongPress: _selecting ? null : () => _onLongPress(m),
+        onTap: _selecting ? () => _toggleSelect(m) : null,
+        child: AnimatedContainer(
+          duration: AppMotion.maybe(context, AppMotion.base),
+          color: selected
+              ? AppColors.medBlue.withValues(alpha: 0.18)
+              : highlighted
+                  ? AppColors.amber.withValues(alpha: 0.18)
+                  : Colors.transparent,
+          child: content,
+        ),
       ),
     );
   }
@@ -1121,6 +1794,72 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       }
       return bubble;
     }
+    if (m.type != MessageType.text) {
+      return _decorateMedia(m, isMine, _buildMediaBubble(m, isMine));
+    }
+    return _buildTextBubble(m, isMine, grouped, sender);
+  }
+
+  static String? _forwardedLabel(Message m) => !m.forwarded
+      ? null
+      : m.forwardedManyTimes
+          ? Strings.chatForwardedManyTimes
+          : Strings.chatForwarded;
+
+  /// Media bubbles don't know about quotes / forwards / stars: the label goes
+  /// above and the star sits in the corner.
+  Widget _decorateMedia(Message m, bool isMine, Widget bubble) {
+    final label = _forwardedLabel(m);
+    if (label == null && !m.starred && m.replyTo == null) return bubble;
+    final side = isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+    return Column(
+      crossAxisAlignment: side,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (label != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(AppSpacing.lg + AppSpacing.xs, AppSpacing.xs, AppSpacing.lg + AppSpacing.xs, 0),
+            child: Row(
+              key: const ValueKey('forwarded-label'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.shortcut_rounded, size: 13, color: AppColors.textMuted),
+                const SizedBox(width: 3),
+                Text(label, style: AppText.timestamp.copyWith(color: AppColors.textMuted, fontStyle: FontStyle.italic)),
+              ],
+            ),
+          ),
+        if (m.replyTo != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.72),
+              child: QuoteStrip(
+                quote: m.replyTo,
+                senderName: _quoteSender(m.replyTo!),
+                isMine: false,
+                nameFor: _nameFor,
+                onTap: () => _jumpTo(m.replyTo!.id),
+              ),
+            ),
+          ),
+        Stack(
+          children: [
+            bubble,
+            if (m.starred)
+              Positioned(
+                right: isMine ? AppSpacing.lg + 4 : null,
+                left: isMine ? null : AppSpacing.lg + 4,
+                top: AppSpacing.sm,
+                child: const Icon(Icons.star_rounded, key: ValueKey('bubble-star'), size: 14, color: AppColors.amber),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMediaBubble(Message m, bool isMine) {
     if (m.type == MessageType.voiceNote) {
       return VoiceNoteBubble(
         // Key by message id: these bubbles cache a resolved file URL in
@@ -1144,21 +1883,25 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         delivered: m.delivered,
       );
     }
-    if (m.type == MessageType.file) {
-      return FileBubble(
-        key: ValueKey(m.id),
-        messageId: m.id,
-        getFileUrl: () => ref.read(chatRepositoryProvider).fileUrl(m.id),
-        fileName: m.fileName ?? 'File',
-        fileSizeBytes: m.fileSizeBytes,
-        isMine: isMine,
-        timestamp: m.createdAt.toLocal(),
-        read: m.read,
-        delivered: m.delivered,
-      );
-    }
+    return FileBubble(
+      key: ValueKey(m.id),
+      messageId: m.id,
+      getFileUrl: () => ref.read(chatRepositoryProvider).fileUrl(m.id),
+      fileName: m.fileName ?? 'File',
+      fileSizeBytes: m.fileSizeBytes,
+      isMine: isMine,
+      timestamp: m.createdAt.toLocal(),
+      read: m.read,
+      delivered: m.delivered,
+    );
+  }
+
+  Widget _buildTextBubble(Message m, bool isMine, bool grouped, GroupMember? sender) {
+    final content = m.content ?? '[${m.type.wire}]';
+    final urls = extractUrls(content);
+    final showPreview = urls.isNotEmpty && ref.watch(linkPreviewsEnabledProvider);
     final bubble = MessageBubble(
-      text: m.content ?? '[${m.type.wire}]',
+      text: content,
       isMine: isMine,
       timestamp: m.createdAt.toLocal(),
       read: m.read,
@@ -1169,6 +1912,31 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       onEditedTap: () => _showEditHistory(m),
       senderName: sender?.fullName,
       senderColorIndex: sender?.avatarIndex ?? 0,
+      body: MessageText(
+        text: content,
+        style: messageBodyStyle(isMine: isMine),
+        isMine: isMine,
+        nameFor: _nameFor,
+        onMentionTap: _openProfile,
+        onLinkTap: _openLink,
+        onPhoneTap: _callNumber,
+        highlight: _searching ? _searchQuery : null,
+      ),
+      quote: m.replyTo,
+      quoteSenderName: m.replyTo == null ? null : _quoteSender(m.replyTo!),
+      onQuoteTap: m.replyToId == null ? null : () => _jumpTo(m.replyToId!),
+      nameFor: _nameFor,
+      forwardedLabel: _forwardedLabel(m),
+      starred: m.starred,
+      highlighted: _highlightId == m.id,
+      footer: showPreview
+          ? LinkPreviewCard(
+              url: urls.first,
+              isMine: isMine,
+              width: MediaQuery.sizeOf(context).width * 0.72 - AppSpacing.md * 2,
+              onTap: () => _openLink(urls.first),
+            )
+          : null,
     );
     if (m.status == MessageStatus.failed && m.clientId != null) {
       return AppPressable(
@@ -1255,6 +2023,14 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         group != null && group.isMember && !group.canPost;
     _members = {for (final m in members) m.userId: m};
     _peerName = groupId == null ? display?.title : null;
+    _restoreDraftMentions();
+    // Pin banner: the shared pinned message, when the pin hasn't lapsed.
+    final pinnedId = conv?.activePinnedMessageId();
+    final pinnedMsg = pinnedId == null
+        ? null
+        : (async.asData?.value ?? const <Message>[]).where((m) => m.id == pinnedId).firstOrNull;
+    final canUnpin = conv != null &&
+        (conv.type != ConversationType.group || conv.groupId == null || (group?.canManage ?? false));
     // Direct chat: "online" or "last seen …" under the name, from what the
     // peer's privacy settings let me see (nothing → no line at all).
     final peerId = groupId == null && conv != null
@@ -1279,15 +2055,30 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         : _memberLine(members, me?.id);
 
     return PopScope(
-      canPop: !_selecting,
+      canPop: !_selecting && !_searching,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _clearSelection();
+        if (didPop) return;
+        if (_searching) {
+          _exitSearch();
+        } else {
+          _clearSelection();
+        }
       },
       child: Scaffold(
         appBar: _selecting
             ? _selectionBar()
+            : _searching
+            ? _searchBar()
             : AppBar(
                 titleSpacing: 0,
+                actions: [
+                  IconButton(
+                    key: const ValueKey('thread-search'),
+                    tooltip: Strings.chatSearch,
+                    icon: const Icon(Icons.search),
+                    onPressed: _enterSearch,
+                  ),
+                ],
                 title: display == null
                     ? const Text('Chat')
                     : InkWell(
@@ -1344,11 +2135,31 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         body: Column(
           children: [
             const ConnectivityBanner(),
+            if (pinnedId != null)
+              PinnedBanner(
+                message: pinnedMsg,
+                senderName: pinnedMsg == null ? null : _nameFor(pinnedMsg.senderId),
+                nameFor: _nameFor,
+                onTap: () => _jumpTo(pinnedId),
+                onUnpin: canUnpin ? _unpin : null,
+              ),
             Expanded(
               child: async.when(
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (e, _) => Center(child: Text('$e')),
                 data: (allMsgs) {
+                  if (!_initialJumpDone && allMsgs.isNotEmpty) {
+                    _initialJumpDone = true;
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (!mounted) return;
+                      final target = widget.initialMessageId;
+                      if (target != null) {
+                        _jumpTo(target);
+                      } else {
+                        _resolveUnread(allMsgs, me?.id);
+                      }
+                    });
+                  }
                   // Hide disappearing messages past their expiry even before the
                   // server purge tick; any rebuild re-filters.
                   final now = DateTime.now().toUtc();
@@ -1489,7 +2300,39 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (_mentionActive != null && _members.isNotEmpty)
+              MentionAutocomplete(
+                members: _members.values.toList(),
+                query: _mentionActive!.query,
+                meId: ref.read(authProvider).user?.id,
+                onPick: _pickMention,
+              ),
             if (_editing != null) _editingStrip(_editing!),
+            if (_replyingTo != null && _editing == null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
+                child: QuoteStrip(
+                  key: const ValueKey('composer-reply'),
+                  quote: _replyingTo,
+                  senderName: _quoteSender(_replyingTo!),
+                  isMine: false,
+                  nameFor: _nameFor,
+                  onClose: _cancelReply,
+                ),
+              ),
+            if (_composerPreviewUrl != null && _editing == null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.xs, AppSpacing.md, 0),
+                child: LinkPreviewCard(
+                  key: const ValueKey('composer-link-preview'),
+                  url: _composerPreviewUrl!,
+                  isMine: false,
+                  onClose: () => setState(() {
+                    _dismissedPreviewUrl = _composerPreviewUrl;
+                    _composerPreviewUrl = null;
+                  }),
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.all(AppSpacing.sm),
               child: Row(
@@ -1499,12 +2342,14 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(minHeight: 44),
                       child: TextField(
+                        key: const ValueKey('composer-input'),
                         controller: _input,
                         minLines: 1,
                         maxLines: 5,
                         keyboardType: TextInputType.multiline,
                         textCapitalization: TextCapitalization.sentences,
                         textInputAction: TextInputAction.send,
+                        contextMenuBuilder: _composerContextMenu,
                         onTapOutside: (_) => FocusScope.of(context).unfocus(),
                         decoration: InputDecoration(
                           hintText: Strings.chatMessageHint,

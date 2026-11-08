@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
@@ -96,6 +97,22 @@ class ChatDetailsScreen extends ConsumerWidget {
           const SizedBox(height: AppSpacing.lg),
           FadeSlideIn.staggered(
             1,
+            _Section(
+              title: 'Messages',
+              child: AppPressable(
+                key: const ValueKey('details-starred'),
+                onTap: () => context.push(AppRoutes.starredIn(conv.id)),
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.star_outline_rounded, color: AppColors.medBlue),
+                  title: Text(Strings.chatStarredMessages, style: AppText.bodyPrimary),
+                  trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+                ),
+              ),
+            ),
+          ),
+          FadeSlideIn.staggered(
+            2,
             _Section(
               title: 'Chat settings',
               child: AppPressable(

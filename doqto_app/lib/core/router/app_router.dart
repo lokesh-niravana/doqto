@@ -12,6 +12,7 @@ import '../../ui/screens/chat/chat_details_screen.dart';
 import '../../ui/screens/chat/chat_list_screen.dart';
 import '../../ui/screens/chat/chat_thread_screen.dart';
 import '../../ui/screens/chat/new_message_screen.dart';
+import '../../ui/screens/chat/starred_messages_screen.dart';
 import '../../ui/screens/groups/create_group_flow_screen.dart';
 import '../../ui/screens/groups/group_detail_screen.dart';
 import '../../ui/screens/groups/group_info_screen.dart';
@@ -54,7 +55,14 @@ class AppRoutes {
   // swallow "create-group".
   static const newMessage = '/new-message';
   static String chat(String convId) => '/chat/$convId';
+  // Open a chat scrolled to one message (starred list, batch 4).
+  static String chatAt(String convId, String messageId) =>
+      Uri(path: '/chat/$convId', queryParameters: {'m': messageId}).toString();
   static String chatDetails(String convId) => '/chat/$convId/details';
+  // My starred messages, optionally one chat's (batch 4).
+  static const starred = '/starred';
+  static String starredIn(String convId) =>
+      Uri(path: starred, queryParameters: {'c': convId}).toString();
   static const myOrg = '/my-org';
   // Networking (M2). Network branch of the shell.
   static const network = '/network';
@@ -270,8 +278,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/chat/:id',
         parentNavigatorKey: rootNavigatorKey,
-        builder: (_, state) =>
-            ChatThreadScreen(conversationId: state.pathParameters['id']!),
+        builder: (_, state) => ChatThreadScreen(
+          conversationId: state.pathParameters['id']!,
+          initialMessageId: state.uri.queryParameters['m'],
+        ),
+      ),
+      GoRoute(
+        path: AppRoutes.starred,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, state) => StarredMessagesScreen(
+          conversationId: state.uri.queryParameters['c'],
+        ),
       ),
       GoRoute(
         path: AppRoutes.settings,

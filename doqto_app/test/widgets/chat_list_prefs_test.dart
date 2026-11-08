@@ -86,7 +86,7 @@ class _Repo extends ChatRepository {
 
   @override
   Future<List<Message>> listMessages(String conversationId,
-      {DateTime? before, int? afterSeq, DateTime? changedSince}) async => const [];
+      {DateTime? before, int? afterSeq, DateTime? changedSince, DateTime? beforeDate}) async => const [];
 }
 
 class _Cache extends ChatCache {

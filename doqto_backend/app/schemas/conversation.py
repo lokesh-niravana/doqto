@@ -78,6 +78,10 @@ class ConversationOut(ORMModel):
     # Pinned message (batch 4) — null when nothing is pinned / pin expired.
     pinned_message_id: uuid.UUID | None = None
     pinned_until: datetime | None = None
+    # The `groups` row behind a network group chat (batch 4): the client needs
+    # it for @mention members and admin actions when the thread is opened from
+    # the chat list. Null for direct chats and legacy org group chats.
+    group_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
     member_ids: list[uuid.UUID] = []

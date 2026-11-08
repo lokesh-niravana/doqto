@@ -51,6 +51,23 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
           }
           return;
         }
+        if (event.type == WsEventServer.messagePinned ||
+            event.type == WsEventServer.messageUnpinned) {
+          // Shared pin changed (someone pinned / unpinned / the pin lapsed):
+          // patch the conversation in place so the banner follows at once.
+          final id = event.data['conversation_id'] as String?;
+          if (id != null) {
+            final until = event.data['pinned_until'] as String?;
+            _applyPin(
+              id,
+              event.type == WsEventServer.messagePinned
+                  ? event.data['message_id'] as String?
+                  : null,
+              until == null ? null : DateTime.tryParse(until),
+            );
+          }
+          return;
+        }
         if (_refreshOn.contains(event.type)) refresh();
       },
     );
@@ -111,6 +128,50 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     ];
     state = AsyncData(next);
     unawaited(ref.read(chatCacheProvider).putConversations(next));
+  }
+
+  void _applyPin(String convId, String? messageId, DateTime? until) {
+    final current = state.value;
+    if (current == null) return;
+    final next = [
+      for (final c in current)
+        c.id == convId
+            ? c.copyWith(pinnedMessageId: () => messageId, pinnedUntil: () => until)
+            : c,
+    ];
+    state = AsyncData(next);
+    unawaited(ref.read(chatCacheProvider).putConversations(next));
+  }
+
+  /// Pin a message for everyone (batch 4). Optimistic: the banner shows at
+  /// once; the server's conversation replaces it, or the old pin comes back.
+  Future<void> pinMessage(String convId, String messageId, int durationSec) async {
+    final before = conversation(convId);
+    _applyPin(
+      convId,
+      messageId,
+      DateTime.now().toUtc().add(Duration(seconds: durationSec)),
+    );
+    try {
+      final saved = await ref
+          .read(chatRepositoryProvider)
+          .pinMessage(convId, messageId, durationSec);
+      _applyPin(convId, saved.pinnedMessageId, saved.pinnedUntil);
+    } catch (_) {
+      _applyPin(convId, before?.pinnedMessageId, before?.pinnedUntil);
+      rethrow;
+    }
+  }
+
+  Future<void> unpinMessage(String convId) async {
+    final before = conversation(convId);
+    _applyPin(convId, null, null);
+    try {
+      await ref.read(chatRepositoryProvider).unpinMessage(convId);
+    } catch (_) {
+      _applyPin(convId, before?.pinnedMessageId, before?.pinnedUntil);
+      rethrow;
+    }
   }
 
   void _remove(String convId) {
@@ -309,7 +370,12 @@ final conversationsProvider =
 Future<Message> deliverOutboxEntry(ChatRepository repo, OutboxEntry e) async {
   switch (e.kind) {
     case OutboxKind.text:
-      return repo.sendText(e.conversationId, e.content, clientId: e.clientId);
+      return repo.sendText(
+        e.conversationId,
+        e.content,
+        clientId: e.clientId,
+        replyToId: e.replyToId,
+      );
     case OutboxKind.media:
       final bytes = await File(e.filePath!).readAsBytes();
       return repo.uploadFile(
@@ -377,6 +443,11 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
   final _reactInFlight = <String>{};
   final _reactWanted = <String, _ReactWant>{};
 
+  /// Stars: one request in flight per message, latest wanted state wins.
+  final _starInFlight = <String>{};
+  final _starWanted = <String, bool>{};
+  static const _maxJumpPages = 40;
+
   @override
   Future<List<Message>> build(String conversationId) async {
     _listenWs(conversationId);
@@ -427,8 +498,15 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
           voiceDurationSec: e.durationSec,
           transcript: e.transcript,
           localPath: e.filePath,
+          replyTo: e.replyToId == null ? null : _replyPreviewFor(e.replyToId!),
         ),
     ];
+  }
+
+  /// A quote strip for an unsent reply, from the cached target if we have it.
+  ReplyPreview? _replyPreviewFor(String id) {
+    final target = ref.read(chatCacheProvider).messages(arg)?.where((m) => m.id == id).firstOrNull;
+    return target == null ? null : ReplyPreview.of(target);
   }
 
   void _listenWs(String conversationId) {
@@ -493,6 +571,15 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
         case WsEventServer.messageReacted:
           if (event.data['conversation_id'] != conversationId) break;
           _onReacted(event.data);
+          break;
+        case WsEventServer.messageStarred:
+          // My other device starred / unstarred (private: only my devices
+          // get this). While my own request runs, my echo is ignored.
+          if (event.data['conversation_id'] != conversationId) break;
+          final id = event.data['message_id'] as String?;
+          final starred = event.data['starred'] as bool?;
+          if (id == null || starred == null || _starInFlight.contains(id)) break;
+          _patchStarred(id, starred);
           break;
         case WsEventServer.transcriptReady:
           final id = event.data['message_id'] as String;
@@ -596,7 +683,11 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
       state = AsyncData([
         for (final m in current)
           if (byId[m.id] case final fresh? when _isNewer(fresh.changedAt, m.changedAt))
-            fresh.copyWith(read: m.read || fresh.read, delivered: m.delivered || fresh.delivered)
+            fresh.copyWith(
+              read: m.read || fresh.read,
+              delivered: m.delivered || fresh.delivered,
+              starred: m.starred || fresh.starred,
+            )
           else
             m,
       ]);
@@ -642,7 +733,8 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
     } catch (_) {}
   }
 
-  Future<void> sendText(String text) async {
+  /// [replyTo] quotes a message of this conversation (batch 4).
+  Future<void> sendText(String text, {ReplyPreview? replyTo}) async {
     final content = text.trim();
     if (content.isEmpty) return;
     final me = ref.read(authProvider).user?.id;
@@ -655,6 +747,7 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
       conversationId: arg,
       content: content,
       createdAt: DateTime.now().toUtc(),
+      replyToId: replyTo?.id,
     );
     await ref.read(outboxProvider).add(entry);
     _insert(
@@ -663,6 +756,7 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
         conversationId: arg,
         senderId: me,
         content: content,
+        replyTo: replyTo,
       ),
     );
 
@@ -826,14 +920,142 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
     }
   }
 
-  /// Edit within 5 min of sending (server-enforced). Applies the returned row.
+  Message? messageById(String id) =>
+      (state.value ?? const <Message>[]).where((m) => m.id == id).firstOrNull;
+
+  /// Pull older pages until [messageId] is loaded (tap on a quote, the pin
+  /// banner, a starred row). False when history ran out without it.
+  Future<bool> ensureLoaded(String messageId) async {
+    for (var page = 0; page < _maxJumpPages; page++) {
+      if (messageById(messageId) != null) return true;
+      if (!hasMore) return false;
+      final before = (state.value ?? const <Message>[]).length;
+      await loadOlder();
+      if ((state.value ?? const <Message>[]).length == before && !hasMore) return false;
+    }
+    return messageById(messageId) != null;
+  }
+
+  /// Keep pulling older pages while [more] says so (in-chat search: until a
+  /// hit appears or history runs out). Returns false when exhausted.
+  Future<bool> loadOlderWhile(bool Function(List<Message> loaded) more) async {
+    for (var page = 0; page < _maxJumpPages; page++) {
+      final loaded = state.value ?? const <Message>[];
+      if (!more(loaded)) return true;
+      if (!hasMore) return false;
+      await loadOlder();
+    }
+    return false;
+  }
+
+  /// Jump to a calendar day (batch 4): the newest message on or before the
+  /// end of [day] (UTC), fetched with `before_date`, then the gap between it
+  /// and what is loaded is filled so the thread stays continuous. Returns
+  /// that message's id, or null when nothing is that old.
+  Future<String?> jumpToDate(DateTime day) async {
+    final endOfDay = DateTime.utc(day.year, day.month, day.day, 23, 59, 59, 999);
+    final loaded = state.value ?? const <Message>[];
+    Message? newestOnOrBefore(List<Message> list) {
+      Message? best;
+      for (final m in list) {
+        if (m.status != MessageStatus.sent || m.createdAt.isAfter(endOfDay)) continue;
+        if (best == null || m.createdAt.isAfter(best.createdAt)) best = m;
+      }
+      return best;
+    }
+    final oldest = loaded.where((m) => m.status == MessageStatus.sent).lastOrNull;
+    if (oldest != null && !oldest.createdAt.isAfter(endOfDay)) {
+      return newestOnOrBefore(loaded)?.id;
+    }
+    if (loadingOlder) return null;
+    loadingOlder = true;
+    try {
+      final repo = ref.read(chatRepositoryProvider);
+      final page = await repo.listMessages(arg, beforeDate: day);
+      if (page.isEmpty) return null;
+      final target = page.first;
+      // Fill the gap from what we hold down to the target page.
+      var current = state.value ?? const <Message>[];
+      var cursor = current.where((m) => m.status == MessageStatus.sent).lastOrNull?.createdAt;
+      var merged = <Message>[...current];
+      final ids = {for (final m in merged) m.id};
+      for (var n = 0; n < _maxJumpPages && cursor != null && cursor.isAfter(target.createdAt); n++) {
+        final gap = await repo.listMessages(arg, before: cursor);
+        if (gap.isEmpty) break;
+        for (final m in gap) {
+          if (ids.add(m.id)) merged.add(m);
+        }
+        cursor = gap.last.createdAt;
+        if (gap.length < AppConstants.messagesPageSize) break;
+      }
+      for (final m in page) {
+        if (ids.add(m.id)) merged.add(m);
+      }
+      merged.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      hasMore = page.length >= AppConstants.messagesPageSize;
+      state = AsyncData(merged);
+      return target.id;
+    } catch (_) {
+      return null;
+    } finally {
+      loadingOlder = false;
+      state = AsyncData([...(state.value ?? [])]);
+    }
+  }
+
+  /// Star / unstar for me (batch 4). Optimistic with rollback, one request
+  /// in flight per message like [react].
+  Future<void> star(String messageId, bool starred) async {
+    final msg = messageById(messageId);
+    if (msg == null || !msg.canStar) return;
+    if (msg.starred == starred && !_starInFlight.contains(messageId)) return;
+    _patchStarred(messageId, starred);
+    _starWanted[messageId] = starred;
+    if (!_starInFlight.add(messageId)) return;
+    final before = msg.starred;
+    final repo = ref.read(chatRepositoryProvider);
+    try {
+      var confirmed = before;
+      while (_starWanted.containsKey(messageId)) {
+        final want = _starWanted.remove(messageId)!;
+        confirmed = (await repo.setStarred(messageId, want)).starred;
+      }
+      _patchStarred(messageId, confirmed);
+    } catch (_) {
+      _starWanted.remove(messageId);
+      _patchStarred(messageId, before);
+      rethrow;
+    } finally {
+      _starInFlight.remove(messageId);
+      _recache(arg);
+    }
+  }
+
+  void _patchStarred(String messageId, bool starred) {
+    state = AsyncData([
+      for (final m in state.value ?? const <Message>[])
+        if (m.id == messageId) m.copyWith(starred: starred) else m,
+    ]);
+  }
+
+  /// Forward [messageIds] to [conversationIds] (≤5). Copies land in the
+  /// destination threads over WS; nothing changes here.
+  Future<void> forward(List<String> messageIds, List<String> conversationIds) async {
+    final repo = ref.read(chatRepositoryProvider);
+    for (final id in messageIds) {
+      await repo.forward(id, conversationIds);
+    }
+  }
+
+  /// Edit within 15 min of sending (server-enforced). Applies the returned row.
   Future<void> edit(String messageId, String content) async {
     _replace(
       await ref.read(chatRepositoryProvider).editMessage(messageId, content),
     );
   }
 
-  /// Delete within 3 min of sending (server-enforced). Applies the tombstone.
+  /// Delete for everyone: sender within 48 h, group admin any time
+  /// (server-enforced). Applies the tombstone.
   Future<void> delete(String messageId) async {
     _replace(await ref.read(chatRepositoryProvider).deleteMessage(messageId));
     await ref.read(chatMediaCacheProvider).evict(messageId);
@@ -946,13 +1168,14 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
     await _recache(arg);
   }
 
-  /// Replace a server row in place (edit/delete), keeping local tick state.
+  /// Replace a server row in place (edit/delete), keeping local tick state
+  /// and my star (fan-outs always carry `starred: false`).
   void _replace(Message msg) {
     final current = state.value ?? [];
     state = AsyncData([
       for (final m in current)
         if (m.id == msg.id)
-          msg.copyWith(read: m.read, delivered: m.delivered)
+          msg.copyWith(read: m.read, delivered: m.delivered, starred: m.starred || msg.starred)
         else
           m,
     ]);

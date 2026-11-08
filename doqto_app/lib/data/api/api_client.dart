@@ -187,6 +187,12 @@ class ApiClient {
     return (r.data as Map).cast<String, dynamic>();
   }
 
+  /// POST whose 200 body is a JSON array (forward: one row per destination).
+  Future<List<dynamic>> postList(String path, {Object? body}) async {
+    final r = await _call(() => _dio.post(path, data: body));
+    return (r.data as List).cast<dynamic>();
+  }
+
   Future<Map<String, dynamic>> put(String path, {Object? body}) async {
     final r = await _call(() => _dio.put(path, data: body));
     return (r.data as Map).cast<String, dynamic>();

@@ -79,6 +79,17 @@ class ApiRoutes {
   static const String messagesStarred =
       '$apiV1/messages/starred'; // GET ?cursor=&limit= across conversations
   static const String linkPreview = '$apiV1/link-preview'; // GET ?url=
+  // Batch 5 (media)
+  static String messageUploadIntent(String convId) =>
+      '$apiV1/messages/upload-intent/$convId'; // POST → presigned URLs
+  static String messageUploadComplete(String convId) =>
+      '$apiV1/messages/upload-complete/$convId'; // POST → MessageOut
+  static String messageExportAudit(String id) =>
+      '$apiV1/messages/$id/export-audit'; // POST before save / share
+  static String messageVote(String id) =>
+      '$apiV1/messages/$id/vote'; // PUT {option_ids} / DELETE (own votes)
+  static String conversationMedia(String id) =>
+      '$apiV1/conversations/$id/media'; // GET ?type=image|video|file|link&cursor=
 
   // People / profiles (networking M1/M2)
   static String userProfile(String userId) => '$apiV1/users/$userId/profile';

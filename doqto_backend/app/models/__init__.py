@@ -14,7 +14,10 @@ from app.models.message import (
     MessageReaction,
     MessageReceipt,
     MessageStar,
+    PollOption,
+    PollVote,
     ScheduledMessage,
+    UploadIntent,
 )
 from app.models.network import (
     AppInvite,
@@ -53,7 +56,10 @@ __all__ = [
     "MessageReaction",
     "MessageReceipt",
     "MessageStar",
+    "PollOption",
+    "PollVote",
     "ScheduledMessage",
+    "UploadIntent",
     "Mute",
     "SuggestionDismissal",
     "Notification",

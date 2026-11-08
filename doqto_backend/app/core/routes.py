@@ -88,6 +88,8 @@ class ApiRoutes:
     # Per-member preferences: pin / archive / mute / mark unread / clear / delete.
     CONVERSATIONS_PREFS = "/{conversation_id}/prefs"
     CONVERSATIONS_PIN = "/{conversation_id}/pin"  # PUT pin / DELETE unpin (batch 4)
+    # Media gallery (batch 5): GET ?type=image|video|file|link&cursor=&limit=
+    CONVERSATIONS_MEDIA = "/{conversation_id}/media"
     # Message-request tier (M4) — recipient-only accept / decline.
 
     # Messages
@@ -103,6 +105,14 @@ class ApiRoutes:
     MESSAGES_STAR = "/{message_id}/star"  # PUT star / DELETE unstar (own, private)
     MESSAGES_STARRED = "/starred"  # GET my starred messages, all conversations
     LINK_PREVIEW = "/link-preview"  # GET ?url=
+    # Batch 5 (media). The two legacy inline-upload routes stay:
+    MESSAGES_UPLOAD = "/upload/{conversation_id}"  # POST multipart/form-data ≤ 25 MB
+    MESSAGES_VOICE_NOTE = "/voice-notes/{conversation_id}"  # POST multipart/form-data
+    # Presigned (multipart) upload for files / video up to 100 MB.
+    MESSAGES_UPLOAD_INTENT = "/upload-intent/{conversation_id}"  # POST → urls
+    MESSAGES_UPLOAD_COMPLETE = "/upload-complete/{conversation_id}"  # POST → MessageOut
+    MESSAGES_EXPORT_AUDIT = "/{message_id}/export-audit"  # POST before save/share
+    MESSAGES_VOTE = "/{message_id}/vote"  # PUT {option_ids} / DELETE (own votes)
 
     # Groups (M5) — router mounted at /api/v1 (see ApiPrefix.GROUPS).
     GROUPS_LIST = "/groups"

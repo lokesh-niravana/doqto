@@ -21,3 +21,5 @@ requests==2.32.3
 stripe==11.4.1
 app-store-server-library==3.1.2
 emoji==2.14.1
+# Image metadata stripping fallback for non-JPEG/PNG uploads (batch 5)
+Pillow==11.0.0

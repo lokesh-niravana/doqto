@@ -32,6 +32,7 @@ from app.core.routes import ApiPrefix
 from app.db.postgres import SessionLocal
 from app.db.redis import close_redis, get_redis
 from app.services.file_service import FileService
+from app.services.media_service import MediaService
 from app.services.message_service import MessageService
 
 # App loggers (doqto.*) have no handler under uvicorn's default config — give them one.
@@ -59,6 +60,8 @@ async def _purge_expired_loop() -> None:
                     # Stars never extend retention; pins expire on schedule.
                     orphan_stars = await MessageService.purge_orphan_stars(db)
                     unpinned = await MessageService.expire_pins(db)
+                    # Abandoned presigned uploads (batch 5): abort in S3 after commit.
+                    stale_intents = await MediaService.purge_intents(db)
                     unpin_recipients = [
                         (cid, mid, await MessageService.member_ids(conversation_id=cid, db=db))
                         for cid, mid in unpinned
@@ -88,6 +91,18 @@ async def _purge_expired_loop() -> None:
                         logger.warning("purge: S3 delete failed for %s", key)
                 if purged_keys:
                     logger.info("hard-purged content incl. %d S3 objects", len(purged_keys))
+                for key, upload_id, thumb_key in stale_intents:
+                    try:
+                        if upload_id:
+                            await FileService.abort_multipart_upload(key=key, upload_id=upload_id)
+                        else:
+                            await FileService.delete_object(key=key)
+                        if thumb_key:
+                            await FileService.delete_object(key=thumb_key)
+                    except Exception:
+                        logger.warning("purge: upload intent cleanup failed for %s", key)
+                if stale_intents:
+                    logger.info("aborted %d abandoned uploads", len(stale_intents))
         except Exception:
             logger.exception("purge_expired failed")
         await asyncio.sleep(DISAPPEAR_PURGE_INTERVAL_SEC)

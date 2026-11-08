@@ -93,6 +93,8 @@ class OrgNetworkingSettingsIn(BaseModel):
     # Content policies (batch 4, organizations.policies).
     allow_forward_outside_org: bool | None = None
     allow_copy: bool | None = None
+    # Batch 5: Save to Photos / share sheet for media in org chats.
+    allow_media_export: bool | None = None
 
 
 class OrgNetworkingSettingsOut(ORMModel):

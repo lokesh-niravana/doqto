@@ -184,6 +184,10 @@ class MessageType(StrEnum):
     IMAGE = "image"
     FILE = "file"
     SYSTEM = "system"
+    # Batch 5 (media): a video clip (poster thumbnail in thumb_key) and a poll
+    # (question in the body, options/votes in poll_options / poll_votes).
+    VIDEO = "video"
+    POLL = "poll"
 
 
 class TranscriptStatus(StrEnum):
@@ -246,6 +250,8 @@ class WsEventServer(StrEnum):
     MESSAGE_PINNED = "message_pinned"
     MESSAGE_UNPINNED = "message_unpinned"
     MESSAGE_STARRED = "message_starred"
+    # Polls (batch 5) — every member: tallies + voter ids after a vote change.
+    POLL_UPDATED = "poll_updated"
 
 
 class WsEventClient(StrEnum):
@@ -325,6 +331,9 @@ class AuditAction(StrEnum):
     STARRED_MESSAGES_READ = "starred_messages_read"
     REPORT_STATUS_CHANGED = "report_status_changed"
     LINK_PREVIEW_FETCHED = "link_preview_fetched"
+    # Media (batch 5) — backend-only.
+    FILE_EXPORTED = "file_exported"
+    POLL_VOTED = "poll_voted"
 
 
 class TranscribeSpecialty(StrEnum):

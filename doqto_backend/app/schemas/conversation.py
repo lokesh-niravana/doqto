@@ -89,3 +89,7 @@ class ConversationOut(ORMModel):
     unread_count: int = 0
     # The caller's own pin / archive / mute / … state (batch 3).
     prefs: ConversationPrefsOut = Field(default_factory=ConversationPrefsOut)
+    # Batch 5: may THIS caller save / share media from this chat
+    # (org policy allow_media_export; users with no org may). The server
+    # re-checks on POST /messages/{id}/export-audit.
+    media_export_allowed: bool = False

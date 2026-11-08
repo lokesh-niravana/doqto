@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
     ORG_POLICY_ALLOW_COPY,
+    ORG_POLICY_ALLOW_MEDIA_EXPORT,
     ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG,
     ORG_POLICY_DEFAULTS,
     RATE_LIMIT_READS_PER_MINUTE,
@@ -288,7 +289,11 @@ async def update_networking_settings(
     # Content policies (batch 4) live in the JSONB column; copy-on-write so
     # SQLAlchemy sees the change.
     policies = dict(org.policies or {})
-    for key in (ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG, ORG_POLICY_ALLOW_COPY):
+    for key in (
+        ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG,
+        ORG_POLICY_ALLOW_COPY,
+        ORG_POLICY_ALLOW_MEDIA_EXPORT,
+    ):
         value = getattr(body, key)
         if value is not None:
             policies[key] = value

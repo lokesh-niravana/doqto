@@ -76,15 +76,55 @@ ORG_POLICY_ALLOW_COPY = "allow_copy"
 ORG_POLICY_DEFAULTS = {
     ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG: True,
     ORG_POLICY_ALLOW_COPY: True,
+    # Batch 5 — key defined below (ORG_POLICY_ALLOW_MEDIA_EXPORT).
+    "allow_media_export": False,
 }
 
 # Voice notes
 VOICE_NOTE_MIN_DURATION_SECONDS = 1
 VOICE_NOTE_MAX_DURATION_SECONDS = 60 * 5  # 5 minutes
 VOICE_NOTE_MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB
+# Amplitude envelope recorded by the client: raw bytes (0–255 per sample),
+# sent base64 — at most this many samples.
+VOICE_NOTE_WAVEFORM_MAX_BYTES = 64
 
-# Files
-FILE_MAX_BYTES = 25 * 1024 * 1024  # 25 MB
+# --- Files / media (batch 5) ----------------------------------------------- #
+# Hard cap for any attachment (file or video) through the presigned
+# multipart flow (upload-intent / upload-complete).
+FILE_MAX_BYTES = 100 * 1024 * 1024  # 100 MB
+VIDEO_MAX_BYTES = FILE_MAX_BYTES
+# The legacy inline route (POST /messages/upload/{conv}) reads the body into
+# memory, so it keeps a smaller cap; bigger payloads use the multipart flow.
+UPLOAD_INLINE_MAX_BYTES = 25 * 1024 * 1024  # 25 MB
+# Multipart: S3 needs ≥ 5 MB per part (except the last); single presigned PUT
+# below this size.
+UPLOAD_PART_SIZE_BYTES = 8 * 1024 * 1024  # 8 MB
+UPLOAD_MULTIPART_THRESHOLD_BYTES = UPLOAD_PART_SIZE_BYTES
+UPLOAD_INTENT_TTL_SEC = 60 * 60  # an intent not completed within an hour is aborted
+UPLOAD_URL_TTL_SEC = UPLOAD_INTENT_TTL_SEC
+RATE_LIMIT_UPLOAD_INTENTS_PER_MINUTE = 30
+# Poster thumbnail (video) / client-supplied JPEG — always EXIF-stripped.
+THUMB_MAX_BYTES = 300 * 1024  # 300 KB
+THUMB_CONTENT_TYPE = "image/jpeg"
+CAPTION_MAX_LEN = 1024
+VIDEO_MAX_DURATION_SEC = 60 * 10  # 10 minutes
+MEDIA_PAGE_SIZE = 60
+# Links tab: text messages are scanned (decrypted) newest first in batches of
+# this size; at most LINK_SCAN_MAX_MESSAGES per request before the page is
+# returned (possibly short) with a cursor.
+LINK_SCAN_BATCH = 200
+LINK_SCAN_MAX_MESSAGES = 2000
+URL_PATTERN = r"https?://[^\s<>\"'()\[\]{}]+"
+# Save to Photos / share sheet gate (organizations.policies): off for org
+# members unless the admin enables it; users with no org may export.
+ORG_POLICY_ALLOW_MEDIA_EXPORT = "allow_media_export"
+RATE_LIMIT_EXPORT_AUDITS_PER_MINUTE = 60
+# Polls
+POLL_QUESTION_MAX_LEN = 300
+POLL_OPTION_MAX_LEN = 100
+POLL_OPTIONS_MIN = 2
+POLL_OPTIONS_MAX = 12
+RATE_LIMIT_VOTES_PER_MINUTE = 60
 
 # Avatars
 AVATAR_MAX_BYTES = 2 * 1024 * 1024  # 2 MB

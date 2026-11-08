@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from datetime import datetime, timezone
 
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import delete, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import AuditAction
@@ -23,8 +22,11 @@ from app.models import (
     Mute,
     Notification,
     OrgMember,
+    PollOption,
+    PollVote,
     Report,
     ScheduledMessage,
+    UploadIntent,
     User,
     UserPrivacySettings,
 )
@@ -97,12 +99,24 @@ class AccountDeletionService:
             .values(
                 content_encrypted=None,
                 transcript_encrypted=None,
+                caption_encrypted=None,
+                waveform=None,
                 s3_key=None,
+                thumb_key=None,
                 file_name=None,
                 file_size_bytes=None,
                 is_deleted=True,
             )
         )
+        # Poll option text is PHI too (votes cascade); the user's own votes on
+        # other people's polls go with their membership.
+        await db.execute(
+            delete(PollOption).where(
+                PollOption.message_id.in_(select(Message.id).where(Message.sender_id == uid))
+            )
+        )
+        await db.execute(delete(PollVote).where(PollVote.user_id == uid))
+        await db.execute(delete(UploadIntent).where(UploadIntent.user_id == uid))
         await db.execute(delete(ScheduledMessage).where(ScheduledMessage.sender_id == uid))
         await db.execute(delete(MessageReceipt).where(MessageReceipt.user_id == uid))
 

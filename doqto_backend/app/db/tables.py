@@ -21,6 +21,10 @@ class Tables:
     MESSAGE_HIDES = "message_hides"
     MESSAGE_REACTIONS = "message_reactions"
     MESSAGE_STARS = "message_stars"
+    # Media (batch 5): presigned multipart uploads in flight, poll options/votes.
+    UPLOAD_INTENTS = "upload_intents"
+    POLL_OPTIONS = "poll_options"
+    POLL_VOTES = "poll_votes"
     AUDIT_LOGS = "audit_logs"
     DEVICE_TOKENS = "device_tokens"
     # Networking graph (M1)

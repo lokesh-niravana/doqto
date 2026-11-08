@@ -13,6 +13,7 @@ from app.core.constants import (
     MESSAGE_DELETED_PREVIEW,
     CHAT_LIST_PREVIEW_MAX_LEN,
     DISAPPEAR_OPTIONS_SEC,
+    MEDIA_PAGE_SIZE,
     MESSAGES_PAGE_SIZE,
     RATE_LIMIT_PREFS_WRITES_PER_MINUTE,
     RATE_LIMIT_PINS_PER_MINUTE,
@@ -55,8 +56,11 @@ from app.schemas.conversation import (
     ConversationSettingsIn,
     UnreadTotalOut,
 )
+from app.services.media_service import MediaService
 from app.schemas.message import (
     ConversationPinIn,
+    MediaItemOut,
+    MediaPage,
     MessageOut,
     MessagePinnedEvent,
     MessageScheduleIn,
@@ -115,13 +119,18 @@ async def _is_org_admin(org_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession)
 def _preview_for(msg: Message | None) -> str | None:
     if msg is not None and msg.deleted_at is not None:
         return MESSAGE_DELETED_PREVIEW
-    if msg is None or msg.content_encrypted is None or msg.type not in (
-        MessageType.TEXT,
-        MessageType.SYSTEM,
-    ):
+    if msg is None:
+        return None
+    # Text / system body, a poll's question, or a media caption (batch 5);
+    # the client labels caption-less media from last_message_type.
+    if msg.type in (MessageType.TEXT, MessageType.SYSTEM, MessageType.POLL):
+        blob = msg.content_encrypted
+    else:
+        blob = msg.caption_encrypted
+    if blob is None:
         return None
     try:
-        text = decrypt_message(msg.content_encrypted)
+        text = decrypt_message(blob)
     except Exception:
         return None
     text = text.strip()
@@ -182,9 +191,11 @@ async def list_conversations(
             select(User.id, User.full_name).where(User.id.in_(other_ids))
         )
         names = dict(rows.all())
+    export_ok = await MediaService.export_allowed_map(user_id=user.id, convs=convs, db=db)
     out: list[ConversationOut] = []
     for c in convs:
         o = _to_out(c, conv_members[c.id], latest.get(c.id))
+        o.media_export_allowed = export_ok.get(c.id, False)
         if c.type == ConversationType.DIRECT:
             o.display_name = next(
                 (names[uid] for uid in conv_members[c.id] if uid != user.id and uid in names),
@@ -343,6 +354,7 @@ async def create_conversation(
 
     members = await MessageService.conversation_members(conversation_id=conv.id, db=db)
     out = _to_out(conv, [m.user_id for m in members])
+    out.media_export_allowed = await MediaService.export_allowed(user_id=user.id, conv=conv, db=db)
     if conv.type == ConversationType.DIRECT:
         other_id = next((m.user_id for m in members if m.user_id != user.id), None)
         if other_id is not None:
@@ -430,6 +442,57 @@ async def list_messages(
     )
 
 
+@router.get(ApiRoutes.CONVERSATIONS_MEDIA, response_model=MediaPage)
+async def list_media(
+    conversation_id: uuid.UUID,
+    request: Request,
+    type: str = Query(default="image", pattern="^(image|video|file|link)$"),
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=MEDIA_PAGE_SIZE, ge=1, le=MEDIA_PAGE_SIZE),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MediaPage:
+    """Media / Docs / Links tabs (batch 5): this chat's photos, videos, files
+    or text messages with URLs, newest first, honouring the caller's hides and
+    clear-chat cursor. Cursor = seq of the last row. For `link` the page may be
+    short with a cursor when the decrypt-and-scan cap is hit."""
+    await enforce_rate_limit(user.id, "list_media", RATE_LIMIT_READS_PER_MINUTE)
+    await _assert_member(conversation_id, user.id, db)
+    before_seq: int | None = None
+    if cursor:
+        try:
+            before_seq = int(cursor)
+        except ValueError as e:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid_cursor") from e
+    try:
+        rows, next_cursor = await MediaService.list_media(
+            conversation_id=conversation_id,
+            user_id=user.id,
+            media_type=type,
+            before_seq=before_seq,
+            limit=limit,
+            db=db,
+        )
+    except MessageError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
+    # Decrypted captions / link text leave the server: audit like a thread read.
+    await AuditService.log_request(
+        request,
+        user_id=user.id,
+        action=AuditAction.CONVERSATION_ACCESSED,
+        resource_type="conversation",
+        resource_id=conversation_id,
+        db=db,
+        metadata={"media": type, "cursor": cursor, "count": len(rows)},
+    )
+    await db.commit()
+    outs = await MessageService.outs_for([m for m, _ in rows], db=db, viewer_id=user.id)
+    return MediaPage(
+        data=[MediaItemOut(message=o, urls=urls) for o, (_, urls) in zip(outs, rows)],
+        next_cursor=next_cursor,
+    )
+
+
 @router.post(ApiRoutes.CONVERSATIONS_MESSAGES, response_model=MessageOut)
 async def send_message(
     conversation_id: uuid.UUID,
@@ -470,16 +533,28 @@ async def send_message(
                 raise HTTPException(status.HTTP_403_FORBIDDEN, detail=detail)
     ip, user_agent = request_meta(request)
     try:
-        msg = await MessageService.send_text(
-            conversation_id=conversation_id,
-            sender_id=user.id,
-            content=body.content,
-            db=db,
-            client_id=body.client_id,
-            ip_address=ip,
-            user_agent=user_agent,
-            reply_to_id=body.reply_to_id,
-        )
+        if body.type == MessageType.POLL:
+            msg = await MediaService.create_poll(
+                conv=conv,
+                sender_id=user.id,
+                poll=body.poll,
+                db=db,
+                client_id=body.client_id,
+                reply_to_id=body.reply_to_id,
+                ip_address=ip,
+                user_agent=user_agent,
+            )
+        else:
+            msg = await MessageService.send_text(
+                conversation_id=conversation_id,
+                sender_id=user.id,
+                content=body.content,
+                db=db,
+                client_id=body.client_id,
+                ip_address=ip,
+                user_agent=user_agent,
+                reply_to_id=body.reply_to_id,
+            )
     except MessageError as e:
         raise HTTPException(_SEND_STATUS.get(str(e), status.HTTP_400_BAD_REQUEST), detail=str(e)) from e
 
@@ -834,7 +909,9 @@ async def pin_message(
         raise HTTPException(_PIN_STATUS.get(str(e), status.HTTP_409_CONFLICT), detail=str(e)) from e
     await _publish_pin(conv, WsEventServer.MESSAGE_PINNED, msg.id, user.id, db)
     members = await MessageService.member_ids(conversation_id=conversation_id, db=db)
-    return _to_out(conv, members)
+    out = _to_out(conv, members)
+    out.media_export_allowed = await MediaService.export_allowed(user_id=user.id, conv=conv, db=db)
+    return out
 
 
 @router.delete(ApiRoutes.CONVERSATIONS_PIN, response_model=ConversationOut)
@@ -853,4 +930,6 @@ async def unpin_message(
     if previous is not None:
         await _publish_pin(conv, WsEventServer.MESSAGE_UNPINNED, previous, user.id, db)
     members = await MessageService.member_ids(conversation_id=conversation_id, db=db)
-    return _to_out(conv, members)
+    out = _to_out(conv, members)
+    out.media_export_allowed = await MediaService.export_allowed(user_id=user.id, conv=conv, db=db)
+    return out

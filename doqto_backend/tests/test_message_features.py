@@ -448,7 +448,11 @@ async def test_forward_respects_org_policy_allow_forward_outside_org(client, cha
     assert r.json()["policies"][ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG] is False
     # Visible to members through /orgs/mine.
     mine = await client.get("/api/v1/orgs/mine", headers=chat.alice_headers)
-    assert mine.json()[0]["policies"] == {ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG: False, "allow_copy": True}
+    assert mine.json()[0]["policies"] == {
+        ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG: False,
+        "allow_copy": True,
+        "allow_media_export": False,  # batch 5 default
+    }
 
     src2 = await _send(client, org_group.id, chat.bob_headers, "internal protocol v2")
     r = await client.post(

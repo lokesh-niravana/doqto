@@ -259,6 +259,8 @@ Invite lifecycle — direct + link (M5). Backend-only.
 | `image` | Image attachment |
 | `file` | Generic file attachment |
 | `system` | System event (joined/left/removed) |
+| `video` | Video clip (batch 5): `s3_key` + JPEG poster in `thumb_key`, length in `voice_duration_sec`, optional `caption` |
+| `poll` | Poll (batch 5): question in `content`, tallies + voter ids in `poll{question, multiple, options[{id, position, text, vote_count, voter_ids}], voter_count}` |
 
 ## TranscriptStatus
 
@@ -327,6 +329,9 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `message_pinned` | `conversation_id, message_id, pinned_until, actor_id` (batch 4) — every member; show the banner |
 | `message_unpinned` | `conversation_id, message_id, pinned_until: null, actor_id` (null when the auto-unpin job cleared it) — every member |
 | `message_starred` | `conversation_id, message_id, starred` (batch 4) — the actor's OWN devices only; stars are private |
+| `poll_updated` | `conversation_id, message_id, poll{question, multiple, options[], voter_count}, changed_at, actor_id` (batch 5) — every member after a vote changed (or a departed member's votes were purged); replace the message's `poll`, drop if `changed_at` is not newer |
+
+Since batch 5 a `MessageOut` also carries `caption` (image/video/file/voice, encrypted at rest), `thumb_key` (video poster; `GET /messages/{id}/file-url?thumb=1`), `waveform` (base64 of ≤ 64 amplitude bytes, voice notes), `media_width` / `media_height` and `poll`.
 
 ## WsEventClient (client → server)
 
@@ -401,6 +406,8 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `starred_messages_read` | `GET /messages/starred` returned decrypted bodies; one row per page (batch 4) |
 | `report_status_changed` | A super-admin moved a report between statuses; meta: `from`, `to` (batch 4) |
 | `link_preview_fetched` | The server fetched a link preview on the user's behalf; meta: `host` only (batch 4) |
+| `file_exported` | The user is about to save / share a media message (`POST /messages/{id}/export-audit`, allowed by `allow_media_export`); meta: `type`, `conversation_id` (batch 5) |
+| `poll_voted` | The user changed their selection on a poll (`PUT` / `DELETE /messages/{id}/vote`); meta: `options` count, 0 = withdrawn (batch 5) |
 
 ## TranscribeSpecialty (AWS Transcribe Medical)
 

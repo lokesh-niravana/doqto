@@ -1042,6 +1042,12 @@ class _ChatRow extends ConsumerWidget {
       case MessageType.file:
         body = '📎 File';
         break;
+      case MessageType.video:
+        body = '🎬 Video';
+        break;
+      case MessageType.poll:
+        body = '📊 ${c.lastMessagePreview ?? 'Poll'}';
+        break;
       case MessageType.system:
         return c.lastMessagePreview ?? '';
       case MessageType.unknown:

@@ -384,6 +384,53 @@ class Strings {
   static const String profileExperience = 'Experience';
   static const String profileSkills = 'Skills';
 
+  // Privacy screen (batch 2)
+  static const String privacyTitle = 'Privacy';
+  static const String privacySettingsSubtitle =
+      'Last seen, read receipts, blocked contacts';
+  static const String privacyWhoCanSee = 'Who can see my';
+  static const String privacyLastSeen = 'Last seen';
+  static const String privacyOnline = 'Online';
+  static const String privacyProfilePhoto = 'Profile photo';
+  static const String privacyAbout = 'About';
+  static const String privacyMessaging = 'Messaging';
+  static const String privacyReadReceipts = 'Read receipts';
+  static const String privacyReadReceiptsHint =
+      "If turned off, you won't send or receive read receipts in direct "
+      'chats. Groups always show read-by.';
+  static const String privacyDefaultTimer = 'Default message timer';
+  static const String privacyDefaultTimerHint =
+      'New direct chats you start disappear after this long.';
+  static const String privacyLinkPreviews = 'Link previews';
+  static const String privacyLinkPreviewsHint =
+      'Show a preview card for links you send and receive.';
+  static const String privacyNetwork = 'Network';
+  static const String privacyInvitePolicy = 'Connection requests';
+  static const String privacyDiscoverability = 'Discoverability';
+  static const String privacyShowMutuals = 'Show mutual connections';
+  static const String privacyShowMutualsHint =
+      'Let others see the connections you have in common.';
+  static const String privacyBlocked = 'Blocked contacts';
+  static const String privacyBlockedEmpty = 'You haven\'t blocked anyone.';
+  static const String privacyBlockedHint =
+      "Blocked doctors can't message you, see your profile or find you.";
+  static const String privacyUnblockConfirmTitle = 'Unblock this doctor?';
+  static const String privacyUnblockConfirmBody =
+      'They will be able to find you, view your profile and message you '
+      'again. You are not reconnected automatically.';
+  static const String privacyUnblockedToast = 'Unblocked';
+  static const String privacyBlockedBanner = 'You blocked this doctor';
+  static const String privacyReciprocalHint =
+      "If you don't share your last seen, you won't see others' either.";
+  static const String privacyLastSeenEveryone = 'Everyone';
+  static const String privacyLastSeenConnections = 'Connections and colleagues';
+  static const String privacyLastSeenNobody = 'Nobody';
+  static const String privacyOnlineSame = 'Same as last seen';
+  static const String privacyOnlineNobody = 'Nobody';
+  static const String privacyTimerOff = 'Off';
+  static const String privacySaveFailed = "Couldn't save that. Try again.";
+  static const String presenceOnline = 'online';
+
   // Common
   static const String copy = 'Copy';
   static const String cancel = 'Cancel';

@@ -9,6 +9,7 @@ lifespan, so the Redis subscriber isn't pumping.
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 import sqlalchemy as sa
@@ -196,14 +197,25 @@ async def test_ws_org_alias_registers_user_in_flat_registry(ws_env):
     # cleanup happens in the portal thread on context exit
 
 
-async def test_ws_connect_publishes_presence_per_org(ws_env, monkeypatch):
+async def test_ws_connect_publishes_presence_to_every_org_colleague(ws_env, monkeypatch, db):
+    """Presence is recipient-scoped since batch 2: one `presence_update` to the
+    union of the user's org colleagues (across ALL their orgs) and first-degree
+    connections — never to the user themself."""
+    import app.services.presence_service as presence_module
+
     org_a, org_b, multi, _ = ws_env
-    published: list[tuple[uuid.UUID, str, dict]] = []
+    colleague_a = await helpers.create_user(db, full_name="Dr A")
+    colleague_b = await helpers.create_user(db, full_name="Dr B")
+    await helpers.add_org_member(db, org_a, colleague_a)
+    await helpers.add_org_member(db, org_b, colleague_b)
+    published: list[tuple[set[uuid.UUID], str, dict]] = []
 
-    async def record_publish_org(org_id, event, data):
-        published.append((org_id, event.value, data))
+    async def record(user_ids, event, data):
+        published.append((set(user_ids), event.value, data))
 
-    monkeypatch.setattr(ws_manager, "publish_org", record_publish_org)
+    monkeypatch.setattr(
+        presence_module, "ws_manager", SimpleNamespace(publish_to_users=record)
+    )
     client = TestClient(app)
     with client.websocket_connect("/ws") as ws:
         ws.send_json({"type": "auth", "token": helpers.access_token(multi.id)})
@@ -211,13 +223,15 @@ async def test_ws_connect_publishes_presence_per_org(ws_env, monkeypatch):
         ws.send_json({"type": "heartbeat"})
         ws.receive_json()  # ack — connect path fully ran
         online = [
-            (org, data)
-            for org, event, data in published
+            (ids, data)
+            for ids, event, data in published
             if event == WsEventServer.PRESENCE_UPDATE.value
             and data["status"] == PresenceStatus.ONLINE.value
         ]
-        assert {org for org, _ in online} == {org_a.id, org_b.id}
-        assert all(d["user_id"] == str(multi.id) for _, d in online)
+        assert len(online) == 1
+        ids, data = online[0]
+        assert ids == {colleague_a.id, colleague_b.id}
+        assert data["user_id"] == str(multi.id)
 
 
 async def test_publish_envelopes_use_new_recipient_shapes(monkeypatch):

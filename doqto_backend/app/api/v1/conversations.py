@@ -40,6 +40,7 @@ from app.models import (
     OrgMember,
     ScheduledMessage,
     User,
+    UserPrivacySettings,
 )
 from app.schemas.common import OkResponse
 from app.services.relationship_service import RelationshipService
@@ -231,6 +232,16 @@ async def create_conversation(
         create_access = ConversationAccess.OPEN
         create_initiator = None
 
+    # A new direct chat starts with the creator's default disappearing timer
+    # (privacy screen, batch 2). Never applied to an existing conversation.
+    default_disappear = None
+    if body.type == ConversationType.DIRECT:
+        prefs = await db.scalar(
+            select(UserPrivacySettings.default_disappear_sec).where(
+                UserPrivacySettings.user_id == user.id
+            )
+        )
+        default_disappear = prefs if prefs in DISAPPEAR_OPTIONS_SEC else None
     try:
         conv = await MessageService.create_conversation(
             org_id=conv_org,
@@ -241,6 +252,7 @@ async def create_conversation(
             db=db,
             access=create_access,
             initiator_id=create_initiator,
+            disappear_after_sec=default_disappear,
         )
     except MessageError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -308,9 +320,14 @@ async def list_messages(
             msgs=msgs, conv=conv, db=db
         )
     else:
-        read_ids = await MessageService.read_message_ids(
-            message_ids=[m.id for m in msgs], db=db
-        )
+        # Read receipts off for either party → blue ticks never appear for
+        # the other party (delivered ticks still do).
+        if await MessageService.read_receipts_enabled(conv=conv, db=db):
+            read_ids = await MessageService.read_message_ids(
+                message_ids=[m.id for m in msgs], db=db
+            )
+        else:
+            read_ids = set()
         delivered_ids = await MessageService.delivered_message_ids(
             message_ids=[m.id for m in msgs], db=db
         )
@@ -470,13 +487,16 @@ async def mark_conversation_read(
         db=db,
     )
     recipients = await MessageService.member_ids(conversation_id=conversation_id, db=db)
+    emit = await MessageService.read_receipts_enabled(conv=conv, db=db)
     await db.commit()
     # One conversation-level event: senders flip all their ticks to read.
-    await ws_manager.publish_to_users(
-        recipients,
-        WsEventServer.MESSAGE_READ,
-        {"conversation_id": str(conversation_id), "user_id": str(user.id)},
-    )
+    # Stored regardless; not emitted when either party turned receipts off.
+    if emit:
+        await ws_manager.publish_to_users(
+            recipients,
+            WsEventServer.MESSAGE_READ,
+            {"conversation_id": str(conversation_id), "user_id": str(user.id)},
+        )
     return OkResponse()
 
 

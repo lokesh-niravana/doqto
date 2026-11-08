@@ -75,7 +75,20 @@ class MutualConnectionOut(BaseModel):
 
 
 class BlockOut(BaseModel):
+    """A doctor I blocked, with enough directory data to render the row
+    (their profile 404s for me by design, so the list must carry it). No
+    phone/email/NPI. `id` == `blocked_id` so the client's person-card parser
+    routes on it like every other card."""
+
+    id: uuid.UUID
     blocked_id: uuid.UUID
+    full_name: str = ""
+    headline: str | None = None
+    specialty: str | None = None
+    location_label: str | None = None
+    avatar_color: str | None = None
+    avatar_url: str | None = None
+    avatar_presigned_url: str | None = None
     created_at: datetime
 
 

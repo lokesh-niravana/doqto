@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../core/enums/app_enums.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/motion.dart';
 
@@ -117,6 +118,15 @@ class PresenceStatusDot extends StatelessWidget {
   factory PresenceStatusDot.online() => const PresenceStatusDot(color: AppColors.presenceOnline);
   factory PresenceStatusDot.away() => const PresenceStatusDot(color: AppColors.presenceAway);
   factory PresenceStatusDot.offline() => const PresenceStatusDot(color: AppColors.presenceOffline);
+
+  /// WhatsApp-style: a dot only while the doctor is online (green) or just
+  /// stepped away (amber); offline / unknown / hidden show nothing, so a
+  /// doctor who hides their presence is indistinguishable from one offline.
+  static PresenceStatusDot? forStatus(PresenceStatus? status) => switch (status) {
+        PresenceStatus.online => PresenceStatusDot.online(),
+        PresenceStatus.away => PresenceStatusDot.away(),
+        _ => null,
+      };
 
   @override
   Widget build(BuildContext context) {

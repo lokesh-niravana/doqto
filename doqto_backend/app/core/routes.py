@@ -42,6 +42,7 @@ class ApiRoutes:
     USERS_ME_PHONE = "/me/phone"
     USERS_PUSH_TOKENS = "/me/push-tokens"
     USERS_PRIVACY = "/me/privacy"
+    USERS_PRESENCE = "/presence"  # ?ids=a,b,c (max 50) — privacy-filtered
     USERS_PROFILE = "/{user_id}/profile"  # public profile (M2) — no PHI
 
     # People search (M2) — cross-org directory surface

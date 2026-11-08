@@ -94,12 +94,23 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
           ),
+          FadeSlideIn.staggered(
+            5,
+            ListTile(
+              key: const ValueKey('settings-privacy'),
+              leading: const Icon(Icons.lock_outline, color: AppColors.medBlue),
+              title: const Text(Strings.privacyTitle),
+              subtitle: const Text(Strings.privacySettingsSubtitle),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push(AppRoutes.privacy),
+            ),
+          ),
           // Destructive zone: visually separated from the info rows above,
           // rendered in red via the danger variant.
           const SizedBox(height: AppSpacing.sm),
           const Divider(),
           FadeSlideIn.staggered(
-            5,
+            6,
             Padding(
               padding: const EdgeInsets.all(AppSpacing.lg),
               child: AppButton(
@@ -115,7 +126,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           FadeSlideIn.staggered(
-            6,
+            7,
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg)
                   .copyWith(bottom: AppSpacing.lg),

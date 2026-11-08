@@ -251,7 +251,8 @@ async def mark_read(
     await _assert_conv_member(msg.conversation_id, user.id, db)
     await MessageService.mark_read(message_id=message_id, user_id=user.id, db=db)
     conv = await db.scalar(select(Conversation).where(Conversation.id == msg.conversation_id))
-    if conv is not None:
+    # Stored regardless; not emitted when either party turned receipts off.
+    if conv is not None and await MessageService.read_receipts_enabled(conv=conv, db=db):
         recipients = await MessageService.member_ids(
             conversation_id=msg.conversation_id, db=db
         )
@@ -305,11 +306,14 @@ async def message_receipts(
     )
     await db.commit()
     receipts: dict[uuid.UUID, MessageReceipt] = {}
+    show_read = True
     if conv.type != ConversationType.GROUP:
         rows = await db.scalars(
             select(MessageReceipt).where(MessageReceipt.message_id == message_id)
         )
         receipts = {r.user_id: r for r in rows.all()}
+        # Either party opted out of read receipts → delivered only (batch 2).
+        show_read = await MessageService.read_receipts_enabled(conv=conv, db=db)
     out: list[MessageReceiptOut] = []
     for member, u in members:
         if member.user_id == msg.sender_id:
@@ -331,9 +335,9 @@ async def message_receipts(
         else:
             r = receipts.get(member.user_id)
             if r is not None:
-                row.read = r.read_at is not None
-                row.delivered = row.read or r.delivered_at is not None
-                row.read_at = r.read_at
+                row.read = show_read and r.read_at is not None
+                row.delivered = r.read_at is not None or r.delivered_at is not None
+                row.read_at = r.read_at if show_read else None
                 row.delivered_at = r.delivered_at or r.read_at
         out.append(row)
     # Read first, then delivered, then pending; stable by name inside each.

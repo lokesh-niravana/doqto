@@ -35,6 +35,7 @@ from app.models import (
     MessageReaction,
     MessageReceipt,
     User,
+    UserPrivacySettings,
 )
 from app.schemas.message import MessageOut, ReactionOut
 from app.services.audit_service import AuditService
@@ -56,6 +57,7 @@ class MessageService:
         db: AsyncSession,
         access: ConversationAccess = ConversationAccess.OPEN,
         initiator_id: uuid.UUID | None = None,
+        disappear_after_sec: int | None = None,
     ) -> Conversation:
         if conv_type == ConversationType.GROUP and not name:
             raise MessageError("group_name_required")
@@ -89,6 +91,7 @@ class MessageService:
             created_by=creator_id,
             access=access,
             initiator_id=initiator_id,
+            disappear_after_sec=disappear_after_sec,
         )
         db.add(conv)
         await db.flush()
@@ -799,6 +802,26 @@ class MessageService:
         )
         touched = (await db.execute(stmt)).scalars().all()
         return bool(touched)
+
+    @staticmethod
+    async def read_receipts_enabled(*, conv: Conversation, db: AsyncSession) -> bool:
+        """Direct chats only: read receipts are OFF for the pair when EITHER
+        member turned them off (batch 2). Receipts are still stored (audit),
+        just never emitted or exposed. Groups always show read-by."""
+        if conv.type == ConversationType.GROUP:
+            return True
+        member_ids = select(ConversationMember.user_id).where(
+            ConversationMember.conversation_id == conv.id
+        )
+        off = await db.scalar(
+            select(func.count())
+            .select_from(UserPrivacySettings)
+            .where(
+                UserPrivacySettings.user_id.in_(member_ids),
+                UserPrivacySettings.read_receipts.is_(False),
+            )
+        )
+        return not off
 
     @staticmethod
     async def delivered_message_ids(

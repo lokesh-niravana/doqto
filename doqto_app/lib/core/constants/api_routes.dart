@@ -89,8 +89,10 @@ class ApiRoutes {
   static String suggestionDismiss(String userId) =>
       '$apiV1/network/suggestions/$userId/dismiss';
 
-  // Privacy settings (M1)
+  // Privacy settings (M1 + batch 2)
   static const String usersMePrivacy = '$apiV1/users/me/privacy';
+  // Presence + last seen for up to 50 users, privacy-filtered (batch 2).
+  static const String usersPresence = '$apiV1/users/presence';
 
   // Notifications (M1)
   static const String notifications = '$apiV1/notifications';

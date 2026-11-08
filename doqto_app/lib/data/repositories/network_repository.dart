@@ -152,6 +152,13 @@ class NetworkRepository {
     return PrivacySettings.fromJson(j);
   }
 
+  /// PATCH only the fields that changed — the house style for the privacy
+  /// screen, so one toggle never re-sends (and never clobbers) the rest.
+  Future<PrivacySettings> patchPrivacy(Map<String, dynamic> patch) async {
+    final j = await _api.patch(ApiRoutes.usersMePrivacy, body: patch);
+    return PrivacySettings.fromJson(j);
+  }
+
   // --- Notifications ---
 
   Future<CursorPage<Map<String, dynamic>>> listNotifications({String? cursor}) async {

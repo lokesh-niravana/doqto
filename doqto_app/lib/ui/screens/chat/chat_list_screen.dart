@@ -18,6 +18,7 @@ import '../../../data/models/organization.dart';
 import '../../../state/auth_state.dart';
 import '../../../state/chat_state.dart';
 import '../../../state/org_state.dart';
+import '../../../state/presence_state.dart';
 import '../../widgets/app_pressable.dart';
 import '../../widgets/app_skeleton.dart';
 import '../../widgets/connectivity_banner.dart';
@@ -247,6 +248,16 @@ class _ConversationList extends ConsumerWidget {
             final tb = b.lastMessageAt ?? b.updatedAt;
             return tb.compareTo(ta);
           });
+        // Follow presence for the direct peers on screen (newest chats
+        // first; the notifier caps one call at 50 ids).
+        final peers = <String>[
+          for (final c in list) ?directPeerId(c, meId),
+        ];
+        if (peers.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            ref.read(presenceProvider.notifier).track(peers);
+          });
+        }
         return RefreshIndicator(
           onRefresh: () => ref.read(conversationsProvider.notifier).refresh(),
           child: list.isEmpty
@@ -554,12 +565,16 @@ class _ChatRow extends ConsumerWidget {
     return body;
   }
 
+  /// The other member of a direct chat; null for groups.
+  String? get peerId => display.isDirect ? directPeerId(conversation, meId) : null;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final c = conversation;
     final hasMsg = c.lastMessageType != null;
     final isUnread = c.unreadCount > 0;
     final isTyping = ref.watch(typingProvider(c.id));
+    final peer = peerId;
     final titleStyle = isUnread
         ? AppText.heading.copyWith(fontWeight: FontWeight.w700)
         : AppText.heading;
@@ -607,6 +622,10 @@ class _ChatRow extends ConsumerWidget {
           colorIndex: display.colorIndex,
           imageUrl: display.otherUser?.avatarPresignedUrl,
           isSelected: isSelected,
+          presence: peer == null
+              ? null
+              : PresenceStatusDot.forStatus(
+                  ref.watch(presenceOfProvider(peer))?.status),
         ),
         title: Text(
           display.title,

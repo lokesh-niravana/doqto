@@ -13,6 +13,13 @@ WS_HEARTBEAT_INTERVAL_SECONDS = 60
 # AppConstants.wsHeartbeatTimeout (130s) on the Flutter side.
 WS_HEARTBEAT_TIMEOUT_SECONDS = WS_HEARTBEAT_INTERVAL_SECONDS * 2 + 10
 
+# users.last_seen_at is written at most this often per connected user (WS
+# connect + heartbeats are throttled through Redis; disconnect always writes).
+LAST_SEEN_WRITE_INTERVAL_SECONDS = 60
+# GET /users/presence?ids= accepts at most this many ids per call.
+PRESENCE_QUERY_MAX_IDS = 50
+RATE_LIMIT_PRIVACY_WRITES_PER_MINUTE = 30
+
 # Presigned URL
 PRESIGNED_URL_TTL_SECONDS = 60 * 5  # 5 minutes
 

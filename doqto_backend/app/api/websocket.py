@@ -22,6 +22,7 @@ from app.db.postgres import SessionLocal
 from app.db.redis import get_redis
 from app.models import OrgMember, User
 from app.services.message_service import MessageService
+from app.services.presence_service import PresenceService
 
 logger = logging.getLogger(__name__)
 
@@ -86,14 +87,12 @@ async def _run_socket(websocket: WebSocket) -> None:
     )
     redis: Redis = await get_redis()
     await redis.setex(presence_key(user_id), PRESENCE_ONLINE_TTL_SECONDS, PresenceStatus.ONLINE.value)
-    # One presence broadcast per org the user belongs to (org-wide is
-    # legitimate for presence only).
-    for org_id in org_ids:
-        await ws_manager.publish_org(
-            org_id,
-            WsEventServer.PRESENCE_UPDATE,
-            {"user_id": str(user_id), "status": PresenceStatus.ONLINE.value},
-        )
+    # Durable last-seen stamp (throttled) + one presence event to the user's
+    # audience: org colleagues AND first-degree connections, filtered by the
+    # user's own visibility settings (batch 2).
+    async with SessionLocal() as db:
+        await PresenceService.touch_last_seen(user_id, db)
+        await PresenceService.publish(user_id, PresenceStatus.ONLINE, db)
 
     try:
         while True:
@@ -113,6 +112,8 @@ async def _run_socket(websocket: WebSocket) -> None:
                 await redis.setex(
                     presence_key(user_id), PRESENCE_ONLINE_TTL_SECONDS, PresenceStatus.ONLINE.value
                 )
+                async with SessionLocal() as db:
+                    await PresenceService.touch_last_seen(user_id, db)
                 # Direct ack (no fanout) — the client's liveness signal.
                 await websocket.send_json(
                     {"type": WsEventServer.HEARTBEAT_ACK.value, "data": {}}
@@ -142,12 +143,14 @@ async def _run_socket(websocket: WebSocket) -> None:
     finally:
         await ws_manager.disconnect(user_id, websocket)
         await redis.setex(presence_key(user_id), PRESENCE_AWAY_TTL_SECONDS, PresenceStatus.AWAY.value)
-        for org_id in org_ids:
-            await ws_manager.publish_org(
-                org_id,
-                WsEventServer.PRESENCE_UPDATE,
-                {"user_id": str(user_id), "status": PresenceStatus.AWAY.value},
-            )
+        try:
+            async with SessionLocal() as db:
+                seen = await PresenceService.touch_last_seen(user_id, db, force=True)
+                await PresenceService.publish(
+                    user_id, PresenceStatus.AWAY, db, last_seen_at=seen
+                )
+        except Exception:
+            logger.exception("presence disconnect bookkeeping failed")
 
 
 @router.websocket("/ws")

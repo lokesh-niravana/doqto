@@ -429,6 +429,73 @@ enum Discoverability {
       };
 }
 
+/// Who may see when I was last online (user_privacy_settings, batch 2).
+/// Reciprocal: picking `nobody` hides everyone else's from me too.
+enum LastSeenVisibility {
+  @JsonValue('everyone') everyone,
+  @JsonValue('connections') connections,
+  @JsonValue('nobody') nobody,
+
+  /// Tolerant fallback (A5) — never emitted by the server.
+  @JsonValue('unknown') unknown;
+
+  String get wire => switch (this) {
+        LastSeenVisibility.everyone => 'everyone',
+        LastSeenVisibility.connections => 'connections',
+        LastSeenVisibility.nobody => 'nobody',
+        LastSeenVisibility.unknown => 'unknown',
+      };
+
+  static LastSeenVisibility fromWire(String? s) => switch (s) {
+        'everyone' => LastSeenVisibility.everyone,
+        'connections' => LastSeenVisibility.connections,
+        'nobody' => LastSeenVisibility.nobody,
+        _ => LastSeenVisibility.unknown,
+      };
+}
+
+/// Whether my live "online" state follows my last-seen audience or is hidden.
+enum OnlineVisibility {
+  @JsonValue('same_as_last_seen') sameAsLastSeen,
+  @JsonValue('nobody') nobody,
+
+  /// Tolerant fallback (A5) — never emitted by the server.
+  @JsonValue('unknown') unknown;
+
+  String get wire => switch (this) {
+        OnlineVisibility.sameAsLastSeen => 'same_as_last_seen',
+        OnlineVisibility.nobody => 'nobody',
+        OnlineVisibility.unknown => 'unknown',
+      };
+
+  static OnlineVisibility fromWire(String? s) => switch (s) {
+        'same_as_last_seen' => OnlineVisibility.sameAsLastSeen,
+        'nobody' => OnlineVisibility.nobody,
+        _ => OnlineVisibility.unknown,
+      };
+}
+
+/// Who may see my profile photo / about text (user_privacy_settings, batch 2).
+enum ProfileFieldVisibility {
+  @JsonValue('everyone') everyone,
+  @JsonValue('connections') connections,
+
+  /// Tolerant fallback (A5) — never emitted by the server.
+  @JsonValue('unknown') unknown;
+
+  String get wire => switch (this) {
+        ProfileFieldVisibility.everyone => 'everyone',
+        ProfileFieldVisibility.connections => 'connections',
+        ProfileFieldVisibility.unknown => 'unknown',
+      };
+
+  static ProfileFieldVisibility fromWire(String? s) => switch (s) {
+        'everyone' => ProfileFieldVisibility.everyone,
+        'connections' => ProfileFieldVisibility.connections,
+        _ => ProfileFieldVisibility.unknown,
+      };
+}
+
 /// Member capability ladder (groups, M5). Shared wire enum — mirrors backend
 /// GroupRole. §9.3.
 enum GroupRole {
@@ -494,19 +561,25 @@ enum RelationshipState {
   none,
   pendingOutgoing,
   pendingIncoming,
-  connected;
+  connected,
+
+  /// I blocked this doctor. Only ever sent to the blocker (the blocked party
+  /// gets a generic 404), so the profile can offer Unblock.
+  blocked;
 
   String get wire => switch (this) {
         RelationshipState.none => 'none',
         RelationshipState.pendingOutgoing => 'pending_outgoing',
         RelationshipState.pendingIncoming => 'pending_incoming',
         RelationshipState.connected => 'connected',
+        RelationshipState.blocked => 'blocked',
       };
 
   static RelationshipState fromWire(String? s) => switch (s) {
         'pending_outgoing' => RelationshipState.pendingOutgoing,
         'pending_incoming' => RelationshipState.pendingIncoming,
         'connected' => RelationshipState.connected,
+        'blocked' => RelationshipState.blocked,
         _ => RelationshipState.none,
       };
 }

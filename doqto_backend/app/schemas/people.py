@@ -17,7 +17,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 DegreeLabel = Literal["1st", "2nd", "3rd", "out"]
-ConnectionState = Literal["none", "pending_outgoing", "pending_incoming", "connected"]
+# "blocked" is only ever returned to the BLOCKER (the blocked party gets 404).
+ConnectionState = Literal["none", "pending_outgoing", "pending_incoming", "connected", "blocked"]
 CanMessage = Literal["open", "request", "denied"]
 
 

@@ -21,6 +21,9 @@ class PersonCardRow extends StatelessWidget {
   /// Replaces the headline/specialty line (e.g. why a doctor is suggested).
   final String? subtitle;
 
+  /// Presence dot on the avatar (green online / amber away); null = none.
+  final PresenceStatusDot? presence;
+
   const PersonCardRow({
     super.key,
     required this.person,
@@ -28,6 +31,7 @@ class PersonCardRow extends StatelessWidget {
     this.onLongPress,
     this.trailing,
     this.subtitle,
+    this.presence,
   });
 
   @override
@@ -40,6 +44,7 @@ class PersonCardRow extends StatelessWidget {
         colorIndex: person.avatarIndex,
         imageUrl: person.avatarPresignedUrl,
         size: AvatarSize.lg,
+        presence: presence,
         heroTag: 'member-avatar-${person.id}',
       ),
       title: person.fullName,

@@ -157,6 +157,11 @@ class RelationshipService:
 
     # -- privacy ---------------------------------------------------------- #
     @staticmethod
+    async def privacy(user_id: UUID, db: AsyncSession) -> PrivacySnapshot:
+        """Effective privacy settings (defaults when no row exists)."""
+        return await RelationshipService._privacy(user_id, db)
+
+    @staticmethod
     async def _privacy(user_id: UUID, db: AsyncSession) -> PrivacySnapshot:
         row = await db.scalar(
             select(UserPrivacySettings).where(UserPrivacySettings.user_id == user_id)
@@ -168,6 +173,11 @@ class RelationshipService:
             dm_policy=row.dm_policy,
             discoverability=row.discoverability,
             show_mutual_connections=row.show_mutual_connections,
+            last_seen_visibility=row.last_seen_visibility,
+            online_visibility=row.online_visibility,
+            profile_photo_visibility=row.profile_photo_visibility,
+            about_visibility=row.about_visibility,
+            read_receipts=row.read_receipts,
         )
 
     # -- context ---------------------------------------------------------- #

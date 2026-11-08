@@ -128,6 +128,38 @@ Who may find me / view my profile (`user_privacy_settings`, M1). Client edits it
 | `connections` | Only my connections |
 | `nobody` | Not discoverable |
 
+## LastSeenVisibility
+
+Who may see when I was last online (`user_privacy_settings`, batch 2). Client
+edits it. "Connections" means first-degree connections AND same-org
+colleagues. Reciprocal: a user who picks `nobody` sees nobody else's either.
+
+| Wire value | Meaning |
+|---|---|
+| `everyone` | Anyone who can reach my profile |
+| `connections` | Connections and colleagues (default) |
+| `nobody` | Hidden — and I see nobody's |
+
+## OnlineVisibility
+
+Whether my live "online" state is shown (`user_privacy_settings`, batch 2).
+
+| Wire value | Meaning |
+|---|---|
+| `same_as_last_seen` | Follows LastSeenVisibility (default) |
+| `nobody` | Never shown online; last seen still follows its own setting |
+
+## ProfileFieldVisibility
+
+Who may see my profile photo / about text (`user_privacy_settings`, batch 2 —
+`profile_photo_visibility`, `about_visibility`). Hidden fields come back `null`
+on `GET /users/{id}/profile`; the initials avatar always renders.
+
+| Wire value | Meaning |
+|---|---|
+| `everyone` | Anyone who can reach my profile (default) |
+| `connections` | Connections and colleagues only |
+
 ## ReportStatus (backend-only)
 
 Moderation report lifecycle — never sent to the Flutter client (queue UI is M7),
@@ -220,7 +252,7 @@ Invite lifecycle — direct + link (M5). Backend-only.
 |---|---|
 | `online` | Active in last 5 min |
 | `away` | Inactive 5–30 min |
-| `offline` | Inactive 30+ min |
+| `offline` | Inactive 30+ min — ALSO what a viewer gets for a doctor whose settings hide presence from them (`GET /users/presence`, batch 2), with `last_seen_at: null` |
 
 ## DisappearAfter
 
@@ -242,7 +274,7 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `transcript_ready` | `message_id, transcript` |
 | `message_delivered` | `conversation_id, user_id` (conversation-level ack) |
 | `message_read` | `message_id, user_id, read_at` |
-| `presence_update` | `user_id, status` |
+| `presence_update` | `user_id, status, last_seen_at` — recipient-scoped since batch 2: sent to the user's connections + org colleagues, minus anyone their settings hide it from and anyone hiding their own (reciprocal); `last_seen_at` is set on `away` |
 | `member_added` | `conversation_id, user_id, user_name` |
 | `member_removed` | `conversation_id, user_id` |
 | `system_message` | `conversation_id, text` |
@@ -332,6 +364,7 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `group_invite_sent` | A direct or link group invite was created (M5) |
 | `group_invite_accepted` | A group invite was accepted → membership formed (M5) |
 | `message_receipts_read` | Sender viewed a message's read-by / delivered-to list (`GET /messages/{id}/receipts`) |
+| `privacy_updated` | A privacy setting changed (`PATCH /users/me/privacy`); meta lists the field names only |
 
 ## TranscribeSpecialty (AWS Transcribe Medical)
 

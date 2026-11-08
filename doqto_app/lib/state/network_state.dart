@@ -113,6 +113,23 @@ class RelationshipNotifier extends FamilyAsyncNotifier<NetworkProfile, String> {
     }
   }
 
+  /// blocked → none (optimistic; the server refuses nothing here except a
+  /// network error, which rolls the profile back to Unblock). After an
+  /// unblock the pair is NOT reconnected — the block tore the edge down.
+  Future<void> unblock() async {
+    final rel = state.value?.relationship;
+    if (rel == null) return;
+    await _mutate(
+      rel.copyWith(connectionState: RelationshipState.none),
+      () => _repo.unblock(arg),
+    );
+    if (ref.exists(blockedProvider)) {
+      ref.read(blockedProvider.notifier).removeLocally(arg);
+    }
+    // The real relationship (colleague? discoverable?) is the server's call.
+    refresh();
+  }
+
   /// none → pending_outgoing.
   Future<void> invite({String? message}) async {
     final rel = state.value?.relationship;
@@ -278,10 +295,14 @@ class ConnectionsNotifier extends AsyncNotifier<List<PersonCard>> {
     _removeLocally(userId);
     try {
       await ref.read(networkRepositoryProvider).block(userId);
-      _patchRelationship(ref, userId, RelationshipState.none);
+      // The profile stays reachable for ME and now offers Unblock.
+      _patchRelationship(ref, userId, RelationshipState.blocked);
       ref.read(invitationsProvider.notifier).removeBySender(userId);
       ref.read(sentInvitationsProvider.notifier).removeByRecipient(userId);
       ref.read(suggestionsProvider.notifier).removeUser(userId);
+      if (ref.exists(blockedProvider)) {
+        ref.read(blockedProvider.notifier).refresh();
+      }
     } catch (e) {
       await refresh();
       rethrow;
@@ -292,6 +313,47 @@ class ConnectionsNotifier extends AsyncNotifier<List<PersonCard>> {
 final connectionsProvider =
     AsyncNotifierProvider<ConnectionsNotifier, List<PersonCard>>(
         ConnectionsNotifier.new);
+
+/// The doctors I blocked (Settings → Privacy → Blocked contacts). Unblock is
+/// optimistic: the row goes now, comes back if the server refuses, and the
+/// person's profile (if open) flips from Unblock to Connect.
+class BlockedNotifier extends AsyncNotifier<List<PersonCard>> {
+  @override
+  Future<List<PersonCard>> build() async {
+    final page = await ref.read(networkRepositoryProvider).listBlocks();
+    return page.data;
+  }
+
+  Future<void> refresh() async {
+    try {
+      final page = await ref.read(networkRepositoryProvider).listBlocks();
+      state = AsyncData(page.data);
+    } catch (_) {
+      // Offline refresh: keep showing what we have.
+    }
+  }
+
+  void removeLocally(String userId) {
+    final list = state.valueOrNull;
+    if (list == null) return;
+    state = AsyncData([for (final p in list) if (p.id != userId) p]);
+  }
+
+  Future<void> unblock(String userId) async {
+    final before = state.valueOrNull ?? const <PersonCard>[];
+    state = AsyncData([for (final p in before) if (p.id != userId) p]);
+    try {
+      await ref.read(networkRepositoryProvider).unblock(userId);
+      _patchRelationship(ref, userId, RelationshipState.none);
+    } catch (e) {
+      state = AsyncData(before);
+      rethrow;
+    }
+  }
+}
+
+final blockedProvider =
+    AsyncNotifierProvider<BlockedNotifier, List<PersonCard>>(BlockedNotifier.new);
 
 /// Received, still-pending invitations. Network-only (no cache — this is a
 /// live inbox). Refreshes on invitation_received / invitation_accepted /

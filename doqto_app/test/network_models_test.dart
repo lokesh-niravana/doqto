@@ -24,6 +24,51 @@ void main() {
       expect(DmPolicy.connectionsAndRequests.wire, 'connections_and_requests');
     });
 
+    test('batch 2 visibility enums tolerate garbage', () {
+      expect(LastSeenVisibility.fromWire('garbage'), LastSeenVisibility.unknown);
+      expect(LastSeenVisibility.fromWire('nobody'), LastSeenVisibility.nobody);
+      expect(OnlineVisibility.fromWire('same_as_last_seen'),
+          OnlineVisibility.sameAsLastSeen);
+      expect(OnlineVisibility.fromWire(null), OnlineVisibility.unknown);
+      expect(ProfileFieldVisibility.fromWire('connections'),
+          ProfileFieldVisibility.connections);
+      expect(RelationshipState.fromWire('blocked'), RelationshipState.blocked);
+    });
+
+    test('PrivacySettings parses the batch 2 fields with defaults', () {
+      final legacy = PrivacySettings.fromJson({
+        'invite_policy': 'everyone',
+        'dm_policy': 'connections_only',
+        'discoverability': 'connections',
+      });
+      expect(legacy.lastSeenVisibility, LastSeenVisibility.connections);
+      expect(legacy.onlineVisibility, OnlineVisibility.sameAsLastSeen);
+      expect(legacy.readReceipts, isTrue);
+      expect(legacy.defaultDisappearSec, isNull);
+      expect(legacy.linkPreviews, isTrue);
+      expect(legacy.showMutualConnections, isTrue);
+
+      final full = PrivacySettings.fromJson({
+        'invite_policy': 'nobody',
+        'dm_policy': 'everyone',
+        'discoverability': 'everyone',
+        'show_mutual_connections': false,
+        'last_seen_visibility': 'nobody',
+        'online_visibility': 'nobody',
+        'profile_photo_visibility': 'connections',
+        'about_visibility': 'connections',
+        'read_receipts': false,
+        'default_disappear_sec': 86400,
+        'link_previews': false,
+      });
+      expect(full.lastSeenVisibility, LastSeenVisibility.nobody);
+      expect(full.profilePhotoVisibility, ProfileFieldVisibility.connections);
+      expect(full.defaultDisappearSec, 86400);
+      expect(full.toJson()['about_visibility'], 'connections');
+      expect(full.copyWith(defaultDisappearSec: () => null).defaultDisappearSec, isNull);
+      expect(full.copyWith(readReceipts: true).defaultDisappearSec, 86400);
+    });
+
     test('Discoverability.fromWire garbage → unknown', () {
       expect(Discoverability.fromWire('garbage'), Discoverability.unknown);
       expect(Discoverability.fromWire('connections'), Discoverability.connections);

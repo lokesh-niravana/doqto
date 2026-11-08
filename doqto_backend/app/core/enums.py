@@ -89,6 +89,26 @@ class Discoverability(StrEnum):
     NOBODY = "nobody"
 
 
+class LastSeenVisibility(StrEnum):
+    # Who may see when I was last online (user_privacy_settings, batch 2).
+    # Reciprocal: a user who picks `nobody` sees nobody else's either.
+    EVERYONE = "everyone"
+    CONNECTIONS = "connections"
+    NOBODY = "nobody"
+
+
+class OnlineVisibility(StrEnum):
+    # Whether my live "online" state follows my last-seen audience or is hidden.
+    SAME_AS_LAST_SEEN = "same_as_last_seen"
+    NOBODY = "nobody"
+
+
+class ProfileFieldVisibility(StrEnum):
+    # Who may see my profile photo / about text (user_privacy_settings, batch 2).
+    EVERYONE = "everyone"
+    CONNECTIONS = "connections"
+
+
 class ReportStatus(StrEnum):
     """Moderation report lifecycle — backend-only (queue UI is M7)."""
 
@@ -269,6 +289,8 @@ class AuditAction(StrEnum):
     GROUP_INVITE_SENT = "group_invite_sent"
     GROUP_INVITE_ACCEPTED = "group_invite_accepted"
     MESSAGE_RECEIPTS_READ = "message_receipts_read"
+    # Privacy screen (batch 2) — backend-only.
+    PRIVACY_UPDATED = "privacy_updated"
 
 
 class TranscribeSpecialty(StrEnum):

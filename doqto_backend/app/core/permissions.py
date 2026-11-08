@@ -24,7 +24,14 @@ from dataclasses import dataclass, field
 from typing import Literal
 from uuid import UUID
 
-from app.core.enums import Discoverability, DmPolicy, InvitePolicy
+from app.core.enums import (
+    Discoverability,
+    DmPolicy,
+    InvitePolicy,
+    LastSeenVisibility,
+    OnlineVisibility,
+    ProfileFieldVisibility,
+)
 
 Mode = Literal["open", "request", "denied"]
 
@@ -37,6 +44,12 @@ class PrivacySnapshot:
     dm_policy: DmPolicy = DmPolicy.CONNECTIONS_AND_REQUESTS
     discoverability: Discoverability = Discoverability.EVERYONE
     show_mutual_connections: bool = True
+    # Batch 2 — presence + profile-field visibility.
+    last_seen_visibility: LastSeenVisibility = LastSeenVisibility.CONNECTIONS
+    online_visibility: OnlineVisibility = OnlineVisibility.SAME_AS_LAST_SEEN
+    profile_photo_visibility: ProfileFieldVisibility = ProfileFieldVisibility.EVERYONE
+    about_visibility: ProfileFieldVisibility = ProfileFieldVisibility.EVERYONE
+    read_receipts: bool = True
 
 
 @dataclass(frozen=True)
@@ -180,3 +193,54 @@ def can_add_to_group(ctx: RelationshipContext) -> Decision:
     if not ctx.external_networking_enabled_for_both:
         return Decision.denied("networking_disabled")
     return Decision.denied("not_connected")
+
+
+# --------------------------------------------------------------------------- #
+# Presence + profile-field visibility (batch 2)
+# --------------------------------------------------------------------------- #
+# "connections" means the people a doctor already works with: first-degree
+# connections AND same-org colleagues (the same regression rule that lets
+# colleagues always see each other's profile — org member lists have shown
+# presence since M0 and must keep doing so). Strangers only get
+# everyone-scoped fields.
+def _is_close(ctx: RelationshipContext) -> bool:
+    return _is_colleague(ctx) or ctx.is_first_degree
+
+
+def can_see_last_seen(ctx: RelationshipContext) -> bool:
+    """May the viewer see the target's last_seen_at? Reciprocal: a viewer who
+    hides their own last seen sees nobody's. Blocked pairs see nothing."""
+    if ctx.is_blocked_either_way or ctx.viewer_id == ctx.target_id:
+        return False
+    if ctx.viewer_privacy.last_seen_visibility == LastSeenVisibility.NOBODY:
+        return False
+    vis = ctx.target_privacy.last_seen_visibility
+    if vis == LastSeenVisibility.EVERYONE:
+        return True
+    if vis == LastSeenVisibility.CONNECTIONS:
+        return _is_close(ctx)
+    return False
+
+
+def can_see_online(ctx: RelationshipContext) -> bool:
+    """May the viewer see the target as online/away right now? Follows the
+    last-seen audience unless the target hid online status outright."""
+    if ctx.target_privacy.online_visibility == OnlineVisibility.NOBODY:
+        return False
+    return can_see_last_seen(ctx)
+
+
+def _field_visible(ctx: RelationshipContext, vis: ProfileFieldVisibility) -> bool:
+    if ctx.is_blocked_either_way:
+        return False
+    if vis == ProfileFieldVisibility.EVERYONE:
+        return True
+    return _is_close(ctx)
+
+
+def can_see_profile_photo(ctx: RelationshipContext) -> bool:
+    return _field_visible(ctx, ctx.target_privacy.profile_photo_visibility)
+
+
+def can_see_about(ctx: RelationshipContext) -> bool:
+    return _field_visible(ctx, ctx.target_privacy.about_visibility)

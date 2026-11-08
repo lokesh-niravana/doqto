@@ -3,30 +3,41 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
     AVATAR_ALLOWED_EXT,
     AVATAR_ALLOWED_MIME,
     AVATAR_MAX_BYTES,
+    PRESENCE_QUERY_MAX_IDS,
+    RATE_LIMIT_PRIVACY_WRITES_PER_MINUTE,
+    RATE_LIMIT_READS_PER_MINUTE,
 )
 from app.api.ws_manager import ws_manager
 from app.core.dependencies import get_current_user
-from app.core.enums import InvitationStatus, WsEventServer
-from app.core.permissions import can_message, can_view_profile
+from app.core.enums import AuditAction, InvitationStatus, WsEventServer
+from app.core.permissions import (
+    can_message,
+    can_see_about,
+    can_see_profile_photo,
+    can_view_profile,
+)
+from app.core.rate_limit import enforce_rate_limit
 from app.core.routes import ApiRoutes
 from app.db.postgres import get_db
-from app.models import ConnectionInvitation, OrgMember, User, UserPrivacySettings
+from app.models import Block, ConnectionInvitation, User, UserPrivacySettings
 from app.schemas.auth import LinkPhoneIn
 from app.schemas.common import OkResponse
 from app.schemas.people import PublicProfileOut, location_label
-from app.schemas.privacy import PrivacyOut, PrivacyPatch
+from app.schemas.privacy import PresenceOut, PrivacyOut, PrivacyPatch
 from app.schemas.push import PushTokenDeleteIn, PushTokenIn
 from app.schemas.user import UserOut, UserPatch, build_user_out
 from app.services.account_deletion_service import AccountDeletionService
 from app.services.auth_service import AuthError, AuthService, PhoneTaken, WrongAccount
+from app.services.audit_service import AuditService
 from app.services.file_service import FileService
+from app.services.presence_service import PresenceService
 from app.services.push_service import PushService
 from app.services.relationship_service import RelationshipService
 from app.services.stripe_client import StripeGateway, get_optional_stripe
@@ -40,14 +51,7 @@ _DEGREE_LABEL = {1: "1st", 2: "2nd", "3+": "3rd", "out": "out"}
 async def _profile_audience(user_id: uuid.UUID, db: AsyncSession) -> list[uuid.UUID]:
     """Everyone who renders this user's profile from a cache: first-degree
     connections ∪ members of every org the user belongs to, minus the user."""
-    first_degree = await RelationshipService.first_degree_ids(user_id, db)
-    my_orgs = select(OrgMember.org_id).where(OrgMember.user_id == user_id)
-    colleagues = await db.scalars(
-        select(OrgMember.user_id).where(OrgMember.org_id.in_(my_orgs)).distinct()
-    )
-    audience = {*first_degree, *colleagues.all()}
-    audience.discard(user_id)
-    return list(audience)
+    return await PresenceService.audience(user_id, db)
 
 
 async def _commit_and_publish_profile_updated(user: User, db: AsyncSession) -> None:
@@ -82,20 +86,74 @@ async def get_privacy(
     return PrivacyOut.model_validate(row)
 
 
+_PRIVACY_FIELDS = (
+    "invite_policy",
+    "dm_policy",
+    "discoverability",
+    "show_mutual_connections",
+    "last_seen_visibility",
+    "online_visibility",
+    "profile_photo_visibility",
+    "about_visibility",
+    "read_receipts",
+    "default_disappear_sec",
+    "link_previews",
+)
+
+
 @router.patch(ApiRoutes.USERS_PRIVACY, response_model=PrivacyOut)
 async def update_privacy(
     body: PrivacyPatch,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> PrivacyOut:
+    await enforce_rate_limit(user.id, "update_privacy", RATE_LIMIT_PRIVACY_WRITES_PER_MINUTE)
     row = await _get_or_create_privacy(user.id, db)
     data = body.model_dump(exclude_unset=True)
-    for field in ("invite_policy", "dm_policy", "discoverability", "show_mutual_connections"):
-        if field in data:
-            setattr(row, field, data[field])
+    changed = {f: data[f] for f in _PRIVACY_FIELDS if f in data}
+    for field, value in changed.items():
+        setattr(row, field, value)
+    if changed:
+        # Settings names only — never PHI. Which toggles moved is useful when a
+        # doctor asks why a colleague stopped seeing their read receipts.
+        await AuditService.log_request(
+            request,
+            user_id=user.id,
+            action=AuditAction.PRIVACY_UPDATED,
+            resource_type="user",
+            resource_id=user.id,
+            db=db,
+            metadata={"fields": sorted(changed)},
+        )
     await db.commit()
     await db.refresh(row)
     return PrivacyOut.model_validate(row)
+
+
+@router.get(ApiRoutes.USERS_PRESENCE, response_model=list[PresenceOut])
+async def presence(
+    ids: str = Query(..., description="comma-separated user ids, max 50"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[PresenceOut]:
+    """Presence + last seen for up to 50 users, filtered by each target's
+    last-seen / online visibility relative to the caller and by the reciprocal
+    rule (a caller hiding their own last seen sees nobody's). A hidden target
+    is indistinguishable from an offline stranger; unknown ids are omitted."""
+    await enforce_rate_limit(user.id, "presence", RATE_LIMIT_READS_PER_MINUTE)
+    raw = [part.strip() for part in ids.split(",") if part.strip()]
+    if not raw or len(raw) > PRESENCE_QUERY_MAX_IDS:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="presence_ids_invalid"
+        )
+    try:
+        target_ids = list(dict.fromkeys(uuid.UUID(part) for part in raw))
+    except ValueError as e:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="presence_ids_invalid"
+        ) from e
+    return await PresenceService.snapshot_for(user.id, target_ids, db)
 
 
 @router.get("/me", response_model=UserOut)
@@ -195,10 +253,30 @@ async def get_public_profile(
     NPI, ever. No audit (not PHI content — avoids audit flood). A blocked or
     non-existent / non-viewable target returns a generic 404 (silence rule)."""
     target = await db.get(User, user_id)
-    if target is None:
+    if target is None or target.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="user_unavailable")
 
     ctx = await RelationshipService.load_context(user.id, user_id, db)
+    # The blocker already knows they blocked this doctor, so showing THEM a
+    # stripped card with an Unblock affordance leaks nothing. The blocked
+    # party still gets the generic 404 (silence rule).
+    blocked_by_me = ctx.is_blocked_either_way and (
+        await db.scalar(
+            select(Block.id).where(Block.blocker_id == user.id, Block.blocked_id == user_id)
+        )
+    ) is not None
+    if blocked_by_me:
+        return PublicProfileOut(
+            id=target.id,
+            full_name=target.full_name,
+            headline=target.headline,
+            specialty=target.specialty,
+            location_label=location_label(target.city, target.state),
+            avatar_color=target.avatar_color,
+            degree="out",
+            connection_state="blocked",
+            can_message="denied",
+        )
     if not can_view_profile(ctx).allowed:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="user_unavailable")
 
@@ -219,8 +297,11 @@ async def get_public_profile(
     elif ctx.shared_org_ids:
         context_label = "You share an organization"
 
+    # Field visibility (batch 2): photo and about are per-audience; the
+    # avatar_color initials fallback is not a photo and always renders.
+    show_photo = can_see_profile_photo(ctx)
     avatar_presigned = None
-    if target.avatar_url:
+    if show_photo and target.avatar_url:
         avatar_presigned = await FileService.presigned_url(key=target.avatar_url)
 
     return PublicProfileOut(
@@ -230,9 +311,9 @@ async def get_public_profile(
         specialty=target.specialty,
         location_label=location_label(target.city, target.state),
         avatar_color=target.avatar_color,
-        avatar_url=target.avatar_url,
+        avatar_url=target.avatar_url if show_photo else None,
         avatar_presigned_url=avatar_presigned,
-        about=target.bio,
+        about=target.bio if can_see_about(ctx) else None,
         years_of_experience=target.years_of_experience,
         skills=target.skills or [],
         degree=degree,

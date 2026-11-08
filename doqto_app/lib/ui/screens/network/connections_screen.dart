@@ -12,7 +12,9 @@ import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../data/models/network_profile.dart';
 import '../../../state/network_state.dart';
+import '../../../state/presence_state.dart';
 import '../../widgets/app_skeleton.dart';
+import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/person_card_row.dart';
 import '../../widgets/primary_button.dart';
@@ -41,6 +43,17 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(connectionsProvider);
+    // Follow presence for the people on this list (the server filters what
+    // each of them lets me see).
+    ref.listen<AsyncValue<List<PersonCard>>>(connectionsProvider, (_, next) {
+      final list = next.valueOrNull;
+      if (list == null) return;
+      ref.read(presenceProvider.notifier).track(list.map((p) => p.id));
+    });
+    final current = async.valueOrNull;
+    if (current != null) {
+      ref.read(presenceProvider.notifier).track(current.map((p) => p.id));
+    }
     return Scaffold(
       backgroundColor: AppColors.appBg,
       appBar: AppBar(title: const Text(Strings.netConnections)),
@@ -85,6 +98,8 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
                         i,
                         PersonCardRow(
                           person: p,
+                          presence: PresenceStatusDot.forStatus(
+                              ref.watch(presenceOfProvider(p.id))?.status),
                           onTap: () => context.push(AppRoutes.person(p.id)),
                           onLongPress: () => _openSheet(context, p),
                           trailing: IconButton(

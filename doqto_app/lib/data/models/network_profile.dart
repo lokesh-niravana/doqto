@@ -273,25 +273,104 @@ class PrivacySettings {
   final InvitePolicy invitePolicy;
   final DmPolicy dmPolicy;
   final Discoverability discoverability;
+  final bool showMutualConnections;
+  final LastSeenVisibility lastSeenVisibility;
+  final OnlineVisibility onlineVisibility;
+  final ProfileFieldVisibility profilePhotoVisibility;
+  final ProfileFieldVisibility aboutVisibility;
+
+  /// Direct chats only; groups always show read-by.
+  final bool readReceipts;
+
+  /// Applied to new direct chats I start. null = off.
+  final int? defaultDisappearSec;
+  final bool linkPreviews;
 
   const PrivacySettings({
     required this.invitePolicy,
     required this.dmPolicy,
     required this.discoverability,
+    this.showMutualConnections = true,
+    this.lastSeenVisibility = LastSeenVisibility.connections,
+    this.onlineVisibility = OnlineVisibility.sameAsLastSeen,
+    this.profilePhotoVisibility = ProfileFieldVisibility.everyone,
+    this.aboutVisibility = ProfileFieldVisibility.everyone,
+    this.readReceipts = true,
+    this.defaultDisappearSec,
+    this.linkPreviews = true,
   });
+
+  /// Server defaults — what a doctor who never opened the screen has.
+  static const defaults = PrivacySettings(
+    invitePolicy: InvitePolicy.everyone,
+    dmPolicy: DmPolicy.connectionsAndRequests,
+    discoverability: Discoverability.everyone,
+  );
 
   factory PrivacySettings.fromJson(Map<String, dynamic> j) => PrivacySettings(
         invitePolicy: InvitePolicy.fromWire((j['invite_policy'] ?? 'everyone') as String),
-        dmPolicy: DmPolicy.fromWire((j['dm_policy'] ?? 'everyone') as String),
+        dmPolicy: DmPolicy.fromWire(
+            (j['dm_policy'] ?? 'connections_and_requests') as String),
         discoverability:
             Discoverability.fromWire((j['discoverability'] ?? 'everyone') as String),
+        showMutualConnections: (j['show_mutual_connections'] ?? true) as bool,
+        lastSeenVisibility: LastSeenVisibility.fromWire(
+            (j['last_seen_visibility'] ?? 'connections') as String?),
+        onlineVisibility: OnlineVisibility.fromWire(
+            (j['online_visibility'] ?? 'same_as_last_seen') as String?),
+        profilePhotoVisibility: ProfileFieldVisibility.fromWire(
+            (j['profile_photo_visibility'] ?? 'everyone') as String?),
+        aboutVisibility: ProfileFieldVisibility.fromWire(
+            (j['about_visibility'] ?? 'everyone') as String?),
+        readReceipts: (j['read_receipts'] ?? true) as bool,
+        defaultDisappearSec: (j['default_disappear_sec'] as num?)?.toInt(),
+        linkPreviews: (j['link_previews'] ?? true) as bool,
       );
 
+  /// Full snapshot. PATCH callers send only the field that changed (see
+  /// NetworkRepository.patchPrivacy) so a tolerant `unknown` never goes back.
   Map<String, dynamic> toJson() => {
         'invite_policy': invitePolicy.wire,
         'dm_policy': dmPolicy.wire,
         'discoverability': discoverability.wire,
+        'show_mutual_connections': showMutualConnections,
+        'last_seen_visibility': lastSeenVisibility.wire,
+        'online_visibility': onlineVisibility.wire,
+        'profile_photo_visibility': profilePhotoVisibility.wire,
+        'about_visibility': aboutVisibility.wire,
+        'read_receipts': readReceipts,
+        'default_disappear_sec': defaultDisappearSec,
+        'link_previews': linkPreviews,
       };
+
+  PrivacySettings copyWith({
+    InvitePolicy? invitePolicy,
+    DmPolicy? dmPolicy,
+    Discoverability? discoverability,
+    bool? showMutualConnections,
+    LastSeenVisibility? lastSeenVisibility,
+    OnlineVisibility? onlineVisibility,
+    ProfileFieldVisibility? profilePhotoVisibility,
+    ProfileFieldVisibility? aboutVisibility,
+    bool? readReceipts,
+    int? Function()? defaultDisappearSec,
+    bool? linkPreviews,
+  }) =>
+      PrivacySettings(
+        invitePolicy: invitePolicy ?? this.invitePolicy,
+        dmPolicy: dmPolicy ?? this.dmPolicy,
+        discoverability: discoverability ?? this.discoverability,
+        showMutualConnections: showMutualConnections ?? this.showMutualConnections,
+        lastSeenVisibility: lastSeenVisibility ?? this.lastSeenVisibility,
+        onlineVisibility: onlineVisibility ?? this.onlineVisibility,
+        profilePhotoVisibility: profilePhotoVisibility ?? this.profilePhotoVisibility,
+        aboutVisibility: aboutVisibility ?? this.aboutVisibility,
+        readReceipts: readReceipts ?? this.readReceipts,
+        defaultDisappearSec: defaultDisappearSec == null
+            ? this.defaultDisappearSec
+            : defaultDisappearSec(),
+        linkPreviews: linkPreviews ?? this.linkPreviews,
+      );
 }
 
 /// A cursor-paginated list page — `{data, next_cursor}`.

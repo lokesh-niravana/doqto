@@ -18,6 +18,7 @@ import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/shadows.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
+import '../../../core/utils/datetime_format.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../data/api/api_client.dart';
 import '../../../data/models/conversation.dart';
@@ -30,6 +31,7 @@ import '../../../state/chat_state.dart';
 import '../../../state/groups_state.dart';
 import '../../../state/notification_state.dart';
 import '../../../state/org_state.dart';
+import '../../../state/presence_state.dart';
 import '../../widgets/app_pressable.dart';
 import '../../widgets/attachment_bubbles.dart';
 import '../../widgets/connectivity_banner.dart';
@@ -1203,10 +1205,27 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         group != null && group.isMember && !group.canPost;
     _members = {for (final m in members) m.userId: m};
     _peerName = groupId == null ? display?.title : null;
+    // Direct chat: "online" or "last seen …" under the name, from what the
+    // peer's privacy settings let me see (nothing → no line at all).
+    final peerId = groupId == null && conv != null
+        ? directPeerId(conv, me?.id)
+        : null;
+    final peerPresence =
+        peerId == null ? null : ref.watch(presenceOfProvider(peerId));
+    if (peerId != null && peerPresence == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ref.read(presenceProvider.notifier).track([peerId]);
+      });
+    }
+    final presenceLine = peerPresence == null
+        ? null
+        : peerPresence.isOnline
+        ? Strings.presenceOnline
+        : formatLastSeen(peerPresence.lastSeenAt);
     final subtitle = otherTyping
         ? null
         : groupId == null
-        ? null
+        ? (presenceLine == null || presenceLine.isEmpty ? null : presenceLine)
         : _memberLine(members, me?.id);
 
     return PopScope(
@@ -1247,8 +1266,14 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                                   if (subtitle != null)
                                     Text(
                                       subtitle,
+                                      key: const ValueKey('thread-subtitle'),
                                       overflow: TextOverflow.ellipsis,
-                                      style: AppText.caption,
+                                      style: subtitle == Strings.presenceOnline
+                                          ? AppText.caption.copyWith(
+                                              color: AppColors.presenceOnline,
+                                              fontWeight: FontWeight.w600,
+                                            )
+                                          : AppText.caption,
                                     ),
                                   if (otherTyping)
                                     Text(

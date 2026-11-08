@@ -30,7 +30,7 @@ from app.models import (
     User,
 )
 from app.schemas.common import OkResponse
-from app.schemas.people import PeopleSearchPage
+from app.schemas.people import PeopleSearchPage, location_label
 from app.schemas.network import (
     BlockOut,
     ConnectionCardOut,
@@ -348,15 +348,40 @@ async def dismiss_suggestion(
 # ---------------------------------------------------------------------- #
 # Blocks
 # ---------------------------------------------------------------------- #
-@router.get(ApiRoutes.NETWORK_BLOCKS, response_model=list[BlockOut])
+@router.get(ApiRoutes.NETWORK_BLOCKS, response_model=CursorPage)
 async def list_blocks(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> list[BlockOut]:
+) -> CursorPage:
+    """Everyone I blocked, newest first, as person cards ({data, next_cursor}
+    like every other list; a block list is short, so one page)."""
+    await enforce_rate_limit(user.id, "list_blocks", RATE_LIMIT_READS_PER_MINUTE)
     rows = (
-        await db.scalars(select(Block).where(Block.blocker_id == user.id))
+        await db.execute(
+            select(Block, User)
+            .join(User, User.id == Block.blocked_id)
+            .where(Block.blocker_id == user.id)
+            .order_by(Block.created_at.desc())
+        )
     ).all()
-    return [BlockOut(blocked_id=b.blocked_id, created_at=b.created_at) for b in rows]
+    data = [
+        BlockOut(
+            id=u.id,
+            blocked_id=u.id,
+            full_name=u.full_name,
+            headline=u.headline,
+            specialty=u.specialty,
+            location_label=location_label(u.city, u.state),
+            avatar_color=u.avatar_color,
+            avatar_url=u.avatar_url,
+            avatar_presigned_url=(
+                await FileService.presigned_url(key=u.avatar_url) if u.avatar_url else None
+            ),
+            created_at=b.created_at,
+        ).model_dump(mode="json")
+        for b, u in rows
+    ]
+    return CursorPage(data=data, next_cursor=None)
 
 
 @router.post(ApiRoutes.NETWORK_BLOCK_DETAIL, response_model=OkResponse)

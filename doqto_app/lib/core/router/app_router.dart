@@ -32,6 +32,8 @@ import '../../ui/screens/people/person_profile_screen.dart';
 import '../../ui/screens/profile/profile_edit_screen.dart';
 import '../../ui/screens/profile/profile_screen.dart';
 import '../../ui/screens/people/invite_screen.dart';
+import '../../ui/screens/settings/blocked_list_screen.dart';
+import '../../ui/screens/settings/privacy_screen.dart';
 import '../../ui/screens/settings/settings_screen.dart';
 import '../../ui/screens/voice_broadcast/voice_broadcast_screen.dart';
 import '../../ui/screens/splash/splash_screen.dart';
@@ -75,6 +77,8 @@ class AppRoutes {
   // An invite link: `doqto:///g/<token>` joins the group and opens it.
   static String groupInviteLink(String token) => '/g/$token';
   static const settings = '/settings';
+  static const privacy = '/settings/privacy';
+  static const privacyBlocked = '/settings/privacy/blocked';
   static const profile = '/profile';
   static const profileEdit = '/profile/edit';
   static const record = '/record';
@@ -273,6 +277,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.settings,
         parentNavigatorKey: rootNavigatorKey,
         builder: (_, s) => const SettingsScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.privacy,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const PrivacyScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.privacyBlocked,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const BlockedListScreen(),
       ),
       GoRoute(
         path: AppRoutes.profile,

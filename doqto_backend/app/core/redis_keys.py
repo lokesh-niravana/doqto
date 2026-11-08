@@ -7,6 +7,12 @@ def presence_key(user_id: UUID | str) -> str:
     return f"presence:{user_id}"
 
 
+def last_seen_throttle_key(user_id: UUID | str) -> str:
+    """SET NX + TTL gate so users.last_seen_at is written at most once per
+    LAST_SEEN_WRITE_INTERVAL_SECONDS while a socket is alive."""
+    return f"presence:lastseen:{user_id}"
+
+
 
 
 

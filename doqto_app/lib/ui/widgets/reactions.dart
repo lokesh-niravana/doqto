@@ -69,7 +69,7 @@ class ReactionTray extends StatelessWidget {
                   key: const ValueKey('reaction-more'),
                   onTap: onMore,
                   radius: 22,
-                  child: const SizedBox(
+                  child: SizedBox(
                     width: 44,
                     height: 44,
                     child: Icon(Icons.add_circle_outline, color: AppColors.gray600, size: 26),

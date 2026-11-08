@@ -885,7 +885,7 @@ class _SearchResultsState extends ConsumerState<_SearchResults> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
+            Icon(
               Icons.search_off_rounded,
               size: 40,
               color: AppColors.gray400,

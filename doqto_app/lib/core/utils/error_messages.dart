@@ -76,6 +76,18 @@ class ErrorMessages {
         'We couldn\'t refresh your session. Please sign in again.',
     'session_revoked': 'Your session ended. Please sign in again.',
     'missing_authorization': 'Please sign in to continue.',
+    // Settings (batch 6)
+    'tone_invalid': 'That tone isn\'t available. Pick another one.',
+    'session_not_found': 'That device is already signed out.',
+    'pin_invalid': 'That PIN doesn\'t match. Try again.',
+    'pin_not_set': 'Two-step verification isn\'t turned on.',
+    'pin_required': 'Enter your two-step PIN to continue.',
+    'pin_too_many_attempts':
+        'Too many PIN attempts. Please wait 15 minutes and try again.',
+    'status_text_too_long': 'Keep your status under 40 characters.',
+    'status_preset_or_text': 'Pick a preset or write your own status, not both.',
+    'invalid_status_expiry': 'Pick 1 hour, 8 hours, 24 hours or never.',
+    'export_failed': 'We couldn\'t prepare your export. Try again later.',
     'user_not_found': 'We couldn\'t find your account. Please sign in again.',
     'invalid_token': 'Your session isn\'t valid anymore. Please sign in again.',
     'wrong_token_type': 'Please sign in again to continue.',

@@ -317,7 +317,7 @@ class _PageState extends ConsumerState<_Page> {
   Widget build(BuildContext context) {
     final f = _file;
     if (_failed) {
-      return const Center(child: Icon(Icons.broken_image_outlined, color: AppColors.gray400, size: 48));
+      return Center(child: Icon(Icons.broken_image_outlined, color: AppColors.gray400, size: 48));
     }
     if (f == null) return const Center(child: CircularProgressIndicator(color: AppColors.white));
     if (_isVideo) {

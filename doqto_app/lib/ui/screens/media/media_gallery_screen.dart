@@ -349,7 +349,7 @@ class _GridTileState extends ConsumerState<_GridTile> {
           else
             Container(
               color: AppColors.gray100,
-              child: _failed ? const Icon(Icons.broken_image_outlined, color: AppColors.gray400) : null,
+              child: _failed ? Icon(Icons.broken_image_outlined, color: AppColors.gray400) : null,
             ),
           if (_isVideo)
             Positioned(

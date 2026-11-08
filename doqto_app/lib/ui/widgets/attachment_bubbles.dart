@@ -317,7 +317,7 @@ class _ImageBubbleState extends ConsumerState<ImageBubble> {
         child: SizedBox(
           width: width,
           height: 120,
-          child: const Icon(Icons.broken_image_outlined, color: AppColors.gray400),
+          child: Icon(Icons.broken_image_outlined, color: AppColors.gray400),
         ),
       );
 
@@ -431,7 +431,7 @@ class PendingImageBubble extends StatelessWidget {
                     File(path),
                     width: maxW - 8,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => const SizedBox(
+                    errorBuilder: (_, _, _) => SizedBox(
                       height: 120,
                       child: Icon(Icons.broken_image_outlined, color: AppColors.gray400),
                     ),

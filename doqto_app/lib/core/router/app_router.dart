@@ -6,6 +6,7 @@ import '../../data/models/organization.dart';
 import '../../state/auth_state.dart';
 import '../../data/services/auth_broker.dart';
 import '../../ui/screens/auth/otp_screen.dart';
+import '../../ui/screens/auth/pin_gate_screen.dart';
 import '../../ui/screens/auth/login_screen.dart';
 import '../../ui/screens/auth/registration_screen.dart';
 import '../../ui/screens/chat/chat_details_screen.dart';
@@ -36,10 +37,23 @@ import '../../ui/screens/people/people_search_screen.dart';
 import '../../ui/screens/people/person_profile_screen.dart';
 import '../../ui/screens/profile/profile_edit_screen.dart';
 import '../../ui/screens/profile/profile_screen.dart';
+import '../../ui/screens/profile/status_screen.dart';
 import '../../ui/screens/people/invite_screen.dart';
+import '../../ui/screens/settings/app_lock_screen.dart';
+import '../../ui/screens/settings/appearance_screen.dart';
 import '../../ui/screens/settings/blocked_list_screen.dart';
+import '../../ui/screens/settings/change_number_screen.dart';
+import '../../ui/screens/settings/chat_theme_picker_screen.dart';
+import '../../ui/screens/settings/custom_notifications_screen.dart';
+import '../../ui/screens/settings/help_screen.dart';
+import '../../ui/screens/settings/language_screen.dart';
+import '../../ui/screens/settings/linked_devices_screen.dart';
+import '../../ui/screens/settings/notifications_screen.dart';
 import '../../ui/screens/settings/privacy_screen.dart';
 import '../../ui/screens/settings/settings_screen.dart';
+import '../../ui/screens/settings/tone_picker_screen.dart';
+import '../../ui/screens/settings/two_step_pin_screen.dart';
+import '../../ui/screens/settings/wallpaper_picker_screen.dart';
 import '../../ui/screens/voice_broadcast/voice_broadcast_screen.dart';
 import '../../ui/screens/splash/splash_screen.dart';
 import '../../ui/screens/media/media_gallery_screen.dart';
@@ -107,8 +121,32 @@ class AppRoutes {
   static const settings = '/settings';
   static const privacy = '/settings/privacy';
   static const privacyBlocked = '/settings/privacy/blocked';
+  // Settings (batch 6).
+  static const appLock = '/settings/privacy/app-lock';
+  static const appearance = '/settings/appearance';
+  static const chatThemeDefault = '/settings/appearance/chat-theme';
+  /// Per-chat colour theme picker (`c` = conversation id).
+  static String chatThemeFor(String convId) =>
+      Uri(path: chatThemeDefault, queryParameters: {'c': convId}).toString();
+  static const wallpaperDefault = '/settings/appearance/wallpaper';
+  static String wallpaperFor(String convId) =>
+      Uri(path: wallpaperDefault, queryParameters: {'c': convId}).toString();
+  static const notifications = '/settings/notifications';
+  /// Tone picker: `for` = `messages` | `groups` | a conversation id.
+  static String tonePicker(String target) =>
+      Uri(path: '/settings/notifications/tone', queryParameters: {'for': target})
+          .toString();
+  static String chatNotifications(String convId) => '/chat/$convId/notifications';
+  static const linkedDevices = '/settings/devices';
+  static const twoStepPin = '/settings/pin';
+  static const changeNumber = '/settings/change-number';
+  static const language = '/settings/language';
+  static const help = '/settings/help';
+  /// PIN gate after sign-in on a new device (auth flow).
+  static const pinGate = '/auth/pin';
   static const profile = '/profile';
   static const profileEdit = '/profile/edit';
+  static const profileStatus = '/profile/status';
   static const record = '/record';
   // Addressable person profile by user id (networking M1). Root-level route;
   // the shell retrofit that moves it into a branch is the next pass.
@@ -165,6 +203,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.registration,
         parentNavigatorKey: rootNavigatorKey,
         builder: (_, s) => const RegistrationScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.pinGate,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const PinGateScreen(),
       ),
       GoRoute(
         path: AppRoutes.orgSelection,
@@ -347,6 +390,12 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, s) => const StorageScreen(),
       ),
       GoRoute(
+        path: '/chat/:id/notifications',
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, state) => CustomNotificationsScreen(
+            conversationId: state.pathParameters['id']!),
+      ),
+      GoRoute(
         path: '/chat/:id',
         parentNavigatorKey: rootNavigatorKey,
         builder: (_, state) => ChatThreadScreen(
@@ -375,6 +424,69 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.privacyBlocked,
         parentNavigatorKey: rootNavigatorKey,
         builder: (_, s) => const BlockedListScreen(),
+      ),
+      // Settings (batch 6).
+      GoRoute(
+        path: AppRoutes.appLock,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const AppLockScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.appearance,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const AppearanceScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.chatThemeDefault,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) =>
+            ChatThemePickerScreen(conversationId: s.uri.queryParameters['c']),
+      ),
+      GoRoute(
+        path: AppRoutes.wallpaperDefault,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) =>
+            WallpaperPickerScreen(conversationId: s.uri.queryParameters['c']),
+      ),
+      GoRoute(
+        path: AppRoutes.notifications,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const NotificationsScreen(),
+      ),
+      GoRoute(
+        path: '/settings/notifications/tone',
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => TonePickerScreen(target: s.uri.queryParameters['for']),
+      ),
+      GoRoute(
+        path: AppRoutes.linkedDevices,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const LinkedDevicesScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.twoStepPin,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const TwoStepPinScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.changeNumber,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const ChangeNumberScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.language,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const LanguageScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.help,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const HelpScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.profileStatus,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const StatusScreen(),
       ),
       GoRoute(
         path: AppRoutes.profile,
@@ -421,6 +533,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         AppRoutes.login,
         AppRoutes.otp,
         AppRoutes.registration,
+        AppRoutes.pinGate,
       ].contains(loc);
       final inOrgFlow = [
         AppRoutes.orgSelection,
@@ -429,10 +542,15 @@ final routerProvider = Provider<GoRouter>((ref) {
         AppRoutes.pending,
       ].contains(loc);
       if (auth.stage == AuthStage.signedOut &&
-          (!inAuthFlow || loc == AppRoutes.registration)) {
+          (!inAuthFlow || loc == AppRoutes.registration || loc == AppRoutes.pinGate)) {
         // Your details is the second half of sign-up: it needs the session a
         // verified phone (or, later, social sign-in) creates.
         return AppRoutes.login;
+      }
+      // Two-step PIN owed on this device (batch 6): nothing else works until
+      // it is entered, so park every location on the gate.
+      if (auth.stage == AuthStage.pinRequired && loc != AppRoutes.pinGate) {
+        return AppRoutes.pinGate;
       }
       if (auth.stage == AuthStage.needsRegistration && loc != AppRoutes.registration) {
         return AppRoutes.registration;

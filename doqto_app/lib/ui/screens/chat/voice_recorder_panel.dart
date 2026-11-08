@@ -20,6 +20,7 @@ import '../../../core/utils/waveform.dart';
 import '../../../data/models/media.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
+import '../../../state/settings_state.dart';
 
 enum _RecorderState { recording, recorded, sending }
 
@@ -162,10 +163,14 @@ class VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
     // while; a slide-to-cancel (or the panel going away) in the meantime
     // must not leave a recorder running with nobody to stop it.
     if (!mounted || _stopping) return;
-    try {
-      await _stt.initialize();
-    } catch (_) {
-      // Transcription is best-effort; the note still records.
+    // Live transcript can be switched off (batch 6, Settings → Chats).
+    final transcribe = ref.read(appSettingsProvider).voiceTranscript;
+    if (transcribe) {
+      try {
+        await _stt.initialize();
+      } catch (_) {
+        // Transcription is best-effort; the note still records.
+      }
     }
     if (!mounted || _stopping) return;
 
@@ -189,12 +194,16 @@ class VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
       return;
     }
 
-    _stt.listen(
-      onResult: (result) {
-        if (mounted) setState(() => _transcript = result.recognizedWords);
-      },
-      listenOptions: SpeechListenOptions(listenMode: ListenMode.dictation),
-    );
+    if (transcribe) {
+      _stt.listen(
+        onResult: (result) {
+          if (mounted) setState(() => _transcript = result.recognizedWords);
+        },
+        listenOptions: SpeechListenOptions(
+          listenMode: ListenMode.dictation,
+        ),
+      );
+    }
 
     final stopwatch = Stopwatch()..start();
     _stopwatch = stopwatch;

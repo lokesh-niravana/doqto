@@ -77,7 +77,7 @@ class _AppSkeletonState extends State<AppSkeleton>
             gradient: LinearGradient(
               begin: Alignment.centerLeft,
               end: Alignment.centerRight,
-              colors: const [
+              colors: [
                 AppColors.gray100,
                 AppColors.gray50,
                 AppColors.gray100,

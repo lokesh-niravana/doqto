@@ -45,6 +45,10 @@ typedef SessionEndedCallback = void Function();
 /// (docs/security.md, "Sessions and devices").
 const Set<String> sessionTerminalCodes = {'session_revoked', 'account_deleted'};
 
+/// Called when the server answers 403 `pin_required` (batch 6): this device
+/// still owes its two-step PIN. The auth layer flips to the PIN gate.
+typedef PinRequiredCallback = void Function();
+
 class ApiClient {
   final Dio _dio;
   final TokenStorage _tokens;
@@ -56,6 +60,19 @@ class ApiClient {
   Future<void>? _refreshInFlight;
 
   SessionEndedCallback? onSessionEnded;
+  PinRequiredCallback? onPinRequired;
+
+  /// Response `detail` codes that mean the session is gone for good: no
+  /// refresh attempt, wipe at once (linked-devices revoke, account delete).
+  static const Set<String> terminalAuthCodes = {
+    'session_revoked',
+    'account_deleted',
+  };
+
+  static String? _detailOf(DioException e) {
+    final data = e.response?.data;
+    return data is Map ? data['detail']?.toString() : null;
+  }
 
   /// Bytes up / down for Storage and data (batch 5). Null = not counted.
   final NetworkUsage? usage;
@@ -91,6 +108,18 @@ class ApiClient {
         final is401 = e.response?.statusCode == 401;
         final alreadyRetried = e.requestOptions.extra['retried'] == true;
         final isRefreshCall = e.requestOptions.path.contains(ApiRoutes.authRefresh);
+        final detail = _detailOf(e);
+        if (e.response?.statusCode == 403 && detail == 'pin_required') {
+          onPinRequired?.call();
+          return handler.next(e);
+        }
+        if (is401 && detail != null && terminalAuthCodes.contains(detail)) {
+          // A revoked session: no refresh would succeed. Wipe now so the app
+          // returns to login immediately (docs/settings.md, linked devices).
+          await _tokens.clear();
+          onSessionEnded?.call();
+          return handler.next(e);
+        }
         if (!is401 || alreadyRetried || isRefreshCall) {
           return handler.next(e);
         }
@@ -133,11 +162,6 @@ class ApiClient {
         createHttpClient: () => CertificatePinning.httpClient(baseUrl),
         validateCertificate: CertificatePinning.validateLeaf,
       );
-
-  static String? _detailOf(DioException e) {
-    final data = e.response?.data;
-    return data is Map ? data['detail']?.toString() : null;
-  }
 
   /// Network usage: the request body as sent and the response body as
   /// received. Multipart bodies report their length; streamed bodies are

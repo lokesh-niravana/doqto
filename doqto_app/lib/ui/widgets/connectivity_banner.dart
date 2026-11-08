@@ -21,7 +21,7 @@ class ConnectivityBanner extends ConsumerWidget {
       tone: BannerTone.warn,
       text: 'Connecting…',
       visible: offline,
-      leading: const SizedBox(
+      leading: SizedBox(
         width: 10,
         height: 10,
         child: CircularProgressIndicator(

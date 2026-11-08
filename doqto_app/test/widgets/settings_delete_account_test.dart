@@ -34,6 +34,8 @@ Future<void> _open(WidgetTester tester) async {
   await tester.pumpWidget(_app());
   await tester.pumpAndSettle();
   await tester.scrollUntilVisible(find.text('Delete account'), 200);
+  // Rows that entered during the scroll finish their staggered fade-in.
+  await tester.pumpAndSettle();
 }
 
 void main() {

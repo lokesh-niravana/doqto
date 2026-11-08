@@ -76,7 +76,7 @@ class _OrgCard extends StatelessWidget {
             Container(
               width: 48,
               height: 48,
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                   color: AppColors.medBlueLight, shape: BoxShape.circle),
               child: Icon(icon, color: AppColors.medBlueDark),
             ),
@@ -91,7 +91,7 @@ class _OrgCard extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, color: AppColors.gray400),
+            Icon(Icons.chevron_right, color: AppColors.gray400),
           ],
         ),
       ),

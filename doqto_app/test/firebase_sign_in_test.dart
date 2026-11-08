@@ -32,7 +32,8 @@ class _Auth extends AuthRepository {
   final List<String> exchanged = [];
 
   @override
-  Future<TokenPair> signInWithFirebase(String idToken) async {
+  Future<TokenPair> signInWithFirebase(String idToken,
+      {Map<String, dynamic> device = const {}}) async {
     exchanged.add(idToken);
     return TokenPair('access', 'refresh', registered);
   }

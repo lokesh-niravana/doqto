@@ -332,6 +332,11 @@ class _Header extends StatelessWidget {
         ),
         const SizedBox(height: AppSpacing.md),
         Text(user.fullName, style: AppText.display, textAlign: TextAlign.center),
+        if (user.statusLabel() case final status?) ...[
+          const SizedBox(height: AppSpacing.xs),
+          Text(status, key: const ValueKey('profile-status'),
+              style: AppText.body, textAlign: TextAlign.center),
+        ],
         if (user.specialty != null && user.specialty!.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.xs),
           Container(

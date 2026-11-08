@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../core/di/providers.dart';
+import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/spacing.dart';
@@ -274,6 +275,17 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    // Status under the name (batch 6).
+                    ListTile(
+                      key: const ValueKey('profile-edit-status'),
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.mood_outlined, color: AppColors.medBlue),
+                      title: Text('Status', style: AppText.bodyPrimary),
+                      subtitle: Text(user.statusLabel() ?? 'Not set', style: AppText.caption),
+                      trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+                      onTap: () => context.push(AppRoutes.profileStatus),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
                     _SectionTitle('Basic'),
                     AppTextField(
                       controller: _fullName,

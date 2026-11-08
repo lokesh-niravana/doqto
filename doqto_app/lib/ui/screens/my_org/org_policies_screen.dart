@@ -279,7 +279,7 @@ class _PoliciesBody extends ConsumerWidget {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.gavel_rounded, size: 18, color: AppColors.amberText),
+                  Icon(Icons.gavel_rounded, size: 18, color: AppColors.amberText),
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: Text(

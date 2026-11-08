@@ -1,13 +1,16 @@
 name: doqto_app
 description: "Doqto — secure doctor-to-doctor communication."
 publish_to: 'none'
-version: 1.0.0+44
+version: 1.0.0+45
 
 environment:
   sdk: ^3.10.4
 
 dependencies:
   flutter:
+    sdk: flutter
+  # App language (batch 6): System / English / Español via ARB + gen-l10n.
+  flutter_localizations:
     sdk: flutter
   cupertino_icons: ^1.0.8
 
@@ -42,7 +45,7 @@ dependencies:
   hive_flutter: ^1.1.0
 
   # Utilities
-  intl: ^0.19.0
+  intl: ^0.20.2
   permission_handler: ^11.3.0
   get_it: ^7.6.7
 
@@ -77,6 +80,12 @@ dependencies:
   # thumbnail plugin.
   video_player: 2.10.1
   crypto: ^3.0.8
+  # App lock (batch 6): Face ID / Touch ID / device passcode. Flutter-team
+  # plugin, Swift + Kotlin only — no embedded binary frameworks (ITMS-90111).
+  local_auth: ^3.0.2
+  # Version/build on Help, and the min-version check. Dart + a tiny platform
+  # call; no embedded frameworks.
+  package_info_plus: ^9.0.1
 
 dev_dependencies:
   flutter_test:
@@ -94,10 +103,14 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  generate: true
   assets:
     - logo.png
     - assets/splash_logo_white.png
     - assets/emoji/emoji.json
+    # Notification tone previews (batch 6). The same files ship as
+    # ios/Runner/Resources/tones/*.caf and android res/raw/*.wav for pushes.
+    - assets/tones/
 
 flutter_launcher_icons:
   # Brand icon: white mark on brand teal (#35878F), matching AppColors.medBlue and the splash.

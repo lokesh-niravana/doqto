@@ -12,6 +12,7 @@ import 'package:intl/intl.dart';
 import 'package:mime/mime.dart';
 
 import '../../../core/di/providers.dart';
+import '../../../core/chat_theme.dart';
 import '../../../core/constants/strings.dart';
 import '../../../core/enums/app_enums.dart';
 import '../../../core/router/app_router.dart';
@@ -46,6 +47,8 @@ import '../../../state/link_preview_state.dart';
 import '../../../state/media_settings_state.dart';
 import '../../../state/voice_playback_state.dart';
 import '../../widgets/album_bubble.dart';
+import '../../../state/settings_state.dart';
+import '../../../data/services/wallpaper_store.dart';
 import '../../widgets/app_pressable.dart';
 import '../../widgets/attachment_bubbles.dart';
 import '../../widgets/connectivity_banner.dart';
@@ -2495,11 +2498,29 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         : peerPresence.isOnline
         ? Strings.presenceOnline
         : formatLastSeen(peerPresence.lastSeenAt);
+    // Status under the name (batch 6): "On call · online".
+    final statusLine = peerPresence?.statusLabel();
     final subtitle = otherTyping
         ? null
         : groupId == null
-        ? (presenceLine == null || presenceLine.isEmpty ? null : presenceLine)
+        ? (presenceLine == null || presenceLine.isEmpty
+            ? statusLine
+            : statusLine == null
+                ? presenceLine
+                : '$statusLine · $presenceLine')
         : _memberLine(members, me?.id);
+    // Chat colour theme + wallpaper (batch 6): per-chat prefs over the
+    // device defaults, resolved once per build for the bubbles below.
+    final appSettings = ref.watch(appSettingsProvider);
+    final chatTheme = ChatThemeResolver.resolve(
+      dark: AppColors.isDark,
+      chatTheme: conv?.prefs.theme,
+      wallpaper: conv?.prefs.wallpaper,
+      defaultTheme: appSettings.chatTheme,
+      defaultWallpaper: appSettings.wallpaper,
+      dim: appSettings.wallpaperDim,
+      localPhoto: ref.watch(wallpaperPhotoProvider(widget.conversationId)),
+    );
 
     return PopScope(
       canPop: !_selecting && !_searching,
@@ -2599,7 +2620,11 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                         ),
                       ),
               ),
-        body: Column(
+        body: ChatThemeScope(
+          data: chatTheme,
+          child: ChatWallpaperBackground(
+          data: chatTheme,
+          child: Column(
           children: [
             const ConnectivityBanner(),
             if (pinnedId != null)
@@ -2765,6 +2790,8 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                   ),
           ],
         ),
+          ),
+        ),
       ),
     );
   }
@@ -2850,7 +2877,10 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                         maxLines: 5,
                         keyboardType: TextInputType.multiline,
                         textCapitalization: TextCapitalization.sentences,
-                        textInputAction: TextInputAction.send,
+                        // Enter-is-send (batch 6, Settings → Chats).
+                        textInputAction: ref.watch(appSettingsProvider).enterIsSend
+                            ? TextInputAction.send
+                            : TextInputAction.newline,
                         contextMenuBuilder: _composerContextMenu,
                         onTapOutside: (_) => FocusScope.of(context).unfocus(),
                         decoration: InputDecoration(
@@ -2864,7 +2894,9 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                           ),
                         ),
                         onChanged: _onInputChanged,
-                        onSubmitted: (_) => _send(),
+                        onSubmitted: ref.watch(appSettingsProvider).enterIsSend
+                            ? (_) => _send()
+                            : null,
                       ),
                     ),
                   ),

@@ -610,7 +610,7 @@ class _OptionalPhoneState extends ConsumerState<_OptionalPhone> {
           const SizedBox(height: AppSpacing.sm),
           Row(
             children: [
-              const Icon(Icons.check_circle_rounded,
+              Icon(Icons.check_circle_rounded,
                   size: 18, color: AppColors.greenDark),
               const SizedBox(width: AppSpacing.xs),
               Text(

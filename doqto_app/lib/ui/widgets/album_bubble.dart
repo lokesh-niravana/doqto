@@ -204,7 +204,7 @@ class _AlbumTileState extends ConsumerState<_AlbumTile> {
     if (_failed) {
       body = AppPressable(
         onTap: _load,
-        child: Container(color: AppColors.gray100, child: const Icon(Icons.broken_image_outlined, color: AppColors.gray400)),
+        child: Container(color: AppColors.gray100, child: Icon(Icons.broken_image_outlined, color: AppColors.gray400)),
       );
     } else if (file == null && _waiting) {
       body = DownloadPlaceholder(width: widget.width, height: widget.height, label: '', onTap: _load);

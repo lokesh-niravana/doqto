@@ -21,7 +21,14 @@ class Tables:
     MESSAGE_HIDES = "message_hides"
     MESSAGE_REACTIONS = "message_reactions"
     MESSAGE_STARS = "message_stars"
+    # Media (batch 5): presigned multipart uploads in flight, poll options/votes.
+    UPLOAD_INTENTS = "upload_intents"
+    POLL_OPTIONS = "poll_options"
+    POLL_VOTES = "poll_votes"
     AUDIT_LOGS = "audit_logs"
+    # Compliance (batch 7): wrapped per-org data keys, break-glass requests.
+    DATA_KEYS = "data_keys"
+    ACCESS_REQUESTS = "access_requests"
     DEVICE_TOKENS = "device_tokens"
     # Networking graph (M1)
     CONNECTION_INVITATIONS = "connection_invitations"
@@ -34,6 +41,9 @@ class Tables:
     APP_INVITES = "app_invites"
     REPORTS = "reports"
     USER_PRIVACY_SETTINGS = "user_privacy_settings"
+    # Settings (batch 6): tones / vibrate / previews, and linked devices.
+    USER_NOTIFICATION_SETTINGS = "user_notification_settings"
+    SESSIONS = "sessions"
     NOTIFICATIONS = "notifications"
     # Groups (M5)
     GROUPS = "groups"

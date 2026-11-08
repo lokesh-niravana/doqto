@@ -73,18 +73,103 @@ REPORTS_PAGE_SIZE = 50
 # Org policies (organizations.policies JSONB) and their defaults.
 ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG = "allow_forward_outside_org"
 ORG_POLICY_ALLOW_COPY = "allow_copy"
+# Batch 7 (compliance): banner previews default for members, the timer every
+# new org group chat starts with, retention (days; None = keep forever) and
+# the legal hold that pauses every shred for the org's conversations.
+ORG_POLICY_SHOW_PREVIEW_IN_BANNERS_DEFAULT = "show_preview_in_banners_default"
+ORG_POLICY_DEFAULT_DISAPPEAR_SEC = "default_disappear_sec"
+ORG_POLICY_RETENTION_DAYS = "retention_days"
+ORG_POLICY_LEGAL_HOLD = "legal_hold"
 ORG_POLICY_DEFAULTS = {
     ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG: True,
     ORG_POLICY_ALLOW_COPY: True,
+    # Batch 5 — key defined below (ORG_POLICY_ALLOW_MEDIA_EXPORT).
+    "allow_media_export": False,
+    # Batch 6 — key defined below (ORG_POLICY_BLOCK_SCREENSHOTS).
+    "block_screenshots": False,
+    ORG_POLICY_SHOW_PREVIEW_IN_BANNERS_DEFAULT: False,
+    ORG_POLICY_DEFAULT_DISAPPEAR_SEC: None,
+    ORG_POLICY_RETENTION_DAYS: None,
+    ORG_POLICY_LEGAL_HOLD: False,
 }
+ORG_POLICY_BOOL_KEYS = (
+    ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG,
+    ORG_POLICY_ALLOW_COPY,
+    "allow_media_export",
+    "block_screenshots",
+    ORG_POLICY_SHOW_PREVIEW_IN_BANNERS_DEFAULT,
+    ORG_POLICY_LEGAL_HOLD,
+)
+RETENTION_DAYS_MIN = 1
+RETENTION_DAYS_MAX = 365 * 10
+RATE_LIMIT_POLICY_WRITES_PER_MINUTE = 20
+
+# --- Compliance (batch 7) -------------------------------------------------- #
+# Break-glass: an approved request lets the requester read for this long.
+ACCESS_REQUEST_WINDOW_SEC = 24 * 3600
+ACCESS_REQUEST_REASON_MAX_LEN = 500
+ACCESS_REQUESTS_PAGE_SIZE = 50
+RATE_LIMIT_ACCESS_REQUESTS_PER_MINUTE = 10
+BREAK_GLASS_SYSTEM_TEXT = "An administrator accessed this conversation under policy"
+PUSH_BODY_ACCESS_REQUEST_PENDING = "An access request needs your review"
+PUSH_BODY_ACCESS_REQUEST_APPROVED = "Your access request was approved"
+PUSH_BODY_ACCESS_REQUEST_REJECTED = "Your access request was rejected"
+# Audit read API.
+AUDIT_PAGE_SIZE = 100
+RATE_LIMIT_AUDIT_READS_PER_MINUTE = 60
+# Universal links / app links served from /.well-known.
+APPLE_TEAM_ID = "3N7394B3B9"
+APPLE_APP_BUNDLE_ID = "com.doqto.ios"
+UNIVERSAL_LINK_PATHS = ("/g/*", "/c/*", "/u/*")
+ANDROID_PACKAGE_NAME = "com.doqto.app"
+# Play App Signing SHA-256 fingerprints — filled in by ops; empty until then.
+ANDROID_CERT_SHA256_FINGERPRINTS: tuple[str, ...] = ()
 
 # Voice notes
 VOICE_NOTE_MIN_DURATION_SECONDS = 1
 VOICE_NOTE_MAX_DURATION_SECONDS = 60 * 5  # 5 minutes
 VOICE_NOTE_MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB
+# Amplitude envelope recorded by the client: raw bytes (0–255 per sample),
+# sent base64 — at most this many samples.
+VOICE_NOTE_WAVEFORM_MAX_BYTES = 64
 
-# Files
-FILE_MAX_BYTES = 25 * 1024 * 1024  # 25 MB
+# --- Files / media (batch 5) ----------------------------------------------- #
+# Hard cap for any attachment (file or video) through the presigned
+# multipart flow (upload-intent / upload-complete).
+FILE_MAX_BYTES = 100 * 1024 * 1024  # 100 MB
+VIDEO_MAX_BYTES = FILE_MAX_BYTES
+# The legacy inline route (POST /messages/upload/{conv}) reads the body into
+# memory, so it keeps a smaller cap; bigger payloads use the multipart flow.
+UPLOAD_INLINE_MAX_BYTES = 25 * 1024 * 1024  # 25 MB
+# Multipart: S3 needs ≥ 5 MB per part (except the last); single presigned PUT
+# below this size.
+UPLOAD_PART_SIZE_BYTES = 8 * 1024 * 1024  # 8 MB
+UPLOAD_MULTIPART_THRESHOLD_BYTES = UPLOAD_PART_SIZE_BYTES
+UPLOAD_INTENT_TTL_SEC = 60 * 60  # an intent not completed within an hour is aborted
+UPLOAD_URL_TTL_SEC = UPLOAD_INTENT_TTL_SEC
+RATE_LIMIT_UPLOAD_INTENTS_PER_MINUTE = 30
+# Poster thumbnail (video) / client-supplied JPEG — always EXIF-stripped.
+THUMB_MAX_BYTES = 300 * 1024  # 300 KB
+THUMB_CONTENT_TYPE = "image/jpeg"
+CAPTION_MAX_LEN = 1024
+VIDEO_MAX_DURATION_SEC = 60 * 10  # 10 minutes
+MEDIA_PAGE_SIZE = 60
+# Links tab: text messages are scanned (decrypted) newest first in batches of
+# this size; at most LINK_SCAN_MAX_MESSAGES per request before the page is
+# returned (possibly short) with a cursor.
+LINK_SCAN_BATCH = 200
+LINK_SCAN_MAX_MESSAGES = 2000
+URL_PATTERN = r"https?://[^\s<>\"'()\[\]{}]+"
+# Save to Photos / share sheet gate (organizations.policies): off for org
+# members unless the admin enables it; users with no org may export.
+ORG_POLICY_ALLOW_MEDIA_EXPORT = "allow_media_export"
+RATE_LIMIT_EXPORT_AUDITS_PER_MINUTE = 60
+# Polls
+POLL_QUESTION_MAX_LEN = 300
+POLL_OPTION_MAX_LEN = 100
+POLL_OPTIONS_MIN = 2
+POLL_OPTIONS_MAX = 12
+RATE_LIMIT_VOTES_PER_MINUTE = 60
 
 # Avatars
 AVATAR_MAX_BYTES = 2 * 1024 * 1024  # 2 MB
@@ -235,3 +320,67 @@ SCHEDULED_SEND_INTERVAL_SEC = 15  # delivery granularity for scheduled messages
 # Hard-delete grace: content of soft-deleted/expired messages is crypto-shredded
 # (encrypted blobs nulled, S3 objects deleted) once older than this.
 PURGE_CONTENT_GRACE_SEC = 30 * 24 * 3600  # 30 days
+
+# --- Settings (batch 6) ---------------------------------------------------- #
+# Notification tones: bundled CAF files on iOS (ios/Runner/Resources/<tone>.caf)
+# and raw resources on Android. "default" = the system sound. The server only
+# validates the name and puts it in aps.sound; it never ships the file.
+NOTIFICATION_TONES = frozenset(
+    {
+        "default",
+        "chime",
+        "pulse",
+        "ping",
+        "bell",
+        "glass",
+        "note",
+        "pop",
+        "ripple",
+        "signal",
+        "tap",
+        "whistle",
+        "none",
+    }
+)
+NOTIFICATION_TONE_DEFAULT = "default"
+# FCM Android notification channels — created by the app on first launch.
+PUSH_CHANNEL_MESSAGES = "messages"
+PUSH_CHANNEL_GROUPS = "groups"
+PUSH_CHANNEL_INVITATIONS = "invitations"
+RATE_LIMIT_NOTIFICATION_SETTINGS_PER_MINUTE = 30
+# Screenshot audit (iOS detects, Android blocks behind the org policy).
+ORG_POLICY_BLOCK_SCREENSHOTS = "block_screenshots"
+RATE_LIMIT_SCREENSHOT_AUDITS_PER_MINUTE = 30
+# Sessions / linked devices.
+DEVICE_NAME_MAX_LEN = 80
+APP_VERSION_MAX_LEN = 32
+RATE_LIMIT_SESSION_WRITES_PER_MINUTE = 20
+PUSH_BODY_NEW_SIGN_IN_FALLBACK = "New sign-in on another device"
+# Two-step verification PIN: exactly 6 digits, bcrypt-hashed. Verification
+# attempts are capped per user; the forgot-PIN cooldown clears the PIN after
+# PIN_RESET_COOLDOWN_SEC with no code of ours in an email or SMS.
+PIN_LENGTH = 6
+RATE_LIMIT_PIN_VERIFY_PER_15_MIN = 5
+PIN_VERIFY_WINDOW_SEC = 15 * 60
+RATE_LIMIT_PIN_WRITES_PER_MINUTE = 10
+PIN_RESET_COOLDOWN_SEC = 7 * 24 * 3600
+# Account info export: JSON (no messages) to S3, handed back as a short URL.
+EXPORT_URL_TTL_SEC = 10 * 60
+RATE_LIMIT_EXPORTS_PER_HOUR = 3
+# Status under the name: preset wire value or custom text, with an expiry.
+STATUS_CUSTOM_MAX_LEN = 40
+STATUS_EXPIRY_OPTIONS_SEC = {
+    60 * 60: "1 hour",
+    8 * 60 * 60: "8 hours",
+    24 * 60 * 60: "24 hours",
+}
+RATE_LIMIT_STATUS_WRITES_PER_MINUTE = 30
+RATE_LIMIT_PHONE_CHANGES_PER_HOUR = 5
+# Legal / help links served by GET /app/legal so the app never hard-codes them.
+LEGAL_URLS = {
+    "help": "https://doqto.ai/help",
+    "contact": "mailto:support@doqto.ai",
+    "terms": "https://doqto.ai/terms",
+    "privacy": "https://doqto.ai/privacy",
+    "hipaa": "https://doqto.ai/hipaa",
+}

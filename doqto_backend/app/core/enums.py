@@ -184,6 +184,10 @@ class MessageType(StrEnum):
     IMAGE = "image"
     FILE = "file"
     SYSTEM = "system"
+    # Batch 5 (media): a video clip (poster thumbnail in thumb_key) and a poll
+    # (question in the body, options/votes in poll_options / poll_votes).
+    VIDEO = "video"
+    POLL = "poll"
 
 
 class TranscriptStatus(StrEnum):
@@ -191,6 +195,15 @@ class TranscriptStatus(StrEnum):
     PENDING = "pending"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class AccessRequestStatus(StrEnum):
+    """Backend-only — break-glass request lifecycle (batch 7)."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
 
 
 class ScheduledMessageStatus(StrEnum):
@@ -246,6 +259,15 @@ class WsEventServer(StrEnum):
     MESSAGE_PINNED = "message_pinned"
     MESSAGE_UNPINNED = "message_unpinned"
     MESSAGE_STARRED = "message_starred"
+    # Polls (batch 5) — every member: tallies + voter ids after a vote change.
+    POLL_UPDATED = "poll_updated"
+    # Settings (batch 6) — all sent ONLY to the user's own devices.
+    SESSION_CREATED = "session_created"
+    SESSION_REVOKED = "session_revoked"
+    NOTIFICATION_SETTINGS_UPDATED = "notification_settings_updated"
+    # Compliance (batch 7) — org admins only: a break-glass request was
+    # created / approved / rejected / expired; refetch the list.
+    ACCESS_REQUEST_UPDATED = "access_request_updated"
 
 
 class WsEventClient(StrEnum):
@@ -325,6 +347,29 @@ class AuditAction(StrEnum):
     STARRED_MESSAGES_READ = "starred_messages_read"
     REPORT_STATUS_CHANGED = "report_status_changed"
     LINK_PREVIEW_FETCHED = "link_preview_fetched"
+    # Media (batch 5) — backend-only.
+    FILE_EXPORTED = "file_exported"
+    POLL_VOTED = "poll_voted"
+    # Settings (batch 6) — backend-only.
+    SCREENSHOT_TAKEN = "screenshot_taken"
+    NOTIFICATION_SETTINGS_UPDATED = "notification_settings_updated"
+    SESSION_REVOKED = "session_revoked"
+    PHONE_CHANGED = "phone_changed"
+    PIN_SET = "pin_set"
+    PIN_REMOVED = "pin_removed"
+    PIN_VERIFIED = "pin_verified"
+    PIN_RESET_REQUESTED = "pin_reset_requested"
+    PIN_RESET_COMPLETED = "pin_reset_completed"
+    ACCOUNT_EXPORTED = "account_exported"
+    STATUS_UPDATED = "status_updated"
+    # Compliance (batch 7) — backend-only.
+    ACCESS_REQUEST_CREATED = "access_request_created"
+    ACCESS_REQUEST_APPROVED = "access_request_approved"
+    ACCESS_REQUEST_REJECTED = "access_request_rejected"
+    BREAK_GLASS_READ = "break_glass_read"
+    AUDIT_READ = "audit_read"
+    RETENTION_APPLIED = "retention_applied"
+    KEY_ROTATED = "key_rotated"
 
 
 class TranscribeSpecialty(StrEnum):
@@ -333,3 +378,21 @@ class TranscribeSpecialty(StrEnum):
     RADIOLOGY = "RADIOLOGY"
     NEUROLOGY = "NEUROLOGY"
     UROLOGY = "UROLOGY"
+
+
+class StatusPreset(StrEnum):
+    # SHARED (batch 6): the status under a doctor's name. Stored as the wire
+    # value in users.status_text; anything else there is custom text.
+    ON_CALL = "on_call"
+    IN_CLINIC = "in_clinic"
+    IN_SURGERY = "in_surgery"
+    OFF_DUTY = "off_duty"
+    AVAILABLE = "available"
+
+
+class VibratePattern(StrEnum):
+    # SHARED (batch 6): notification vibration (Android only; iOS ignores it).
+    DEFAULT = "default"
+    SHORT = "short"
+    LONG = "long"
+    OFF = "off"

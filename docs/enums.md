@@ -182,6 +182,18 @@ What a report points at. Backend-only — the client sends the string.
 | `user` | A person (reported from their profile; default) |
 | `message` | A message (batch 4) — reporter must be a conversation member; `context_message_ids` (≤5 ids, never bodies) travel with it |
 
+## AccessRequestStatus (backend-only)
+
+Break-glass request lifecycle (batch 7, `access_requests.status`). Backend-only —
+NOT in the parity SHARED set; the app reads the string.
+
+| Wire value | Meaning |
+|---|---|
+| `pending` | Filed, awaiting a second org admin |
+| `approved` | Approved; `expires_at` = decision + 24 h |
+| `rejected` | Refused by a second org admin |
+| `expired` | Window lapsed (effective immediately, stamped by the job) |
+
 ## ReportStatus (backend-only)
 
 Moderation report lifecycle — set by super-admins through
@@ -259,6 +271,8 @@ Invite lifecycle — direct + link (M5). Backend-only.
 | `image` | Image attachment |
 | `file` | Generic file attachment |
 | `system` | System event (joined/left/removed) |
+| `video` | Video clip (batch 5): `s3_key` + JPEG poster in `thumb_key`, length in `voice_duration_sec`, optional `caption` |
+| `poll` | Poll (batch 5): question in `content`, tallies + voter ids in `poll{question, multiple, options[{id, position, text, vote_count, voter_ids}], voter_count}` |
 
 ## TranscriptStatus
 
@@ -327,6 +341,13 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `message_pinned` | `conversation_id, message_id, pinned_until, actor_id` (batch 4) — every member; show the banner |
 | `message_unpinned` | `conversation_id, message_id, pinned_until: null, actor_id` (null when the auto-unpin job cleared it) — every member |
 | `message_starred` | `conversation_id, message_id, starred` (batch 4) — the actor's OWN devices only; stars are private |
+| `poll_updated` | `conversation_id, message_id, poll{question, multiple, options[], voter_count}, changed_at, actor_id` (batch 5) — every member after a vote changed (or a departed member's votes were purged); replace the message's `poll`, drop if `changed_at` is not newer |
+| `session_created` | `session_id, device_name, platform, created_at` (batch 6) — the user's OWN devices only: another device signed in; refresh the linked-devices list |
+| `session_revoked` | `session_id` (batch 6) — the user's OWN devices only: if `session_id` is this device's, wipe the cache and return to login immediately |
+| `notification_settings_updated` | full `NotificationSettingsOut` (batch 6) — the user's OWN devices only; replace the local copy |
+| `access_request_updated` | `org_id, access_request_id, status` (batch 7) — org admins involved in a break-glass request (requester + the other admins on create; requester + decider on approve/reject; requester on expiry); refetch the list |
+
+Since batch 5 a `MessageOut` also carries `caption` (image/video/file/voice, encrypted at rest), `thumb_key` (video poster; `GET /messages/{id}/file-url?thumb=1`), `waveform` (base64 of ≤ 64 amplitude bytes, voice notes), `media_width` / `media_height` and `poll`.
 
 ## WsEventClient (client → server)
 
@@ -401,6 +422,52 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `starred_messages_read` | `GET /messages/starred` returned decrypted bodies; one row per page (batch 4) |
 | `report_status_changed` | A super-admin moved a report between statuses; meta: `from`, `to` (batch 4) |
 | `link_preview_fetched` | The server fetched a link preview on the user's behalf; meta: `host` only (batch 4) |
+| `file_exported` | The user is about to save / share a media message (`POST /messages/{id}/export-audit`, allowed by `allow_media_export`); meta: `type`, `conversation_id` (batch 5) |
+| `poll_voted` | The user changed their selection on a poll (`PUT` / `DELETE /messages/{id}/vote`); meta: `options` count, 0 = withdrawn (batch 5) |
+| `screenshot_taken` | The app detected a screenshot of a conversation (`POST /audit/screenshot`, iOS); resource = the conversation (batch 6) |
+| `notification_settings_updated` | A notification preference changed (`PATCH /users/me/notifications`); meta lists field names only, or `reset` (batch 6) |
+| `session_revoked` | A linked device was signed out (`DELETE /users/me/sessions/{id}` or `POST …/revoke-others`); meta: `count`, `session_ids[]` (batch 6) |
+| `phone_changed` | The account's phone number changed (`PATCH /users/me/phone`); neither number is stored in the row (batch 6) |
+| `pin_set` | Two-step PIN turned on or changed (`PUT /users/me/pin`) (batch 6) |
+| `pin_removed` | Two-step PIN turned off (`DELETE /users/me/pin`) (batch 6) |
+| `pin_verified` | A new device entered the PIN (`POST /auth/pin/verify`) (batch 6) |
+| `pin_reset_requested` | Forgot-PIN cooldown started (`POST /auth/pin/reset-request`); meta: `clears_at` (batch 6) |
+| `pin_reset_completed` | The settings loop cleared the PIN after the 7-day cooldown (batch 6) |
+| `account_exported` | Account info export generated (`POST /users/me/export`) — profile, settings, connections, groups; never messages (batch 6) |
+| `status_updated` | Status under the name changed (`PATCH /users/me/status`); meta: `preset`, `custom` (bool — never the text), `expires_in_sec` (batch 6) |
+| `access_request_created` | Org admin filed a break-glass request; meta: `org_id`, `conversation_id` (batch 7) |
+| `access_request_approved` | A second org admin approved it; meta: `org_id`, `conversation_id`, `requester_id` (batch 7) |
+| `access_request_rejected` | A second org admin rejected it (batch 7) |
+| `break_glass_read` | One page of an emergency read; resource = conversation; meta: `access_request_id`, `org_id`, `before_seq`, `count` (batch 7) |
+| `audit_read` | Someone read the audit trail (`GET /admin/audit` or `GET /orgs/{id}/audit`); meta: `scope`, `count`, filters (batch 7) |
+| `retention_applied` | The retention job expired messages for an org (user NULL); meta: `retention_days`, `messages` (batch 7) |
+| `key_rotated` | `scripts/rotate_keys.py` minted a new data key; meta: `scope`, `version` (batch 7) |
+
+## StatusPreset
+
+Status under a doctor's name (batch 6). `PATCH /users/me/status {preset}`;
+stored in `users.status_text`. Custom text (≤ 40 chars) is anything else and
+arrives as `status_text` with `status_preset: null`.
+
+| Wire value | Meaning |
+|---|---|
+| `on_call` | On call |
+| `in_clinic` | In clinic |
+| `in_surgery` | In surgery |
+| `off_duty` | Off duty |
+| `available` | Available |
+
+## VibratePattern
+
+Notification vibration (batch 6, `user_notification_settings.*_vibrate`,
+`conversation_prefs.custom_vibrate`). Android only; iOS ignores it.
+
+| Wire value | Meaning |
+|---|---|
+| `default` | System default |
+| `short` | One short buzz |
+| `long` | One long buzz |
+| `off` | No vibration |
 
 ## TranscribeSpecialty (AWS Transcribe Medical)
 

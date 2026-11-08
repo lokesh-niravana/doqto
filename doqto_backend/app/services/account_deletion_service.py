@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from datetime import datetime, timezone
 
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import delete, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import AuditAction
@@ -23,12 +22,16 @@ from app.models import (
     Mute,
     Notification,
     OrgMember,
+    PollOption,
+    PollVote,
     Report,
     ScheduledMessage,
+    UploadIntent,
     User,
     UserPrivacySettings,
 )
 from app.services.audit_service import AuditService
+from app.services.compliance_service import not_under_legal_hold
 from app.services.stripe_client import StripeGateway
 
 logger = logging.getLogger(__name__)
@@ -91,18 +94,37 @@ class AccountDeletionService:
         # 1. PHI in authored content. Messages are kept as tombstones so the
         # other party's thread does not develop holes, but every byte of
         # content, transcript and attachment reference is dropped.
+        # Legal hold (batch 7): messages in a held org's conversations are
+        # tombstoned (hidden) but their content survives until the hold lifts.
         await db.execute(
             update(Message)
-            .where(Message.sender_id == uid)
+            .where(Message.sender_id == uid, not_under_legal_hold())
             .values(
                 content_encrypted=None,
                 transcript_encrypted=None,
+                caption_encrypted=None,
+                waveform=None,
                 s3_key=None,
+                thumb_key=None,
                 file_name=None,
                 file_size_bytes=None,
                 is_deleted=True,
             )
         )
+        await db.execute(
+            update(Message).where(Message.sender_id == uid).values(is_deleted=True)
+        )
+        # Poll option text is PHI too (votes cascade); the user's own votes on
+        # other people's polls go with their membership.
+        await db.execute(
+            delete(PollOption).where(
+                PollOption.message_id.in_(
+                    select(Message.id).where(Message.sender_id == uid, not_under_legal_hold())
+                )
+            )
+        )
+        await db.execute(delete(PollVote).where(PollVote.user_id == uid))
+        await db.execute(delete(UploadIntent).where(UploadIntent.user_id == uid))
         await db.execute(delete(ScheduledMessage).where(ScheduledMessage.sender_id == uid))
         await db.execute(delete(MessageReceipt).where(MessageReceipt.user_id == uid))
 

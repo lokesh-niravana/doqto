@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.core.enums import ScheduledMessageStatus
-from app.core.security import decrypt_message
+from app.core import crypto
 from app.models import ScheduledMessage
 
 
@@ -36,7 +36,8 @@ async def test_schedule_resolves_timezone_to_utc(client, chat, db):
     )
     assert row is not None
     assert row.status == ScheduledMessageStatus.PENDING
-    assert decrypt_message(row.content_encrypted) == "later"
+    assert row.key_version > 0  # batch 7: under the org's data key, not the static key
+    assert crypto.decrypt(row.content_encrypted, row.key_version) == "later"
 
 
 async def test_schedule_rejects_past_and_bad_zone(client, chat):

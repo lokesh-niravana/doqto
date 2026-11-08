@@ -78,6 +78,118 @@ class Message(Base):
     mentions: Mapped[list[uuid.UUID] | None] = mapped_column(
         ARRAY(PgUUID(as_uuid=True)), nullable=True
     )
+    # --- Batch 5 (media) --------------------------------------------------- #
+    # Caption under a photo / video / file / voice note — PHI, encrypted like
+    # the body. Copied on forward, shredded with the message.
+    caption_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # Poster thumbnail (video) — JPEG object of its own, EXIF-stripped.
+    thumb_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Voice-note amplitude envelope: ≤ 64 raw bytes (0–255 each), base64 on
+    # the wire. Not PHI (shape only) but goes with the message everywhere.
+    waveform: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # Pixel size of an image / video so the client can size the bubble
+    # before the bytes arrive. voice_duration_sec doubles as the video length.
+    media_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    media_height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Polls: the question is the (encrypted) body; options + votes live in
+    # poll_options / poll_votes. multiple = several options per voter.
+    poll_multiple: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Batch 7: which data key (data_keys.version) protects content /
+    # transcript / caption. 0 = legacy static key; rewritten on any body write.
+    key_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PollOption(Base):
+    """One answer of a poll message. Option text is PHI-adjacent (a doctor
+    could poll about a case) — encrypted like bodies, shredded with the poll."""
+
+    __tablename__ = Tables.POLL_OPTIONS
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.MESSAGES}.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    text_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    key_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+
+
+class PollVote(Base):
+    """A member's vote on one option. Visible to every member (no anonymous
+    polls). A member who leaves a group takes their votes with them."""
+
+    __tablename__ = Tables.POLL_VOTES
+
+    option_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.POLL_OPTIONS}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.USERS}.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
+    # Denormalised so "my votes on this poll" and the leave-group purge are
+    # one indexed lookup instead of a join through poll_options.
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.MESSAGES}.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class UploadIntent(Base):
+    """A presigned (multipart) upload the client is filling. Holds everything
+    needed to create the message on complete, plus the S3 upload id so an
+    abandoned intent can be aborted by the purge job. No PHI except the file
+    name (same as messages.file_name)."""
+
+    __tablename__ = Tables.UPLOAD_INTENTS
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(f"{Tables.CONVERSATIONS}.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey(f"{Tables.USERS}.id", ondelete="CASCADE"), nullable=False
+    )
+    # The message row is pre-allocated so the S3 key can embed its id.
+    message_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    type: Mapped[MessageType] = mapped_column(String(20), nullable=False)
+    s3_key: Mapped[str] = mapped_column(Text, nullable=False)
+    thumb_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # S3 multipart upload id; NULL for a single presigned PUT.
+    upload_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    part_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    client_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -122,6 +234,10 @@ class MessageEdit(Base):
         index=True,
     )
     content_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    # The version the superseded blob was written under (copied, never rewritten).
+    key_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     replaced_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -194,6 +310,9 @@ class ScheduledMessage(Base):
         PgUUID(as_uuid=True), ForeignKey(f"{Tables.USERS}.id"), nullable=False, index=True
     )
     content_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    key_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
     scheduled_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True

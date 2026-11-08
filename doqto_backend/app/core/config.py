@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_S3_BUCKET_NAME: str = "doqto"
+    # Envelope encryption (batch 7): when set, per-org data keys are wrapped
+    # by this KMS key (kms:Encrypt/Decrypt on the task role). Empty = the
+    # static MESSAGE_ENCRYPTION_KEY wraps them (local / test / CI).
+    AWS_KMS_KEY_ID: str = ""
 
     # Push notifications — "log" is the dev stub ([FAKE PUSH] log lines);
     # "fcm" requires the FCM_* credentials below.
@@ -60,6 +64,11 @@ class Settings(BaseSettings):
     # false (NETWORK_DM_ENABLED=false in the prod env) until the networking
     # client ships, at which point it is turned on.
     NETWORK_DM_ENABLED: bool = True
+
+    # Minimum app builds (GET /app/min-version). Bump to force an update.
+    MIN_VERSION_IOS: str = "1.0.0+45"
+    MIN_VERSION_ANDROID: str = "1.0.0+35"
+    MIN_VERSION_MESSAGE: str = "Please update Doqto to keep messaging securely."
 
     SUPER_ADMIN_PHONE: str = ""
     SUPER_ADMIN_NAME: str = ""

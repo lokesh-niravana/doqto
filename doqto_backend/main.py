@@ -12,6 +12,8 @@ from app.api import websocket as ws_router
 from app.api.ws_manager import ws_manager
 from app.api.v1 import (
     admin,
+    app_meta,
+    audit,
     auth,
     billing,
     conversations,
@@ -20,19 +22,26 @@ from app.api.v1 import (
     messages,
     network,
     notifications,
+    org_compliance,
     orgs,
     people,
+    scheduled,
     users,
+    well_known,
 )
 from app.core.config import settings
 from app.core.constants import DISAPPEAR_PURGE_INTERVAL_SEC, SCHEDULED_SEND_INTERVAL_SEC
 from app.core.enums import WsEventServer
-from app.core.redis_keys import purge_lock_key, scheduled_send_lock_key
+from app.core.redis_keys import purge_lock_key, scheduled_send_lock_key, settings_jobs_lock_key
 from app.core.routes import ApiPrefix
 from app.db.postgres import SessionLocal
 from app.db.redis import close_redis, get_redis
+from app.services.compliance_service import BreakGlassService, RetentionService
 from app.services.file_service import FileService
+from app.services.media_service import MediaService
 from app.services.message_service import MessageService
+from app.services.session_service import PinService
+from app.services.status_service import StatusService
 
 # App loggers (doqto.*) have no handler under uvicorn's default config — give them one.
 logging.basicConfig(level=logging.INFO)
@@ -54,16 +63,23 @@ async def _purge_expired_loop() -> None:
             )
             if got_lock:
                 async with SessionLocal() as db:
+                    # Org retention (batch 7) first, so rows it expires enter
+                    # the same soft-delete → grace → shred pipeline.
+                    retained = await RetentionService.apply(db)
                     purged = await MessageService.purge_expired(db)
                     purged_keys = await MessageService.purge_content(db)
                     # Stars never extend retention; pins expire on schedule.
                     orphan_stars = await MessageService.purge_orphan_stars(db)
                     unpinned = await MessageService.expire_pins(db)
+                    # Abandoned presigned uploads (batch 5): abort in S3 after commit.
+                    stale_intents = await MediaService.purge_intents(db)
                     unpin_recipients = [
                         (cid, mid, await MessageService.member_ids(conversation_id=cid, db=db))
                         for cid, mid in unpinned
                     ]
                     await db.commit()
+                    if retained:
+                        logger.info("retention expired %d messages", sum(retained.values()))
                     if purged:
                         logger.info("purged %d expired messages", purged)
                     if orphan_stars:
@@ -88,6 +104,18 @@ async def _purge_expired_loop() -> None:
                         logger.warning("purge: S3 delete failed for %s", key)
                 if purged_keys:
                     logger.info("hard-purged content incl. %d S3 objects", len(purged_keys))
+                for key, upload_id, thumb_key in stale_intents:
+                    try:
+                        if upload_id:
+                            await FileService.abort_multipart_upload(key=key, upload_id=upload_id)
+                        else:
+                            await FileService.delete_object(key=key)
+                        if thumb_key:
+                            await FileService.delete_object(key=thumb_key)
+                    except Exception:
+                        logger.warning("purge: upload intent cleanup failed for %s", key)
+                if stale_intents:
+                    logger.info("aborted %d abandoned uploads", len(stale_intents))
         except Exception:
             logger.exception("purge_expired failed")
         await asyncio.sleep(DISAPPEAR_PURGE_INTERVAL_SEC)
@@ -105,7 +133,7 @@ async def _scheduled_send_loop() -> None:
     from sqlalchemy import select
 
     from app.core.enums import ScheduledMessageStatus, WsEventServer
-    from app.core.security import decrypt_message
+    from app.core import crypto
     from app.models import ScheduledMessage
     from app.services.message_service import MessageError
     from app.services.push_service import PushService
@@ -134,7 +162,7 @@ async def _scheduled_send_loop() -> None:
                             msg = await MessageService.send_text(
                                 conversation_id=row.conversation_id,
                                 sender_id=row.sender_id,
-                                content=decrypt_message(row.content_encrypted),
+                                content=crypto.decrypt(row.content_encrypted, row.key_version),
                                 db=db,
                             )
                             row.status = ScheduledMessageStatus.SENT
@@ -164,6 +192,43 @@ async def _scheduled_send_loop() -> None:
         await asyncio.sleep(SCHEDULED_SEND_INTERVAL_SEC)
 
 
+async def _settings_jobs_loop() -> None:
+    """Batch 6 housekeeping, forever: clear statuses past their expiry (the
+    audience hears `profile_updated`) and finish forgot-PIN cooldowns."""
+    while True:
+        try:
+            redis = await get_redis()
+            got_lock = await redis.set(
+                settings_jobs_lock_key(), "1", nx=True, ex=DISAPPEAR_PURGE_INTERVAL_SEC - 5
+            )
+            if got_lock:
+                async with SessionLocal() as db:
+                    expired = await StatusService.expire(db)
+                    pins_cleared = await PinService.complete_resets(db)
+                    # Break-glass windows past 24 h (batch 7).
+                    lapsed = await BreakGlassService.expire(db)
+                    await db.commit()
+                    for uid in expired:
+                        await StatusService.publish(uid, db)
+                    for req in lapsed:
+                        await ws_manager.publish_to_users(
+                            [req.requester_id],
+                            WsEventServer.ACCESS_REQUEST_UPDATED,
+                            {
+                                "org_id": str(req.org_id),
+                                "access_request_id": str(req.id),
+                                "status": "expired",
+                            },
+                        )
+                if expired:
+                    logger.info("cleared %d expired statuses", len(expired))
+                if pins_cleared:
+                    logger.info("completed %d PIN resets", len(pins_cleared))
+        except Exception:
+            logger.exception("settings_jobs failed")
+        await asyncio.sleep(DISAPPEAR_PURGE_INTERVAL_SEC)
+
+
 def verify_boot_secrets(s=settings) -> None:
     """Refuse to boot outside local with placeholder or malformed secrets.
 
@@ -189,11 +254,13 @@ async def lifespan(_: FastAPI):
     verify_boot_secrets()
     purge_task = asyncio.create_task(_purge_expired_loop())
     scheduled_task = asyncio.create_task(_scheduled_send_loop())
+    settings_task = asyncio.create_task(_settings_jobs_loop())
     # Pumps Redis pub/sub → this instance's sockets (multi-worker fanout).
     subscriber_task = asyncio.create_task(ws_manager.run_subscriber())
     yield
     purge_task.cancel()
     scheduled_task.cancel()
+    settings_task.cancel()
     subscriber_task.cancel()
     await close_redis()
 
@@ -215,6 +282,9 @@ app.add_middleware(
 app.include_router(auth.router, prefix=ApiPrefix.AUTH, tags=["auth"])
 app.include_router(users.router, prefix=ApiPrefix.USERS, tags=["users"])
 app.include_router(orgs.router, prefix=ApiPrefix.ORGS, tags=["orgs"])
+app.include_router(org_compliance.router, prefix=ApiPrefix.ORGS, tags=["orgs"])
+app.include_router(scheduled.router, prefix=ApiPrefix.V1, tags=["messages"])
+app.include_router(well_known.router, tags=["well-known"])
 app.include_router(conversations.router, prefix=ApiPrefix.CONVERSATIONS, tags=["conversations"])
 app.include_router(messages.router, prefix=ApiPrefix.MESSAGES, tags=["messages"])
 app.include_router(admin.router, prefix=ApiPrefix.ADMIN, tags=["admin"])
@@ -223,6 +293,8 @@ app.include_router(people.router, prefix=ApiPrefix.PEOPLE, tags=["people"])
 app.include_router(groups.router, prefix=ApiPrefix.GROUPS, tags=["groups"])
 app.include_router(billing.router, prefix=ApiPrefix.BILLING, tags=["billing"])
 app.include_router(links.router, prefix=ApiPrefix.LINKS, tags=["links"])
+app.include_router(audit.router, prefix=ApiPrefix.AUDIT, tags=["audit"])
+app.include_router(app_meta.router, prefix=ApiPrefix.APP, tags=["app"])
 app.include_router(
     notifications.router, prefix=ApiPrefix.NOTIFICATIONS, tags=["notifications"]
 )

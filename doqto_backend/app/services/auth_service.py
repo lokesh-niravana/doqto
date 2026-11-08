@@ -22,10 +22,12 @@ from app.core.redis_keys import (
     session_key,
 )
 from app.core.security import TokenError, create_token, decode_token
-from app.models import User
+from app.models import Session, User
 from app.schemas.auth import TokenPair
+from app.schemas.user import pin_clears_at
 from app.services import firebase_auth
 from app.services.audit_service import AuditService
+from app.services.session_service import SessionService
 
 
 class AuthError(Exception):
@@ -57,12 +59,20 @@ class AuthService:
         db: AsyncSession,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        device_name: str | None = None,
+        platform: str | None = None,
+        app_version: str | None = None,
     ) -> TokenPair:
         """Exchange a Firebase ID token for a Doqto token pair.
 
         Every sign-in method arrives here. Firebase asserts the identity; this
         resolves it to a user row and mints our own tokens, so sessions, roles
         and the audit trail are unchanged by which button was tapped.
+
+        Batch 6: a `sessions` row is created for the pair (linked devices);
+        a registered user with other live sessions gets a "New sign-in on
+        <device>" alert on them; a user with a two-step PIN on an unknown
+        device gets `pin_required: true`.
         """
         # Per-IP hourly cap. Guards the DB, not an SMS budget — Google pays for
         # the messages now.
@@ -101,14 +111,24 @@ class AuthService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
-        return await AuthService._issue_tokens(
+        others = len(await SessionService.list_active(user.id, db)) if is_registered else 0
+        pair, session = await AuthService._issue_tokens(
             user=user,
             is_registered=is_registered,
             redis=redis,
             db=db,
             ip_address=ip_address,
             user_agent=user_agent,
+            device_name=device_name,
+            platform=platform,
+            app_version=app_version,
         )
+        if is_registered:
+            # Commits, then fans out (WS + in-app + PHI-free push).
+            await SessionService.notify_new_sign_in(
+                user=user, session=session, other_count=others, db=db
+            )
+        return pair
 
     @staticmethod
     async def _adopt_or_create(*, identity: firebase_auth.FirebaseIdentity, db: AsyncSession) -> User:
@@ -147,13 +167,25 @@ class AuthService:
         db: AsyncSession,
         ip_address: str | None = None,
         user_agent: str | None = None,
-    ) -> TokenPair:
+        device_name: str | None = None,
+        platform: str | None = None,
+        app_version: str | None = None,
+    ) -> tuple[TokenPair, "Session"]:
         access, jti = create_token(user.id, JwtTokenType.ACCESS)
         refresh, _ = create_token(user.id, JwtTokenType.REFRESH, jti=jti)
         # Each token gets its own session TTL (§164.312(a)(2)(iii)): a revoked
         # access token dies after 1h even though the refresh half lives 7d.
         await redis.setex(session_key(jti), ACCESS_TOKEN_TTL_SECONDS, str(user.id))
         await redis.setex(refresh_session_key(jti), REFRESH_TOKEN_TTL_SECONDS, str(user.id))
+        session = await SessionService.create(
+            user=user,
+            jti=jti,
+            device_name=device_name,
+            platform=platform,
+            app_version=app_version,
+            ip=ip_address,
+            db=db,
+        )
         if is_registered:
             await AuditService.log(
                 db,
@@ -162,7 +194,18 @@ class AuthService:
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
-        return TokenPair(access_token=access, refresh_token=refresh, is_registered=is_registered)
+        pin_required = is_registered and session.pin_verified_at is None
+        return (
+            TokenPair(
+                access_token=access,
+                refresh_token=refresh,
+                is_registered=is_registered,
+                session_id=session.id,
+                pin_required=pin_required,
+                pin_clears_at=pin_clears_at(user) if pin_required else None,
+            ),
+            session,
+        )
 
     @staticmethod
     async def link_phone(*, user: User, id_token: str, db: AsyncSession) -> User:
@@ -196,7 +239,9 @@ class AuthService:
         return user
 
     @staticmethod
-    async def refresh(*, refresh_token: str, redis: Redis) -> TokenPair:
+    async def refresh(
+        *, refresh_token: str, redis: Redis, db: AsyncSession | None = None
+    ) -> TokenPair:
         try:
             payload = decode_token(refresh_token, JwtTokenType.REFRESH)
         except TokenError as e:
@@ -211,7 +256,26 @@ class AuthService:
         await redis.delete(session_key(jti), refresh_session_key(jti))
         await redis.setex(session_key(new_jti), ACCESS_TOKEN_TTL_SECONDS, user_id)
         await redis.setex(refresh_session_key(new_jti), REFRESH_TOKEN_TTL_SECONDS, user_id)
-        return TokenPair(access_token=access, refresh_token=refresh, is_registered=True)
+        session = None
+        pin_required = False
+        pin_clears: datetime | None = None
+        if db is not None:
+            # The row follows the pair (linked devices, batch 6).
+            session = await SessionService.rotate(old_jti=jti, new_jti=new_jti, db=db)
+            if session is not None and session.pin_verified_at is None:
+                user = await db.get(User, uuid.UUID(user_id))
+                if user is not None and user.pin_hash is not None:
+                    pin_required = True
+                    pin_clears = pin_clears_at(user)
+            await db.commit()
+        return TokenPair(
+            access_token=access,
+            refresh_token=refresh,
+            is_registered=True,
+            session_id=session.id if session is not None else None,
+            pin_required=pin_required,
+            pin_clears_at=pin_clears,
+        )
 
     @staticmethod
     async def logout(*, access_token: str, redis: Redis, db: AsyncSession) -> None:
@@ -223,6 +287,7 @@ class AuthService:
         user_id = payload.get("sub")
         if jti:
             await redis.delete(session_key(jti), refresh_session_key(jti))
+            await SessionService.revoke_by_access_jti(jti=jti, redis=redis, db=db)
         if user_id:
             await AuditService.log(db, user_id=uuid.UUID(user_id), action=AuditAction.LOGOUT)
 

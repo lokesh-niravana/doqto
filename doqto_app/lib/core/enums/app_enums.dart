@@ -95,6 +95,9 @@ enum MessageType {
   @JsonValue('image') image,
   @JsonValue('file') file,
   @JsonValue('system') system,
+  // Batch 5 (media): video clip with a poster thumbnail; poll.
+  @JsonValue('video') video,
+  @JsonValue('poll') poll,
 
   /// Tolerant fallback for wire values this client doesn't know yet (A5).
   /// Consumers must treat it like [text] (generic bubble) — never crash.
@@ -106,6 +109,8 @@ enum MessageType {
         MessageType.image => 'image',
         MessageType.file => 'file',
         MessageType.system => 'system',
+        MessageType.video => 'video',
+        MessageType.poll => 'poll',
         MessageType.unknown => 'unknown',
       };
 
@@ -115,6 +120,8 @@ enum MessageType {
         'image' => MessageType.image,
         'file' => MessageType.file,
         'system' => MessageType.system,
+        'video' => MessageType.video,
+        'poll' => MessageType.poll,
         _ => MessageType.unknown,
       };
 }
@@ -224,7 +231,19 @@ enum WsEventServer {
   // event only the actor's own devices (stars are private).
   messagePinned,
   messageUnpinned,
-  messageStarred;
+  messageStarred,
+  // Polls (batch 5): tallies + voter ids after a vote changed — every member.
+  pollUpdated,
+  // Settings (batch 6) — all sent ONLY to my own devices.
+  /// Another device signed in to my account; payload has its session_id.
+  sessionCreated,
+  /// A session was revoked; if session_id is mine, wipe and go to login.
+  sessionRevoked,
+  /// My notification settings changed elsewhere; payload is the full set.
+  notificationSettingsUpdated,
+  // Compliance (batch 7) — org admins only.
+  /// A break-glass access request in one of my orgs changed; refetch.
+  accessRequestUpdated;
 
   String get wire => switch (this) {
         WsEventServer.newMessage => 'new_message',
@@ -262,6 +281,12 @@ enum WsEventServer {
         WsEventServer.messagePinned => 'message_pinned',
         WsEventServer.messageUnpinned => 'message_unpinned',
         WsEventServer.messageStarred => 'message_starred',
+        WsEventServer.pollUpdated => 'poll_updated',
+        WsEventServer.sessionCreated => 'session_created',
+        WsEventServer.sessionRevoked => 'session_revoked',
+        WsEventServer.notificationSettingsUpdated =>
+          'notification_settings_updated',
+        WsEventServer.accessRequestUpdated => 'access_request_updated',
       };
 
   static WsEventServer? fromWire(String s) => switch (s) {
@@ -300,6 +325,12 @@ enum WsEventServer {
         'message_pinned' => WsEventServer.messagePinned,
         'message_unpinned' => WsEventServer.messageUnpinned,
         'message_starred' => WsEventServer.messageStarred,
+        'poll_updated' => WsEventServer.pollUpdated,
+        'session_created' => WsEventServer.sessionCreated,
+        'session_revoked' => WsEventServer.sessionRevoked,
+        'notification_settings_updated' =>
+          WsEventServer.notificationSettingsUpdated,
+        'access_request_updated' => WsEventServer.accessRequestUpdated,
         _ => null,
       };
 }
@@ -654,4 +685,56 @@ enum DisappearAfter {
 
   final int? seconds;
   const DisappearAfter(this.seconds);
+}
+
+/// Status under a doctor's name (batch 6). Shared wire enum — mirrors backend
+/// StatusPreset. `PATCH /users/me/status {preset}`; anything that is not a
+/// preset arrives as `status_text` instead. Tolerant: unknown → null.
+enum StatusPreset {
+  @JsonValue('on_call') onCall,
+  @JsonValue('in_clinic') inClinic,
+  @JsonValue('in_surgery') inSurgery,
+  @JsonValue('off_duty') offDuty,
+  @JsonValue('available') available;
+
+  String get wire => switch (this) {
+        StatusPreset.onCall => 'on_call',
+        StatusPreset.inClinic => 'in_clinic',
+        StatusPreset.inSurgery => 'in_surgery',
+        StatusPreset.offDuty => 'off_duty',
+        StatusPreset.available => 'available',
+      };
+
+  static StatusPreset? fromWire(String? s) => switch (s) {
+        'on_call' => StatusPreset.onCall,
+        'in_clinic' => StatusPreset.inClinic,
+        'in_surgery' => StatusPreset.inSurgery,
+        'off_duty' => StatusPreset.offDuty,
+        'available' => StatusPreset.available,
+        _ => null,
+      };
+}
+
+/// Notification vibration pattern (batch 6, Android only — iOS ignores it).
+/// Shared wire enum — mirrors backend VibratePattern. Tolerant: unknown →
+/// [defaultPattern].
+enum VibratePattern {
+  @JsonValue('default') defaultPattern,
+  @JsonValue('short') short,
+  @JsonValue('long') long,
+  @JsonValue('off') off;
+
+  String get wire => switch (this) {
+        VibratePattern.defaultPattern => 'default',
+        VibratePattern.short => 'short',
+        VibratePattern.long => 'long',
+        VibratePattern.off => 'off',
+      };
+
+  static VibratePattern fromWire(String? s) => switch (s) {
+        'short' => VibratePattern.short,
+        'long' => VibratePattern.long,
+        'off' => VibratePattern.off,
+        _ => VibratePattern.defaultPattern,
+      };
 }

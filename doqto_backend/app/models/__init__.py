@@ -1,4 +1,5 @@
 from app.models.audit import AuditLog
+from app.models.compliance import AccessRequest, DataKey
 from app.models.conversation import (
     Conversation,
     ConversationMember,
@@ -14,7 +15,10 @@ from app.models.message import (
     MessageReaction,
     MessageReceipt,
     MessageStar,
+    PollOption,
+    PollVote,
     ScheduledMessage,
+    UploadIntent,
 )
 from app.models.network import (
     AppInvite,
@@ -30,9 +34,11 @@ from app.models.notification import Notification
 from app.models.org_directory import OrgDirectoryEntry, OrgDirectoryMember
 from app.models.organization import Organization, OrgMember
 from app.models.privacy import UserPrivacySettings
+from app.models.settings import Session, UserNotificationSettings
 from app.models.user import User
 
 __all__ = [
+    "AccessRequest",
     "AppInvite",
     "AuditLog",
     "Block",
@@ -42,6 +48,7 @@ __all__ = [
     "Conversation",
     "ConversationMember",
     "ConversationPref",
+    "DataKey",
     "DeviceToken",
     "DirectConversationKey",
     "Group",
@@ -53,7 +60,10 @@ __all__ = [
     "MessageReaction",
     "MessageReceipt",
     "MessageStar",
+    "PollOption",
+    "PollVote",
     "ScheduledMessage",
+    "UploadIntent",
     "Mute",
     "SuggestionDismissal",
     "Notification",
@@ -62,6 +72,8 @@ __all__ = [
     "OrgDirectoryMember",
     "OrgMember",
     "Report",
+    "Session",
     "User",
+    "UserNotificationSettings",
     "UserPrivacySettings",
 ]

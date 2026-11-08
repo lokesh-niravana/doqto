@@ -279,7 +279,15 @@ async def test_presence_audience_matrix(client, db):
     await _set(client, oh, last_seen_visibility="nobody")
     for h in (colh, conh, sh):
         row = (await _presence_of(client, h, owner.id))[str(owner.id)]
-        assert row == {"user_id": str(owner.id), "status": "offline", "last_seen_at": None}
+        assert row == {
+            "user_id": str(owner.id),
+            "status": "offline",
+            "last_seen_at": None,
+            # Status under the name (batch 6) — none set here.
+            "status_preset": None,
+            "status_text": None,
+            "status_expires_at": None,
+        }
 
 
 async def test_presence_reciprocal_rule(client, db):

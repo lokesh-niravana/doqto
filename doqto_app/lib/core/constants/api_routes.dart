@@ -9,14 +9,27 @@ class ApiRoutes {
   static const String authRefresh = '$apiV1/auth/refresh';
   static const String authLogout = '$apiV1/auth/logout';
   static const String authRegister = '$apiV1/auth/register';
+  // Two-step PIN (batch 6): verify on a new device / start the 7-day reset.
+  static const String authPinVerify = '$apiV1/auth/pin/verify';
+  static const String authPinResetRequest = '$apiV1/auth/pin/reset-request';
 
   // Users
   static const String usersMe = '$apiV1/users/me';
   static const String usersMeAvatar = '$apiV1/users/me/avatar';
   static const String usersMePushTokens = '$apiV1/users/me/push-tokens';
-  // Attach a phone to the signed-in account. NOT YET ON THE BACKEND — see
-  // docs/phone-verification.md for the contract.
+  // Attach a phone to the signed-in account (POST, sign-up) or change the
+  // number (PATCH, batch 6) — both take a Firebase ID token for the number.
+  // See docs/phone-verification.md and docs/settings.md.
   static const String usersMePhone = '$apiV1/users/me/phone';
+  // Settings (batch 6)
+  static const String usersMeNotifications = '$apiV1/users/me/notifications';
+  static const String usersMeSessions = '$apiV1/users/me/sessions';
+  static String usersMeSession(String id) => '$apiV1/users/me/sessions/$id';
+  static const String usersMeSessionsRevokeOthers =
+      '$apiV1/users/me/sessions/revoke-others';
+  static const String usersMePin = '$apiV1/users/me/pin';
+  static const String usersMeExport = '$apiV1/users/me/export';
+  static const String usersMeStatus = '$apiV1/users/me/status';
 
   // Orgs
   static const String orgs = '$apiV1/orgs';
@@ -30,6 +43,22 @@ class ApiRoutes {
   static String orgMember(String orgId, String userId) =>
       '$apiV1/orgs/$orgId/members/$userId';
   static String orgInviteCode(String id) => '$apiV1/orgs/$id/invite-code';
+  // Compliance (batch 7)
+  static String orgPolicies(String id) =>
+      '$apiV1/orgs/$id/policies'; // GET member / PATCH admin
+  static String orgAudit(String id) => '$apiV1/orgs/$id/audit'; // GET admin
+  static String orgReports(String id) =>
+      '$apiV1/orgs/$id/reports'; // GET ?status=&cursor= (admin)
+  static String orgReport(String orgId, String reportId) =>
+      '$apiV1/orgs/$orgId/reports/$reportId'; // PATCH {status}
+  static String orgAccessRequests(String id) =>
+      '$apiV1/orgs/$id/access-requests'; // GET list / POST {conversation_id, reason}
+  static String orgAccessRequestApprove(String orgId, String requestId) =>
+      '$apiV1/orgs/$orgId/access-requests/$requestId/approve';
+  static String orgAccessRequestReject(String orgId, String requestId) =>
+      '$apiV1/orgs/$orgId/access-requests/$requestId/reject';
+  static String orgAccessRequestMessages(String orgId, String requestId) =>
+      '$apiV1/orgs/$orgId/access-requests/$requestId/messages'; // GET ?cursor=
 
   // Conversations
   static const String conversations = '$apiV1/conversations';
@@ -40,6 +69,10 @@ class ApiRoutes {
       '$apiV1/conversations/$id/messages';
   static String conversationScheduleMessage(String id) =>
       '$apiV1/conversations/$id/messages/schedule';
+  // My pending scheduled messages in a chat (batch 7); cancel with scheduled().
+  static String conversationScheduled(String id) =>
+      '$apiV1/conversations/$id/scheduled';
+  static String scheduled(String id) => '$apiV1/scheduled/$id'; // DELETE
   static String conversationRead(String id) => '$apiV1/conversations/$id/read';
   static String conversationDelivered(String id) =>
       '$apiV1/conversations/$id/delivered';
@@ -79,6 +112,17 @@ class ApiRoutes {
   static const String messagesStarred =
       '$apiV1/messages/starred'; // GET ?cursor=&limit= across conversations
   static const String linkPreview = '$apiV1/link-preview'; // GET ?url=
+  // Batch 5 (media)
+  static String messageUploadIntent(String convId) =>
+      '$apiV1/messages/upload-intent/$convId'; // POST → presigned URLs
+  static String messageUploadComplete(String convId) =>
+      '$apiV1/messages/upload-complete/$convId'; // POST → MessageOut
+  static String messageExportAudit(String id) =>
+      '$apiV1/messages/$id/export-audit'; // POST before save / share
+  static String messageVote(String id) =>
+      '$apiV1/messages/$id/vote'; // PUT {option_ids} / DELETE (own votes)
+  static String conversationMedia(String id) =>
+      '$apiV1/conversations/$id/media'; // GET ?type=image|video|file|link&cursor=
 
   // People / profiles (networking M1/M2)
   static String userProfile(String userId) => '$apiV1/users/$userId/profile';
@@ -141,6 +185,13 @@ class ApiRoutes {
       '$apiV1/groups/$id/transfer-ownership';
   static const String meGroups = '$apiV1/me/groups';
 
+
+  // Audit (batch 6): iOS reports a detected screenshot of a chat.
+  static const String auditScreenshot = '$apiV1/audit/screenshot';
+
+  // App metadata (batch 6) — unauthenticated.
+  static const String appMinVersion = '$apiV1/app/min-version';
+  static const String appLegal = '$apiV1/app/legal';
 
   // Admin endpoints live in the separate Next.js admin panel — not in the mobile app.
 

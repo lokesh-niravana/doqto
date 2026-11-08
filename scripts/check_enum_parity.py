@@ -59,6 +59,10 @@ SHARED = {
     "TranscriptStatus",
     "WsEventServer",
     "WsEventClient",
+    # Settings (batch 6): the status picker and the vibrate picker render from
+    # these. The notification tone list is a plain string (resource name).
+    "StatusPreset",
+    "VibratePattern",
 }
 
 

@@ -3,20 +3,143 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-from app.core.constants import FORWARD_MAX_DESTINATIONS, PIN_DURATIONS_SEC
+from app.core.constants import (
+    CAPTION_MAX_LEN,
+    FORWARD_MAX_DESTINATIONS,
+    PIN_DURATIONS_SEC,
+    POLL_OPTION_MAX_LEN,
+    POLL_OPTIONS_MAX,
+    POLL_OPTIONS_MIN,
+    POLL_QUESTION_MAX_LEN,
+)
 from app.core.enums import MessageType, TranscriptStatus
+
+
+class PollCreateIn(BaseModel):
+    """Batch 5: `poll` on POST /conversations/{id}/messages with type=poll."""
+
+    question: str = Field(min_length=1, max_length=POLL_QUESTION_MAX_LEN)
+    options: list[str] = Field(min_length=POLL_OPTIONS_MIN, max_length=POLL_OPTIONS_MAX)
+    multiple: bool = False
+
+    @model_validator(mode="after")
+    def _options_clean(self) -> "PollCreateIn":
+        cleaned = [o.strip() for o in self.options]
+        if any(not o or len(o) > POLL_OPTION_MAX_LEN for o in cleaned):
+            raise ValueError("poll_option_invalid")
+        if len({o.casefold() for o in cleaned}) != len(cleaned):
+            raise ValueError("poll_options_duplicate")
+        self.options = cleaned
+        self.question = self.question.strip()
+        if not self.question:
+            raise ValueError("poll_question_empty")
+        return self
 
 
 class MessageSendIn(BaseModel):
     type: MessageType = MessageType.TEXT
-    content: str = Field(min_length=1, max_length=5000)
+    # Required for text; for a poll the question is the body (content ignored).
+    content: str | None = Field(default=None, min_length=1, max_length=5000)
     # Idempotency key (uuid from the client outbox); retries return the
     # original message instead of creating a duplicate.
     client_id: str | None = Field(default=None, max_length=64)
     # Reply/quote (batch 4): a live message in the SAME conversation.
     reply_to_id: uuid.UUID | None = None
+    # Polls (batch 5).
+    poll: PollCreateIn | None = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> "MessageSendIn":
+        if self.type == MessageType.POLL:
+            if self.poll is None:
+                raise ValueError("poll_required")
+        elif self.type == MessageType.TEXT:
+            if self.content is None:
+                raise ValueError("content_required")
+        else:
+            # Media goes through the upload routes, system is server-only.
+            raise ValueError("type_not_sendable")
+        return self
+
+
+class PollVoteIn(BaseModel):
+    """PUT /messages/{id}/vote — the caller's full selection (replaces)."""
+
+    option_ids: list[uuid.UUID] = Field(min_length=1, max_length=POLL_OPTIONS_MAX)
+
+
+class PollOptionOut(BaseModel):
+    id: uuid.UUID
+    position: int
+    text: str
+    vote_count: int
+    voter_ids: list[uuid.UUID]  # oldest vote first — visible to every member
+
+
+class PollOut(BaseModel):
+    question: str
+    multiple: bool
+    options: list[PollOptionOut]
+    voter_count: int  # distinct members who voted
+
+
+class PollUpdatedEvent(BaseModel):
+    """WS `poll_updated` — every member, after a vote changed."""
+
+    conversation_id: uuid.UUID
+    message_id: uuid.UUID
+    poll: PollOut
+    changed_at: datetime
+    actor_id: uuid.UUID
+
+
+class UploadIntentIn(BaseModel):
+    """POST /messages/upload-intent/{conv}: describe the object the client is
+    about to PUT straight to S3. Size is validated again on complete."""
+
+    file_name: str = Field(min_length=1, max_length=255)
+    content_type: str = Field(min_length=3, max_length=255)
+    size_bytes: int = Field(ge=1)
+    client_id: str | None = Field(default=None, max_length=64)
+    # Video: the client also uploads a JPEG poster (no ffmpeg server-side).
+    with_thumb: bool = False
+
+
+class UploadPartUrlOut(BaseModel):
+    part_number: int
+    url: str
+
+
+class UploadIntentOut(BaseModel):
+    intent_id: uuid.UUID
+    type: MessageType
+    key: str
+    part_size: int
+    expires_in: int
+    # Exactly one of: a single presigned PUT, or multipart part URLs.
+    put_url: str | None = None
+    upload_id: str | None = None
+    part_urls: list[UploadPartUrlOut] = []
+    thumb_put_url: str | None = None
+    # Set when `client_id` matched an already-sent message: nothing to upload.
+    message: "MessageOut | None" = None
+
+
+class UploadPartIn(BaseModel):
+    part_number: int = Field(ge=1, le=10000)
+    etag: str = Field(min_length=1, max_length=255)
+
+
+class UploadCompleteIn(BaseModel):
+    intent_id: uuid.UUID
+    parts: list[UploadPartIn] = []
+    caption: str | None = Field(default=None, max_length=CAPTION_MAX_LEN)
+    duration_sec: int | None = Field(default=None, ge=0)
+    width: int | None = Field(default=None, ge=1, le=20000)
+    height: int | None = Field(default=None, ge=1, le=20000)
+    has_thumb: bool = False
 
 
 class MessageForwardIn(BaseModel):
@@ -118,6 +241,29 @@ class MessageOut(BaseModel):
     # The ONE per-viewer field: true only in responses to the viewer's own
     # reads (thread page, starred list). Always false in fanned-out WS payloads.
     starred: bool = False
+    # Batch 5 (media). caption: image/video/file/voice; thumb_key: video
+    # poster (fetch via GET /messages/{id}/file-url?thumb=1); waveform:
+    # base64 of ≤ 64 amplitude bytes; voice_duration_sec doubles as the video
+    # length; poll: tallies + voter ids (same for every viewer).
+    caption: str | None = None
+    thumb_key: str | None = None
+    waveform: str | None = None
+    media_width: int | None = None
+    media_height: int | None = None
+    poll: PollOut | None = None
+
+
+class MediaItemOut(BaseModel):
+    """One row of GET /conversations/{id}/media. `urls` is filled for
+    type=link (every http(s) URL found in the text), empty otherwise."""
+
+    message: MessageOut
+    urls: list[str] = []
+
+
+class MediaPage(BaseModel):
+    data: list[MediaItemOut]
+    next_cursor: str | None = None
 
 
 class StarredMessageOut(BaseModel):
@@ -195,3 +341,6 @@ class MessageReceiptOut(BaseModel):
 class FileUrlOut(BaseModel):
     url: str
     expires_in: int
+
+
+UploadIntentOut.model_rebuild()

@@ -228,6 +228,48 @@ class GroupService:
         return touched
 
     @staticmethod
+    async def _purge_votes(group: Group, user_id: uuid.UUID, db: AsyncSession) -> list[uuid.UUID]:
+        """Poll votes leave with the member too (batch 5). Returns the touched
+        poll message ids for a `poll_updated` fan-out after commit."""
+        from app.services.media_service import MediaService
+
+        return await MediaService.purge_votes_for_member(
+            conversation_id=group.conversation_id, user_id=user_id, db=db
+        )
+
+    @staticmethod
+    async def _publish_polls_changed(
+        group: Group, message_ids: list[uuid.UUID], actor_id: uuid.UUID, db: AsyncSession
+    ) -> None:
+        if not message_ids:
+            return
+        from app.schemas.message import PollUpdatedEvent
+        from app.services.media_service import MediaService
+
+        recipients = await MessageService.member_ids(
+            conversation_id=group.conversation_id, db=db
+        )
+        if not recipients:
+            return
+        msgs = (
+            await db.execute(select(Message).where(Message.id.in_(message_ids)))
+        ).scalars().all()
+        polls = await MediaService.polls_for(msgs=list(msgs), db=db)
+        for msg in msgs:
+            if msg.id not in polls:
+                continue
+            event = PollUpdatedEvent(
+                conversation_id=group.conversation_id,
+                message_id=msg.id,
+                poll=polls[msg.id],
+                changed_at=msg.changed_at or _now(),
+                actor_id=actor_id,
+            )
+            await ws_manager.publish_to_users(
+                recipients, WsEventServer.POLL_UPDATED, event.model_dump(mode="json")
+            )
+
+    @staticmethod
     async def _publish_reactions_changed(
         group: Group, message_ids: list[uuid.UUID], actor_id: uuid.UUID, db: AsyncSession
     ) -> None:
@@ -714,6 +756,7 @@ class GroupService:
             state = GroupMemberState.REMOVED
         await GroupService._remove_membership(group, target_m, state=state, db=db)
         purged = await GroupService._purge_reactions(group, target_id, db)
+        purged_polls = await GroupService._purge_votes(group, target_id, db)
         await AuditService.log_request(
             request,
             user_id=actor.id,
@@ -737,6 +780,7 @@ class GroupService:
             {"conversation_id": str(group.conversation_id), "user_id": str(target_id)},
         )
         await GroupService._publish_reactions_changed(group, purged, target_id, db)
+        await GroupService._publish_polls_changed(group, purged_polls, target_id, db)
         await GroupService.publish_group_updated(group, db, extra_user_ids=[target_id])
 
     @staticmethod
@@ -757,6 +801,7 @@ class GroupService:
             group, target_m, state=GroupMemberState.BANNED, db=db
         )
         purged = await GroupService._purge_reactions(group, target_id, db)
+        purged_polls = await GroupService._purge_votes(group, target_id, db)
         await AuditService.log_request(
             request,
             user_id=actor.id,
@@ -776,6 +821,7 @@ class GroupService:
             {"conversation_id": str(group.conversation_id), "user_id": str(target_id)},
         )
         await GroupService._publish_reactions_changed(group, purged, target_id, db)
+        await GroupService._publish_polls_changed(group, purged_polls, target_id, db)
         await GroupService.publish_group_updated(group, db, extra_user_ids=[target_id])
 
     @staticmethod

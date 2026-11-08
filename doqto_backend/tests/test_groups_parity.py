@@ -48,7 +48,7 @@ class _Sender:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def send(self, *, token, title, body, data, collapse_key, badge=None) -> PushResult:
+    async def send(self, *, token, title, body, data, collapse_key, badge=None, **_) -> PushResult:
         self.calls.append(
             {"token": token, "title": title, "body": body, "data": data, "collapse": collapse_key}
         )

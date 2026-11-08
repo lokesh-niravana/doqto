@@ -29,6 +29,10 @@ TYPE_GROUP_INVITE_RECEIVED = "group_invite_received"
 
 # Someone you invited by NPI finished registering; you are now connected.
 TYPE_INVITE_JOINED = "invite_joined"
+# Break-glass (batch 7) — org admins only; payload holds ids and a bool.
+# The push is sent by the route (PushService.notify_access_request).
+TYPE_ACCESS_REQUEST_PENDING = "access_request_pending"
+TYPE_ACCESS_REQUEST_DECIDED = "access_request_decided"
 
 _PUSH_WORTHY = {TYPE_INVITATION_RECEIVED, TYPE_INVITATION_ACCEPTED, TYPE_INVITE_JOINED}
 

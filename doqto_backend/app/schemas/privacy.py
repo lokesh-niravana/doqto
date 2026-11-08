@@ -14,6 +14,7 @@ from app.core.enums import (
     OnlineVisibility,
     PresenceStatus,
     ProfileFieldVisibility,
+    StatusPreset,
 )
 from app.schemas.common import ORMModel
 
@@ -61,3 +62,8 @@ class PresenceOut(BaseModel):
     user_id: uuid.UUID
     status: PresenceStatus
     last_seen_at: datetime | None = None
+    # Status under the name (batch 6) — directory data, shown to anyone who
+    # may see the profile; not gated by last-seen visibility.
+    status_preset: StatusPreset | None = None
+    status_text: str | None = None
+    status_expires_at: datetime | None = None

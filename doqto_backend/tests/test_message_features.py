@@ -53,9 +53,9 @@ class RecordingSender:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def send(self, *, token, title, body, data, collapse_key):
+    async def send(self, *, token, title, body, data, collapse_key, badge=None):
         self.calls.append(
-            {"token": token, "title": title, "body": body, "data": data, "collapse_key": collapse_key}
+            {"token": token, "title": title, "body": body, "data": data, "collapse_key": collapse_key, "badge": badge}
         )
         return PushResult.SENT
 

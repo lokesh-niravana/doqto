@@ -1,7 +1,6 @@
 """Message features (batch 4): reply, forward, star, pin, mentions, org
 content policies, report context + resolution.
 
-TODO(coordinator): re-point down_revision to "0031_conversation_prefs" when
 merging with Batch 3 — that revision does not exist in this worktree yet.
 
 Revision ID: 0032_message_features
@@ -17,7 +16,7 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
 revision: str = "0032_message_features"
-down_revision: Union[str, None] = "0030_privacy_presence"
+down_revision: Union[str, None] = "0031_conversation_prefs"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

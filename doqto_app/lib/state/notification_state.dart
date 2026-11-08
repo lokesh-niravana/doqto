@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -10,9 +11,11 @@ import '../core/enums/app_enums.dart';
 import '../core/router/app_router.dart';
 import '../data/models/conversation.dart';
 import '../data/services/notification_service.dart';
+import '../data/services/tone_player.dart';
 import 'auth_state.dart';
 import 'chat_state.dart';
 import 'network_state.dart';
+import 'notification_settings_state.dart';
 
 final notificationServiceProvider = Provider<NotificationService>(
   (ref) => NotificationService(),
@@ -46,6 +49,9 @@ String routePathForPayload(String payload) {
               : AppRoutes.group(segs[1]);
         case 'g':
           return AppRoutes.groupInviteLink(segs[1]);
+        case 'settings':
+          // `/settings/devices` from the "New sign-in" banner (batch 6).
+          if (segs[1] == 'devices') return AppRoutes.linkedDevices;
       }
     }
   }
@@ -65,6 +71,8 @@ String? routePathForPushData(Map<String, dynamic> data) {
         _ => AppRoutes.groups,
       },
     'invitation_received' || 'invitation_accepted' => AppRoutes.network,
+    // Another device signed in to this account (batch 6).
+    'new_sign_in' => AppRoutes.linkedDevices,
     // Someone we invited joined and is now connected: open their profile.
     'invite_joined' => switch (data['user_id']) {
         final String id when id.isNotEmpty => AppRoutes.person(id),
@@ -111,6 +119,24 @@ Future<void> _notifyInvitationAccepted(
             ? Strings.netConnectedNotificationBodyGeneric
             : Strings.netConnectedNotificationBody(name),
         route: 'doqto:///people/$userId',
+      );
+}
+
+/// "New sign-in on iPhone 16" (batch 6) — from the `session_created` WS
+/// event, skipped for this device's own session. Tap opens Linked devices.
+Future<void> _notifyNewSignIn(Ref ref, Map<String, dynamic> data) async {
+  final sessionId = data['session_id'] as String?;
+  if (sessionId == null || sessionId == ref.read(authProvider.notifier).sessionId) {
+    return;
+  }
+  final device = (data['device_name'] as String?)?.trim();
+  await ref.read(notificationServiceProvider).showNetworkEvent(
+        tag: 'sign-in:$sessionId',
+        title: 'New sign-in',
+        body: (device == null || device.isEmpty)
+            ? 'A new device signed in to your account'
+            : 'New sign-in on $device',
+        route: 'doqto:///settings/devices',
       );
 }
 
@@ -167,6 +193,10 @@ final notificationListenerProvider = Provider<void>((ref) {
     }
     if (event.type == WsEventServer.groupInviteReceived) {
       await _notifyGroupInvite(ref, event.data);
+      return;
+    }
+    if (event.type == WsEventServer.sessionCreated) {
+      await _notifyNewSignIn(ref, event.data);
       return;
     }
     if (event.type != WsEventServer.newMessage) return;
@@ -231,9 +261,33 @@ final notificationListenerProvider = Provider<void>((ref) {
             MessageType.file => '📎 File',
             _ => (event.data['content'] as String?) ?? 'New message',
           };
-    await ref
-        .read(notificationServiceProvider)
-        .showMessage(conversationId: conversationId, title: title, body: body);
+    // Batch 6 notification settings: groups land on their own channel, and a
+    // kind with "Show preview" off gets the generic body. Settings not loaded
+    // yet (or never initialised — the sync provider owns that) → behave as
+    // before (preview per AppConstants); never trigger a fetch from here.
+    final isGroup = conv.type == ConversationType.group;
+    final settings = ref.exists(notificationSettingsProvider)
+        ? ref.read(notificationSettingsProvider).asData?.value
+        : null;
+    final showPreview = settings == null
+        ? true
+        : (isGroup ? settings.groupsShowPreview : settings.messagesShowPreview);
+    await ref.read(notificationServiceProvider).showMessage(
+          conversationId: conversationId,
+          title: title,
+          body: body,
+          channelId: isGroup ? 'groups' : 'messages',
+          showPreview: showPreview,
+        );
+    // In-app receive feedback while the app is in front.
+    if (settings != null && appActive) {
+      if (settings.conversationTones) {
+        ref.read(tonePlayerProvider).play('pop').catchError((_) {});
+      }
+      if (settings.haptics) {
+        HapticFeedback.lightImpact().catchError((_) {});
+      }
+    }
   });
   ref.onDispose(sub.cancel);
 });

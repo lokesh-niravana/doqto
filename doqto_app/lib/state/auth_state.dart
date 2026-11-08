@@ -7,15 +7,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/di/providers.dart';
 import '../core/enums/app_enums.dart';
+import '../data/api/api_client.dart';
 import '../data/models/user.dart';
 import '../data/services/auth_broker.dart';
 import '../data/services/push_token_provider.dart';
 import '../data/repositories/user_repository.dart';
 import 'org_state.dart';
+import 'settings_state.dart';
 
 enum AuthStage {
   unknown,
   signedOut,
+
+  /// Batch 6: tokens issued, but this new device owes the two-step PIN.
+  /// Every route but `/auth/pin/*` answers 403 until it is entered.
+  pinRequired,
   needsRegistration,
   needsOrg,
   pendingVerification,
@@ -25,10 +31,14 @@ enum AuthStage {
 class AuthState {
   final AuthStage stage;
   final User? user;
-  const AuthState(this.stage, this.user);
 
-  AuthState copyWith({AuthStage? stage, User? user}) =>
-      AuthState(stage ?? this.stage, user ?? this.user);
+  /// When a forgot-PIN wait is running: the instant the PIN clears.
+  final DateTime? pinClearsAt;
+  const AuthState(this.stage, this.user, {this.pinClearsAt});
+
+  AuthState copyWith({AuthStage? stage, User? user, DateTime? pinClearsAt}) =>
+      AuthState(stage ?? this.stage, user ?? this.user,
+          pinClearsAt: pinClearsAt ?? this.pinClearsAt);
 }
 
 class AuthNotifier extends Notifier<AuthState> {
@@ -57,7 +67,45 @@ class AuthNotifier extends Notifier<AuthState> {
     // token expired, revoked, or backend returns session_revoked), drop
     // straight to signedOut. The router redirect fires automatically.
     ref.read(apiClientProvider).onSessionEnded = _onSessionEnded;
+    ref.read(apiClientProvider).onPinRequired = _onPinRequired;
     return const AuthState(AuthStage.unknown, null);
+  }
+
+  /// The server said this device still owes its PIN (a gate opened while we
+  /// were signed in — the owner set a PIN on another device). Park on the
+  /// gate without dropping the session.
+  void _onPinRequired() {
+    if (state.stage == AuthStage.pinRequired ||
+        state.stage == AuthStage.signedOut) {
+      return;
+    }
+    Future.microtask(() {
+      if (state.stage == AuthStage.signedOut) return;
+      state = AuthState(AuthStage.pinRequired, state.user);
+    });
+  }
+
+  /// This device's linked-devices session id (null before batch 6 sign-ins).
+  String? get sessionId {
+    try {
+      return ref.read(settingsStoreProvider).sessionId;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _rememberSession(String? sessionId) async {
+    try {
+      await ref.read(settingsStoreProvider).setSessionId(sessionId);
+    } catch (_) {}
+  }
+
+  /// WS `session_revoked` for MY session: the server already refuses the
+  /// tokens, so wipe and return to login at once (docs/settings.md).
+  void onSessionRevokedEvent(String? revokedSessionId) {
+    if (revokedSessionId == null || revokedSessionId != sessionId) return;
+    unawaited(ref.read(tokenStorageProvider).clear());
+    _onSessionEnded();
   }
 
   void _onSessionEnded() {
@@ -119,10 +167,33 @@ class AuthNotifier extends Notifier<AuthState> {
         return;
       }
       state = AuthState(await _resolveStageForRegisteredUser(), me);
+    } on ApiException catch (e) {
+      if (e.status == 403 && e.detail == 'pin_required') {
+        // Tokens are good; the device owes its PIN. Keep them.
+        state = const AuthState(AuthStage.pinRequired, null);
+        return;
+      }
+      await tokens.clear();
+      state = const AuthState(AuthStage.signedOut, null);
     } catch (_) {
       await tokens.clear();
       state = const AuthState(AuthStage.signedOut, null);
     }
+  }
+
+  /// Two-step PIN gate (batch 6): verify for this session, then continue the
+  /// normal sign-in resolution. Throws `pin_invalid` /
+  /// `pin_too_many_attempts` as [ApiException].
+  Future<void> verifyPin(String pin) async {
+    await ref.read(settingsRepositoryProvider).verifyPin(pin);
+    await _afterTokens();
+  }
+
+  /// Forgot PIN: start the 7-day wait. Returns when the PIN clears.
+  Future<DateTime?> requestPinReset() async {
+    final r = await ref.read(settingsRepositoryProvider).requestPinReset();
+    state = state.copyWith(pinClearsAt: r.clearsAt);
+    return r.clearsAt;
   }
 
   /// For a fully-registered user, decide if they need onboarding (no orgs)
@@ -264,9 +335,29 @@ class AuthNotifier extends Notifier<AuthState> {
   /// The one place a Firebase ID token becomes a Doqto session. Every sign-in
   /// method funnels through here, so the stage machine has a single entry.
   Future<void> _exchange(String idToken) async {
-    final pair = await ref.read(authRepositoryProvider).signInWithFirebase(idToken);
+    Map<String, dynamic> device = const {};
+    try {
+      device = (await ref.read(deviceInfoProvider).describe()).toJson();
+    } catch (_) {}
+    final pair = await ref
+        .read(authRepositoryProvider)
+        .signInWithFirebase(idToken, device: device);
+    await _rememberSession(pair.sessionId);
+    if (pair.pinRequired) {
+      // Nothing but /auth/pin/* works until the PIN is entered; /users/me
+      // would 403. The gate screen calls [verifyPin].
+      state = AuthState(AuthStage.pinRequired, null, pinClearsAt: pair.pinClearsAt);
+      return;
+    }
+    await _afterTokens();
+  }
+
+  /// Tokens are usable: load me and resolve the stage.
+  Future<void> _afterTokens() async {
     final me = await ref.read(authRepositoryProvider).me();
-    if (!pair.isRegistered) {
+    final registered =
+        me.fullName.isNotEmpty && !me.npiNumber.startsWith('PENDING');
+    if (!registered) {
       state = AuthState(AuthStage.needsRegistration, me);
       return;
     }
@@ -312,9 +403,16 @@ class AuthNotifier extends Notifier<AuthState> {
     await _tokenRefreshSub?.cancel();
     _tokenRefreshSub = null;
     try {
-      final token = await ref.read(pushTokenProviderProvider).getToken();
+      // FCM can stall (simulators, no APNs); never let it hold sign-out.
+      final token = await ref
+          .read(pushTokenProviderProvider)
+          .getToken()
+          .timeout(const Duration(seconds: 3));
       if (token != null && token.isNotEmpty) {
-        await ref.read(userRepositoryProvider).unregisterPushToken(token: token);
+        await ref
+            .read(userRepositoryProvider)
+            .unregisterPushToken(token: token)
+            .timeout(const Duration(seconds: 5));
       }
     } catch (_) {}
     await ref.read(authRepositoryProvider).logout();
@@ -324,6 +422,7 @@ class AuthNotifier extends Notifier<AuthState> {
       await ref.read(authBrokerProvider).signOut();
     } catch (_) {}
     await _wipeLocalPhi();
+    await _rememberSession(null);
     ref.read(orgProvider.notifier).clear();
     // realtimeSessionProvider closes the socket on this transition.
     state = const AuthState(AuthStage.signedOut, null);

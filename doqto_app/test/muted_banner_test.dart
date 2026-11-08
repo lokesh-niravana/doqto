@@ -28,6 +28,8 @@ class _Notifications extends NotificationService {
     required String conversationId,
     required String title,
     required String body,
+    String channelId = 'messages',
+    bool showPreview = true,
   }) async =>
       shown.add(conversationId);
 }

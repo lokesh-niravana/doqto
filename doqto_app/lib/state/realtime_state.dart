@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/di/providers.dart';
+import '../core/enums/app_enums.dart';
 import '../data/api/websocket_client.dart';
 import 'auth_state.dart';
 
@@ -74,6 +75,15 @@ bool wantsRealtimeSocket(AuthState s) =>
 final realtimeSessionProvider = Provider<void>((ref) {
   final ws = ref.watch(websocketClientProvider);
   final api = ref.watch(apiClientProvider);
+
+  // Linked devices (batch 6): a revoke of THIS session ends it immediately.
+  final revokeSub = ws.events.listen((e) {
+    if (e.type != WsEventServer.sessionRevoked) return;
+    ref
+        .read(authProvider.notifier)
+        .onSessionRevokedEvent(e.data['session_id'] as String?);
+  });
+  ref.onDispose(revokeSub.cancel);
 
   void apply(AuthState auth) {
     if (wantsRealtimeSocket(auth)) {

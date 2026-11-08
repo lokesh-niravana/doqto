@@ -54,7 +54,7 @@ class SuggestionRow extends ConsumerWidget {
           InlineConnect(userId: person.id, compact: true),
           IconButton(
             tooltip: 'Hide ${person.fullName}',
-            icon: const Icon(Icons.close, size: 20, color: AppColors.gray400),
+            icon: Icon(Icons.close, size: 20, color: AppColors.gray400),
             onPressed: () async {
               try {
                 await ref.read(suggestionsProvider.notifier).dismiss(person.id);

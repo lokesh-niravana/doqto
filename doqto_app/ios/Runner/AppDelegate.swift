@@ -21,6 +21,8 @@ import UserNotifications
     registerDocumentChannel()
     registerBadgeChannel()
     registerClipboardChannel()
+    registerDeviceChannel()
+    registerScreenshotChannel()
     // Required by flutter_local_notifications so foreground banners and
     // notification taps are routed to the plugin.
     if #available(iOS 10.0, *) {
@@ -148,6 +150,43 @@ import UserNotifications
         options: [.localOnly: true])
       result(nil)
     }
+  }
+
+  /// Device description for linked devices (lib/data/services/device_info.dart):
+  /// the model family plus OS version — "iPhone (iOS 18.1)". UIDevice.name
+  /// (the user's own label) needs an entitlement since iOS 16, and a model is
+  /// enough to recognise a device in the list. Not PHI.
+  private func registerDeviceChannel() {
+    guard let registrar = self.registrar(forPlugin: "DoqtoDevice") else { return }
+    let channel = FlutterMethodChannel(
+      name: "doqto/device", binaryMessenger: registrar.messenger())
+    channel.setMethodCallHandler { call, result in
+      guard call.method == "name" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let device = UIDevice.current
+      result("\(device.model) (\(device.systemName) \(device.systemVersion))")
+    }
+  }
+
+  /// Screenshot detection (batch 6): iOS cannot block a screenshot, but it
+  /// tells us one was taken. Flutter audits it against the open chat
+  /// (`POST /audit/screenshot`) and shows a toast.
+  private var screenshotChannel: FlutterMethodChannel?
+
+  private func registerScreenshotChannel() {
+    guard let registrar = self.registrar(forPlugin: "DoqtoScreenshot") else { return }
+    let channel = FlutterMethodChannel(
+      name: "doqto/screenshot", binaryMessenger: registrar.messenger())
+    screenshotChannel = channel
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(screenshotTaken),
+      name: UIApplication.userDidTakeScreenshotNotification, object: nil)
+  }
+
+  @objc private func screenshotTaken() {
+    screenshotChannel?.invokeMethod("taken", arguments: nil)
   }
 
   private func topViewController() -> UIViewController? {

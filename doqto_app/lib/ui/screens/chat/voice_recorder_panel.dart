@@ -17,6 +17,7 @@ import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
+import '../../../state/settings_state.dart';
 
 enum _RecorderState { recording, recorded, sending }
 
@@ -96,7 +97,9 @@ class _VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
       return;
     }
 
-    await _stt.initialize();
+    // Live transcript can be switched off (batch 6, Settings → Chats).
+    final transcribe = ref.read(appSettingsProvider).voiceTranscript;
+    if (transcribe) await _stt.initialize();
 
     final dir = await getTemporaryDirectory();
     final path = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.wav';
@@ -110,14 +113,16 @@ class _VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
       path: path,
     );
 
-    _stt.listen(
-      onResult: (result) {
-        if (mounted) setState(() => _transcript = result.recognizedWords);
-      },
-      listenOptions: SpeechListenOptions(
-        listenMode: ListenMode.dictation,
-      ),
-    );
+    if (transcribe) {
+      _stt.listen(
+        onResult: (result) {
+          if (mounted) setState(() => _transcript = result.recognizedWords);
+        },
+        listenOptions: SpeechListenOptions(
+          listenMode: ListenMode.dictation,
+        ),
+      );
+    }
 
     final stopwatch = Stopwatch()..start();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {

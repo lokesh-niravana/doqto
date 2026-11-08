@@ -53,6 +53,8 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Doqto uses Face ID to unlock the app and protect your messages.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Doqto needs access to your camera so you can take a profile photo.</string>
 	<key>NSMicrophoneUsageDescription</key>

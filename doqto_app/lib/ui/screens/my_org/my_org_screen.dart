@@ -141,7 +141,7 @@ class _PendingBanner extends StatelessWidget {
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(
+        Icon(
           Icons.schedule_rounded,
           color: AppColors.amberText,
           size: 20,
@@ -284,7 +284,7 @@ class _NoOrg extends StatelessWidget {
             Container(
               width: 64,
               height: 64,
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 color: AppColors.medBlueLight,
                 shape: BoxShape.circle,
               ),

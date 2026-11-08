@@ -7,7 +7,9 @@ import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.os.Handler
 import android.os.Looper
+import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.view.WindowManager
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -17,10 +19,12 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.Executors
 
-// No FLAG_SECURE (owner's decision, 2026-09-25). It blanked every screenshot,
-// so Play review's capture saw only the launch screen and rejected the app as
-// "does not load" (2026-09-13). iOS has no equivalent. If screenshot blocking
-// becomes a requirement, add it back on the chat screens only.
+// No FLAG_SECURE by default (owner's decision, 2026-09-25). It blanked every
+// screenshot, so Play review's capture saw only the launch screen and
+// rejected the app as "does not load" (2026-09-13). Since batch 6 the flag is
+// set ONLY while an org chat is open and that org's `block_screenshots`
+// policy is on — Flutter toggles it through the `doqto/screen_secure`
+// channel (lib/data/services/screen_security.dart). iOS has no equivalent.
 class MainActivity : FlutterActivity() {
     // PdfRenderer allows one open page at a time and is not thread-safe, so
     // every PDF call runs on this one thread.
@@ -40,6 +44,38 @@ class MainActivity : FlutterActivity() {
                         pdfPage(call.argument<Int>("index")!!, call.argument<Int>("width")!!)
                     }
                     "pdfClose" -> onPdfThread(result) { pdfClose() }
+                    else -> result.notImplemented()
+                }
+            }
+        // Device description for linked devices: manufacturer + model, e.g.
+        // "Google Pixel 8 (Android 15)". Not PHI.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "doqto/device")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "name" -> {
+                        val make = Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
+                        val model = Build.MODEL
+                        val name = if (model.startsWith(make, ignoreCase = true)) model else "$make $model"
+                        result.success("$name (Android ${Build.VERSION.RELEASE})")
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "doqto/screen_secure")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "set" -> {
+                        val secure = call.argument<Boolean>("secure") ?: false
+                        if (secure) {
+                            window.setFlags(
+                                WindowManager.LayoutParams.FLAG_SECURE,
+                                WindowManager.LayoutParams.FLAG_SECURE,
+                            )
+                        } else {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        }
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }

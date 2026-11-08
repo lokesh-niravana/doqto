@@ -5,13 +5,22 @@ class OrgPolicies {
   final bool allowForwardOutsideOrg;
   final bool allowCopy;
 
-  const OrgPolicies({this.allowForwardOutsideOrg = true, this.allowCopy = true});
+  /// Batch 6: Android sets FLAG_SECURE in org chats when on; iOS audits
+  /// detected screenshots either way.
+  final bool blockScreenshots;
+
+  const OrgPolicies({
+    this.allowForwardOutsideOrg = true,
+    this.allowCopy = true,
+    this.blockScreenshots = false,
+  });
 
   static const defaults = OrgPolicies();
 
   factory OrgPolicies.fromJson(Map<String, dynamic>? j) => OrgPolicies(
         allowForwardOutsideOrg: (j?['allow_forward_outside_org'] as bool?) ?? true,
         allowCopy: (j?['allow_copy'] as bool?) ?? true,
+        blockScreenshots: (j?['block_screenshots'] as bool?) ?? false,
       );
 }
 

@@ -539,7 +539,7 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
                 child: Container(
                   width: 88,
                   height: 88,
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     color: AppColors.medBlueLight,
                     shape: BoxShape.circle,
                   ),
@@ -624,13 +624,13 @@ class _EntryTile extends StatelessWidget {
                   ),
                 ),
                 if (entry.onDoqto)
-                  const _Badge(
+                  _Badge(
                     'On Doqto',
                     AppColors.medBlueLight,
                     AppColors.medBlueDark,
                   )
                 else if (entry.youAreListed)
-                  const _Badge(
+                  _Badge(
                     'You\'re listed',
                     AppColors.greenLight,
                     AppColors.greenDark,

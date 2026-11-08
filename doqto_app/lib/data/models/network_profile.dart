@@ -89,6 +89,11 @@ class NetworkProfile {
   final List<String> skills;
   final Relationship relationship;
 
+  /// Status under the name (batch 6) — directory data like the headline.
+  final StatusPreset? statusPreset;
+  final String? statusText;
+  final DateTime? statusExpiresAt;
+
   const NetworkProfile({
     required this.id,
     required this.fullName,
@@ -102,7 +107,19 @@ class NetworkProfile {
     required this.yearsOfExperience,
     required this.skills,
     required this.relationship,
+    this.statusPreset,
+    this.statusText,
+    this.statusExpiresAt,
   });
+
+  /// Preset label or custom text; null when unset or expired.
+  String? statusLabel([DateTime? now]) {
+    final exp = statusExpiresAt;
+    if (exp != null && !exp.isAfter(now ?? DateTime.now().toUtc())) return null;
+    if (statusPreset != null) return statusPreset!.label;
+    final t = statusText?.trim();
+    return (t == null || t.isEmpty) ? null : t;
+  }
 
   factory NetworkProfile.fromJson(Map<String, dynamic> j) => NetworkProfile(
         id: (j['id'] ?? '') as String,
@@ -118,6 +135,11 @@ class NetworkProfile {
         skills: ((j['skills'] as List?) ?? const []).map((e) => e.toString()).toList(),
         // Relationship fields live flat on PublicProfileOut.
         relationship: Relationship.fromJson(j),
+        statusPreset: StatusPreset.fromWire(j['status_preset'] as String?),
+        statusText: j['status_text'] as String?,
+        statusExpiresAt: j['status_expires_at'] is String
+            ? DateTime.tryParse(j['status_expires_at'] as String)?.toUtc()
+            : null,
       );
 
   String get initials => initialsOf(fullName);
@@ -136,6 +158,9 @@ class NetworkProfile {
         yearsOfExperience: yearsOfExperience,
         skills: skills,
         relationship: relationship ?? this.relationship,
+        statusPreset: statusPreset,
+        statusText: statusText,
+        statusExpiresAt: statusExpiresAt,
       );
 }
 

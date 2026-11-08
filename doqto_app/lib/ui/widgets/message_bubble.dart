@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/constants/strings.dart';
+import '../../core/chat_theme.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/motion.dart';
 import '../../core/tokens/radii.dart';
@@ -219,13 +220,15 @@ class MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final radius = isMine ? AppRadii.bubbleSent : AppRadii.bubbleReceived;
-    final bg = isMine ? AppColors.medBlue : AppColors.white;
-    final fg = isMine ? AppColors.white : AppColors.textPrimary;
+    // Chat colour theme (batch 6): the thread's ChatThemeScope, else brand.
+    final chatTheme = ChatThemeScope.of(context);
+    final bg = isMine ? chatTheme.sentBg : chatTheme.receivedBg;
+    final fg = isMine ? chatTheme.sentFg : chatTheme.receivedFg;
     final timeColor = isMine
-        ? AppColors.white.withValues(alpha: 0.55)
+        ? fg.withValues(alpha: 0.55)
         : AppColors.textMuted;
     final muted = isMine
-        ? AppColors.white.withValues(alpha: 0.7)
+        ? fg.withValues(alpha: 0.7)
         : AppColors.textMuted;
 
     Widget bubble = Container(
@@ -243,7 +246,9 @@ class MessageBubble extends StatelessWidget {
             ? Border.all(color: AppColors.amber, width: 2)
             : isMine
                 ? null
-                : Border.all(color: AppColors.gray100),
+                : (chatTheme.receivedBorder == null
+                    ? null
+                    : Border.all(color: chatTheme.receivedBorder!)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

@@ -18,11 +18,17 @@ import 'data/services/chat_cache.dart';
 import 'data/services/groups_cache.dart';
 import 'data/services/network_cache.dart';
 import 'data/services/outbox.dart';
+import 'data/services/settings_store.dart';
+import 'l10n/app_localizations.dart';
 import 'state/chat_state.dart';
 import 'state/notification_state.dart';
 import 'state/auth_state.dart';
 import 'state/presence_state.dart';
 import 'state/realtime_state.dart';
+import 'state/settings_services.dart';
+import 'state/settings_state.dart';
+import 'ui/widgets/app_lock_gate.dart';
+import 'ui/widgets/force_update_gate.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -59,6 +65,9 @@ Future<void> main() async {
   await _openEncryptedBox(ChatCache.boxName, cipher); // offline read cache
   await _openEncryptedBox(NetworkCache.boxName, cipher); // offline connections
   await _openEncryptedBox(GroupsCache.boxName, cipher); // offline my-groups
+  // Device-local settings (theme, app lock, language…) — encrypted like the
+  // rest, but NOT wiped on sign-out (settings_store.dart).
+  await _openEncryptedBox(SettingsStore.boxName, cipher);
   runApp(const ProviderScope(child: DoqtoApp()));
 }
 
@@ -100,6 +109,10 @@ class _DoqtoAppState extends ConsumerState<DoqtoApp>
     super.dispose();
   }
 
+  /// Theme = System follows the OS; the OS does not rebuild us on its own.
+  @override
+  void didChangePlatformBrightness() => setState(() {});
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
@@ -126,11 +139,44 @@ class _DoqtoAppState extends ConsumerState<DoqtoApp>
     ref.watch(outboxDrainerProvider);
     // App-icon badge follows the unread total; cleared on sign-out.
     ref.watch(appBadgeSyncProvider);
+    // Batch 6 root listeners (screenshot audit, channels, FLAG_SECURE…).
+    ref.watch(settingsServicesProvider);
+
+    // Appearance (batch 6): swap the static token palette FIRST so every
+    // AppColors.x read during this build agrees with the ThemeData below.
+    final settings = ref.watch(appSettingsProvider);
+    final platformBrightness =
+        WidgetsBinding.instance.platformDispatcher.platformBrightness;
+    applyPalette(settings, platformBrightness);
+    final light = AppTheme.light();
+    final dark = AppTheme.dark();
+    // Building both ThemeDatas restores the previous palette; set ours again.
+    applyPalette(settings, platformBrightness);
+
     return MaterialApp.router(
       title: Strings.appName,
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.light(),
+      theme: light,
+      darkTheme: dark,
+      themeMode: settings.themeMode,
+      locale: settings.locale,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       routerConfig: router,
+      builder: (context, child) {
+        // Font size S/M/L multiplies the platform's Dynamic Type scale rather
+        // than replacing it.
+        final mq = MediaQuery.of(context);
+        final systemScale = mq.textScaler.scale(1.0);
+        return MediaQuery(
+          data: mq.copyWith(
+            textScaler: TextScaler.linear(systemScale * settings.fontSize.factor),
+          ),
+          child: ForceUpdateGate(
+            child: AppLockGate(child: child ?? const SizedBox.shrink()),
+          ),
+        );
+      },
     );
   }
 }

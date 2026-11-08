@@ -266,6 +266,11 @@ class _ProfileBody extends ConsumerWidget {
             const SizedBox(height: AppSpacing.md),
             Text(profile.fullName,
                 style: AppText.display, textAlign: TextAlign.center),
+            if (profile.statusLabel() case final status?) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(status, key: const ValueKey('person-status'),
+                  style: AppText.body, textAlign: TextAlign.center),
+            ],
             if (_notEmpty(profile.headline)) ...[
               const SizedBox(height: AppSpacing.xs),
               Padding(

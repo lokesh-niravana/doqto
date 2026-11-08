@@ -111,8 +111,43 @@ class ChatDetailsScreen extends ConsumerWidget {
               ),
             ),
           ),
+          // Batch 6: per-chat colour theme, wallpaper and notifications.
           FadeSlideIn.staggered(
             2,
+            _Section(
+              title: 'Personalise',
+              child: Column(
+                children: [
+                  ListTile(
+                    key: const ValueKey('details-chat-theme'),
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.palette_outlined, color: AppColors.medBlue),
+                    title: Text('Chat colour', style: AppText.bodyPrimary),
+                    trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+                    onTap: () => context.push(AppRoutes.chatThemeFor(conv.id)),
+                  ),
+                  ListTile(
+                    key: const ValueKey('details-wallpaper'),
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.wallpaper_rounded, color: AppColors.medBlue),
+                    title: Text('Wallpaper', style: AppText.bodyPrimary),
+                    trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+                    onTap: () => context.push(AppRoutes.wallpaperFor(conv.id)),
+                  ),
+                  ListTile(
+                    key: const ValueKey('details-custom-notifications'),
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.notifications_none_rounded, color: AppColors.medBlue),
+                    title: Text('Custom notifications', style: AppText.bodyPrimary),
+                    trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+                    onTap: () => context.push(AppRoutes.chatNotifications(conv.id)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          FadeSlideIn.staggered(
+            3,
             _Section(
               title: 'Chat settings',
               child: AppPressable(

@@ -117,7 +117,7 @@ class PresenceStatusDot extends StatelessWidget {
 
   factory PresenceStatusDot.online() => const PresenceStatusDot(color: AppColors.presenceOnline);
   factory PresenceStatusDot.away() => const PresenceStatusDot(color: AppColors.presenceAway);
-  factory PresenceStatusDot.offline() => const PresenceStatusDot(color: AppColors.presenceOffline);
+  factory PresenceStatusDot.offline() => PresenceStatusDot(color: AppColors.presenceOffline);
 
   /// WhatsApp-style: a dot only while the doctor is online (green) or just
   /// stepped away (amber); offline / unknown / hidden show nothing, so a

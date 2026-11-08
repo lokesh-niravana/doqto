@@ -10,12 +10,14 @@ import '../../data/repositories/chat_repository.dart';
 import '../../data/repositories/groups_repository.dart';
 import '../../data/repositories/network_repository.dart';
 import '../../data/repositories/org_repository.dart';
+import '../../data/repositories/settings_repository.dart';
 import '../../data/repositories/user_repository.dart';
 import '../../data/services/app_badge.dart';
 import '../../data/services/app_clipboard.dart';
 import '../../data/services/chat_cache.dart';
 import '../../data/services/chat_document_store.dart';
 import '../../data/services/chat_media_cache.dart';
+import '../../data/services/device_info.dart';
 import '../../data/services/document_viewer.dart';
 import '../../data/services/groups_cache.dart';
 import '../../data/services/network_cache.dart';
@@ -52,6 +54,15 @@ final chatRepositoryProvider = Provider<ChatRepository>(
 final userRepositoryProvider = Provider<UserRepository>(
   (ref) => UserRepository(ref.watch(apiClientProvider)),
 );
+
+/// Batch 6 settings endpoints (notifications, sessions, PIN, status, …).
+final settingsRepositoryProvider = Provider<SettingsRepository>(
+  (ref) => SettingsRepository(ref.watch(apiClientProvider)),
+);
+
+/// Device name / platform / app version for sign-in and the min-version
+/// check. Overridden with [FakeDeviceInfo] in tests.
+final deviceInfoProvider = Provider<DeviceInfo>((ref) => PlatformDeviceInfo());
 
 final groupsRepositoryProvider = Provider<GroupsRepository>(
   (ref) => GroupsRepository(ref.watch(apiClientProvider)),

@@ -705,6 +705,16 @@ enum StatusPreset {
         StatusPreset.available => 'available',
       };
 
+  /// Human label shown under the name (English; the status screen uses
+  /// localized copy for its own rows).
+  String get label => switch (this) {
+        StatusPreset.onCall => 'On call',
+        StatusPreset.inClinic => 'In clinic',
+        StatusPreset.inSurgery => 'In surgery',
+        StatusPreset.offDuty => 'Off duty',
+        StatusPreset.available => 'Available',
+      };
+
   static StatusPreset? fromWire(String? s) => switch (s) {
         'on_call' => StatusPreset.onCall,
         'in_clinic' => StatusPreset.inClinic,

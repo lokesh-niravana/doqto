@@ -17,6 +17,17 @@
 		A8B646F61EFBE99EDCD9A189 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D8BA0B419C49750D8F512FD4 /* Pods_Runner.framework */; };
 		C8896E402D349D9516E0C28A /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = C3B80030AE43781EE25ECFF2 /* GoogleService-Info.plist */; };
 		D6748A3B69E9CB60F7524533 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA67746DEE18210BA3F4F12E /* Pods_RunnerTests.framework */; };
+		0E515978EC3D2554EB91EE39 /* chime.caf in Resources */ = {isa = PBXBuildFile; fileRef = 842DCDE2FF73E5AD618468C3 /* chime.caf */; };
+		CD8B6058E0BD6278EA7C271D /* pulse.caf in Resources */ = {isa = PBXBuildFile; fileRef = 7D2F0CA5DD48515608DDB5C2 /* pulse.caf */; };
+		55BF5D25898B6EB4F60C3381 /* ping.caf in Resources */ = {isa = PBXBuildFile; fileRef = 0DBD7DD1626EBCACF77D4D31 /* ping.caf */; };
+		B8DF7DDF6CF60072ABF6C953 /* bell.caf in Resources */ = {isa = PBXBuildFile; fileRef = 05DD7252AAD6910489823BBB /* bell.caf */; };
+		489D6EB840037AAB8B444224 /* glass.caf in Resources */ = {isa = PBXBuildFile; fileRef = D357FB6B7B9FD55F9C454B96 /* glass.caf */; };
+		6FD43D1172B78081128316E9 /* note.caf in Resources */ = {isa = PBXBuildFile; fileRef = 0E0A32A1EBEE32A8A949E947 /* note.caf */; };
+		4B0497F5CF4EE517F6C3F089 /* pop.caf in Resources */ = {isa = PBXBuildFile; fileRef = 9D937A1E9894F8669818DA33 /* pop.caf */; };
+		99D50D71F111FADCFFD3D490 /* ripple.caf in Resources */ = {isa = PBXBuildFile; fileRef = DBB66CE09BF46F4F737D620D /* ripple.caf */; };
+		14C44005C24C0A7F2058E108 /* signal.caf in Resources */ = {isa = PBXBuildFile; fileRef = 660E90FFA3297B89A8EB2212 /* signal.caf */; };
+		F7203836B2B3A9F687A971E1 /* tap.caf in Resources */ = {isa = PBXBuildFile; fileRef = F283372F7A81737800BEAE4D /* tap.caf */; };
+		46E7F934E7E933860CA66ADF /* whistle.caf in Resources */ = {isa = PBXBuildFile; fileRef = 482AB9E17D33D8417B9287F2 /* whistle.caf */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -68,6 +79,17 @@
 		BBBA14C87A3384F49E357B59 /* Runner.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = Runner.entitlements; sourceTree = "<group>"; };
 		C3B80030AE43781EE25ECFF2 /* GoogleService-Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		D8BA0B419C49750D8F512FD4 /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		842DCDE2FF73E5AD618468C3 /* chime.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = chime.caf; sourceTree = "<group>"; };
+		7D2F0CA5DD48515608DDB5C2 /* pulse.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = pulse.caf; sourceTree = "<group>"; };
+		0DBD7DD1626EBCACF77D4D31 /* ping.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = ping.caf; sourceTree = "<group>"; };
+		05DD7252AAD6910489823BBB /* bell.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = bell.caf; sourceTree = "<group>"; };
+		D357FB6B7B9FD55F9C454B96 /* glass.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = glass.caf; sourceTree = "<group>"; };
+		0E0A32A1EBEE32A8A949E947 /* note.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = note.caf; sourceTree = "<group>"; };
+		9D937A1E9894F8669818DA33 /* pop.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = pop.caf; sourceTree = "<group>"; };
+		DBB66CE09BF46F4F737D620D /* ripple.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = ripple.caf; sourceTree = "<group>"; };
+		660E90FFA3297B89A8EB2212 /* signal.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = signal.caf; sourceTree = "<group>"; };
+		F283372F7A81737800BEAE4D /* tap.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = tap.caf; sourceTree = "<group>"; };
+		482AB9E17D33D8417B9287F2 /* whistle.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = whistle.caf; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -156,6 +178,7 @@
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 				C3B80030AE43781EE25ECFF2 /* GoogleService-Info.plist */,
 				BBBA14C87A3384F49E357B59 /* Runner.entitlements */,
+				887A6F90336FF23D95C3914B /* Resources */,
 			);
 			path = Runner;
 			sourceTree = "<group>";
@@ -167,6 +190,32 @@
 				AA67746DEE18210BA3F4F12E /* Pods_RunnerTests.framework */,
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		887A6F90336FF23D95C3914B /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				63A2512DE1272928D8300B31 /* tones */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		63A2512DE1272928D8300B31 /* tones */ = {
+			isa = PBXGroup;
+			children = (
+				842DCDE2FF73E5AD618468C3 /* chime.caf */,
+				7D2F0CA5DD48515608DDB5C2 /* pulse.caf */,
+				0DBD7DD1626EBCACF77D4D31 /* ping.caf */,
+				05DD7252AAD6910489823BBB /* bell.caf */,
+				D357FB6B7B9FD55F9C454B96 /* glass.caf */,
+				0E0A32A1EBEE32A8A949E947 /* note.caf */,
+				9D937A1E9894F8669818DA33 /* pop.caf */,
+				DBB66CE09BF46F4F737D620D /* ripple.caf */,
+				660E90FFA3297B89A8EB2212 /* signal.caf */,
+				F283372F7A81737800BEAE4D /* tap.caf */,
+				482AB9E17D33D8417B9287F2 /* whistle.caf */,
+			);
+			path = tones;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -270,6 +319,17 @@
 				97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */,
 				97C146FC1CF9000F007C117D /* Main.storyboard in Resources */,
 				C8896E402D349D9516E0C28A /* GoogleService-Info.plist in Resources */,
+				0E515978EC3D2554EB91EE39 /* chime.caf in Resources */,
+				CD8B6058E0BD6278EA7C271D /* pulse.caf in Resources */,
+				55BF5D25898B6EB4F60C3381 /* ping.caf in Resources */,
+				B8DF7DDF6CF60072ABF6C953 /* bell.caf in Resources */,
+				489D6EB840037AAB8B444224 /* glass.caf in Resources */,
+				6FD43D1172B78081128316E9 /* note.caf in Resources */,
+				4B0497F5CF4EE517F6C3F089 /* pop.caf in Resources */,
+				99D50D71F111FADCFFD3D490 /* ripple.caf in Resources */,
+				14C44005C24C0A7F2058E108 /* signal.caf in Resources */,
+				F7203836B2B3A9F687A971E1 /* tap.caf in Resources */,
+				46E7F934E7E933860CA66ADF /* whistle.caf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

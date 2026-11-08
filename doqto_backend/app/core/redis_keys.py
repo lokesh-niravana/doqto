@@ -58,6 +58,11 @@ def org_policy_key(org_id: UUID | str) -> str:
 WS_EVENTS_CHANNEL = "ws:events"
 
 
+def link_preview_key(url_hash: str) -> str:
+    """Cached link preview (JSON), keyed by sha256(url) — batch 4."""
+    return f"link_preview:{url_hash}"
+
+
 def purge_lock_key() -> str:
     """Singleton lock so only one replica runs the disappearing-message purge."""
     return "lock:purge_expired"

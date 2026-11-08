@@ -27,13 +27,56 @@ PRESIGNED_URL_TTL_SECONDS = 60 * 5  # 5 minutes
 
 # Pagination
 MESSAGES_PAGE_SIZE = 50
-# Sender may edit a text message / delete any message this long after sending.
-MESSAGE_EDIT_WINDOW_SEC = 5 * 60
-MESSAGE_DELETE_WINDOW_SEC = 3 * 60
+# Sender may edit a text message / delete any message this long after sending
+# (batch 4: 15 min / 48 h). Group admins deleting a member's message are not
+# window-bound (moderation).
+MESSAGE_EDIT_WINDOW_SEC = 15 * 60
+MESSAGE_DELETE_WINDOW_SEC = 48 * 3600
+ADMIN_REMOVED_MESSAGE_TEXT = "Admin removed a message"
 MESSAGE_REACTION_MAX_BYTES = 32  # one emoji grapheme cluster, UTF-8
 RATE_LIMIT_REACTIONS_PER_MINUTE = 60
 MESSAGE_DELETED_PREVIEW = "This message was deleted"
 MEMBERS_PAGE_SIZE = 100
+
+# --- Message features (batch 4) -------------------------------------------- #
+# Reply quote rendered live from the target row; text is truncated to this.
+REPLY_PREVIEW_MAX_LEN = 140
+REPLY_PREVIEW_DELETED = "Message deleted"
+# Forward: destinations per call, and the hop count at which a message is
+# "Forwarded many times" and can no longer be forwarded.
+FORWARD_MAX_DESTINATIONS = 5
+FORWARD_MAX_DEPTH = 5
+RATE_LIMIT_FORWARDS_PER_MINUTE = 20
+# Star / pin.
+STARRED_PAGE_SIZE = 50
+RATE_LIMIT_STARS_PER_MINUTE = 60
+RATE_LIMIT_PINS_PER_MINUTE = 20
+PIN_DURATIONS_SEC = {
+    60 * 60 * 24: "24 hours",
+    60 * 60 * 24 * 7: "7 days",
+    60 * 60 * 24 * 30: "30 days",
+}
+# Mentions: `@[<user uuid>]` tokens in a text body.
+MENTION_TOKEN_PATTERN = r"@\[([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\]"
+MENTIONS_MAX_PER_MESSAGE = 50
+# Link previews: server-side fetch with an SSRF guard.
+LINK_PREVIEW_TIMEOUT_SEC = 5
+LINK_PREVIEW_MAX_BYTES = 1024 * 1024  # 1 MB HTML cap
+LINK_PREVIEW_IMAGE_MAX_BYTES = 50 * 1024  # inlined as base64
+LINK_PREVIEW_MAX_REDIRECTS = 3
+LINK_PREVIEW_CACHE_TTL_SEC = 24 * 3600
+LINK_PREVIEW_TEXT_MAX_LEN = 300
+RATE_LIMIT_LINK_PREVIEWS_PER_MINUTE = 30
+# Reports: the reporter's last N message ids (never bodies) for moderators.
+REPORT_CONTEXT_MAX_IDS = 5
+REPORTS_PAGE_SIZE = 50
+# Org policies (organizations.policies JSONB) and their defaults.
+ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG = "allow_forward_outside_org"
+ORG_POLICY_ALLOW_COPY = "allow_copy"
+ORG_POLICY_DEFAULTS = {
+    ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG: True,
+    ORG_POLICY_ALLOW_COPY: True,
+}
 
 # Voice notes
 VOICE_NOTE_MIN_DURATION_SECONDS = 1
@@ -77,6 +120,9 @@ ADMIN_LOGIN_WINDOW_SECONDS = 15 * 60
 # numbers) into push title/body.
 PUSH_TITLE = "Doqto"
 PUSH_BODY_NEW_MESSAGE = "New message"
+# Mention push: "<name> mentioned you in <group>" — a doctor's name and a group
+# name are directory data, not PHI. Never the message text.
+PUSH_BODY_MENTION_FALLBACK = "You were mentioned"
 # Message-request push copy — generic, PHI-free, NO content/preview ever (M4).
 
 # --- Conversation preferences (batch 3) ------------------------------------ #

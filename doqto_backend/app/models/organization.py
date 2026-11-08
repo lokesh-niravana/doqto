@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     CHAR,
@@ -16,7 +17,7 @@ from sqlalchemy import (
     text,
     true,
 )
-from sqlalchemy.dialects.postgresql import UUID as PgUUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.enums import DirectoryVisibility, ExternalDmPolicy, OrgRole, OrgStatus
@@ -69,6 +70,11 @@ class Organization(Base):
         default=DirectoryVisibility.NETWORK,
         server_default=DirectoryVisibility.NETWORK.value,
         nullable=False,
+    )
+    # Content policies (batch 4): allow_forward_outside_org, allow_copy —
+    # defaults in constants.ORG_POLICY_DEFAULTS; missing key = default.
+    policies: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict
     )
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verified_by: Mapped[uuid.UUID | None] = mapped_column(

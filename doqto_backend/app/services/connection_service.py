@@ -571,13 +571,51 @@ class ConnectionService:
         reason: str,
         details: str | None,
         db: AsyncSession,
+        context_message_ids: list[uuid.UUID] | None = None,
     ) -> Report:
+        """File a report on a user or a message. A message report requires the
+        reporter to be a member of its conversation — an outsider gets the same
+        404 as a missing id, so message ids are never an oracle. The context
+        ids are stored as ids only (moderators read bodies through the audited
+        thread path, never from the report)."""
+        from app.core.enums import ReportSubjectType
+        from app.models import ConversationMember, Message
+
+        context: list[uuid.UUID] | None = None
+        if subject_type == ReportSubjectType.MESSAGE:
+            msg = await db.get(Message, subject_id)
+            member = (
+                await db.scalar(
+                    select(ConversationMember.user_id).where(
+                        ConversationMember.conversation_id == msg.conversation_id,
+                        ConversationMember.user_id == user.id,
+                    )
+                )
+                if msg is not None
+                else None
+            )
+            if msg is None or msg.is_deleted or member is None:
+                raise ConnectionError("message_not_found", status_code=404)
+            if context_message_ids:
+                # Keep only ids that really are in that conversation.
+                rows = await db.execute(
+                    select(Message.id).where(
+                        Message.id.in_(context_message_ids),
+                        Message.conversation_id == msg.conversation_id,
+                    )
+                )
+                valid = set(rows.scalars().all())
+                context = [m for m in context_message_ids if m in valid] or None
+        else:
+            if subject_id == user.id or await db.get(User, subject_id) is None:
+                raise ConnectionError("user_unavailable", status_code=404)
         report = Report(
             reporter_id=user.id,
             subject_type=subject_type,
             subject_id=subject_id,
             reason=reason,
             details=details,
+            context_message_ids=context,
         )
         db.add(report)
         await db.flush()

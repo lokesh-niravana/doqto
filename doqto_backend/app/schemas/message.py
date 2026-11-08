@@ -5,6 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.core.constants import FORWARD_MAX_DESTINATIONS, PIN_DURATIONS_SEC
 from app.core.enums import MessageType, TranscriptStatus
 
 
@@ -14,6 +15,32 @@ class MessageSendIn(BaseModel):
     # Idempotency key (uuid from the client outbox); retries return the
     # original message instead of creating a duplicate.
     client_id: str | None = Field(default=None, max_length=64)
+    # Reply/quote (batch 4): a live message in the SAME conversation.
+    reply_to_id: uuid.UUID | None = None
+
+
+class MessageForwardIn(BaseModel):
+    """Forward one message to up to FORWARD_MAX_DESTINATIONS conversations."""
+
+    conversation_ids: list[uuid.UUID] = Field(
+        min_length=1, max_length=FORWARD_MAX_DESTINATIONS
+    )
+
+
+class ConversationPinIn(BaseModel):
+    message_id: uuid.UUID
+    # One of PIN_DURATIONS_SEC (24h / 7d / 30d).
+    duration_sec: int = Field(default=max(PIN_DURATIONS_SEC))
+
+
+class ReplyPreviewOut(BaseModel):
+    """The quoted message, rendered live from its current row: deleted →
+    preview "Message deleted"; expired/purged → the whole object is null."""
+
+    id: uuid.UUID
+    sender_id: uuid.UUID
+    type: MessageType
+    preview: str | None
 
 
 class MessageEditIn(BaseModel):
@@ -82,6 +109,59 @@ class MessageOut(BaseModel):
     # Sorted by count desc, then earliest reaction.
     reactions: list[ReactionOut] = []
     changed_at: datetime | None = None  # last edit/delete/reaction (catch-up cursor)
+    # Batch 4. reply_to is rebuilt from the target row on every read.
+    reply_to_id: uuid.UUID | None = None
+    reply_to: ReplyPreviewOut | None = None
+    forwarded: bool = False
+    forward_depth: int = 0
+    mentions: list[uuid.UUID] = []
+    # The ONE per-viewer field: true only in responses to the viewer's own
+    # reads (thread page, starred list). Always false in fanned-out WS payloads.
+    starred: bool = False
+
+
+class StarredMessageOut(BaseModel):
+    """One row of GET /messages/starred — the message plus where it lives."""
+
+    message: MessageOut
+    conversation_id: uuid.UUID
+    conversation_type: str
+    conversation_name: str | None = None  # group name / other member's name
+    starred_at: datetime
+
+
+class StarredPage(BaseModel):
+    data: list[StarredMessageOut]
+    next_cursor: str | None = None
+
+
+class MessageStarredEvent(BaseModel):
+    """WS `message_starred` — actor's own devices only (stars are private)."""
+
+    conversation_id: uuid.UUID
+    message_id: uuid.UUID
+    starred: bool
+
+
+class MessagePinnedEvent(BaseModel):
+    """WS `message_pinned` / `message_unpinned` — every member. On unpin
+    `message_id` is the message that WAS pinned and `pinned_until` is null."""
+
+    conversation_id: uuid.UUID
+    message_id: uuid.UUID | None
+    pinned_until: datetime | None
+    actor_id: uuid.UUID | None
+
+
+class LinkPreviewOut(BaseModel):
+    url: str  # final URL after redirects
+    title: str | None = None
+    description: str | None = None
+    site_name: str | None = None
+    # data: URL (base64) ≤ LINK_PREVIEW_IMAGE_MAX_BYTES, proxied by the server so
+    # the client never contacts the third-party host.
+    image_data_url: str | None = None
+
 
 
 class MessageReactedEvent(BaseModel):

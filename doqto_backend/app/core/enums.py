@@ -109,8 +109,26 @@ class ProfileFieldVisibility(StrEnum):
     CONNECTIONS = "connections"
 
 
+class ReportReason(StrEnum):
+    # Why a user or message is being reported (POST /network/reports). SHARED:
+    # the client renders the reason picker from it.
+    SPAM = "spam"
+    HARASSMENT = "harassment"
+    PHI_MISUSE = "phi_misuse"
+    IMPERSONATION = "impersonation"
+    OTHER = "other"
+
+
+class ReportSubjectType(StrEnum):
+    """Backend-only — what a report points at."""
+
+    USER = "user"
+    MESSAGE = "message"
+
+
 class ReportStatus(StrEnum):
-    """Moderation report lifecycle — backend-only (queue UI is M7)."""
+    """Moderation report lifecycle — backend-only (queue UI is M7). Set by
+    super-admins via PATCH /admin/reports/{id}."""
 
     OPEN = "open"
     REVIEWING = "reviewing"
@@ -223,6 +241,11 @@ class WsEventServer(StrEnum):
     PROFILE_UPDATED = "profile_updated"
     # Conversation preferences (batch 3) — sent ONLY to the user's own devices.
     CONVERSATION_PREFS_UPDATED = "conversation_prefs_updated"
+    # Message features (batch 4). Pin events go to every member; the star
+    # event only to the actor's own devices (stars are private).
+    MESSAGE_PINNED = "message_pinned"
+    MESSAGE_UNPINNED = "message_unpinned"
+    MESSAGE_STARRED = "message_starred"
 
 
 class WsEventClient(StrEnum):
@@ -295,6 +318,13 @@ class AuditAction(StrEnum):
     PRIVACY_UPDATED = "privacy_updated"
     # Conversation preferences (batch 3) — backend-only.
     CONVERSATION_PREFS_UPDATED = "conversation_prefs_updated"
+    # Message features (batch 4) — backend-only.
+    MESSAGE_FORWARDED = "message_forwarded"
+    MESSAGE_PINNED = "message_pinned"
+    MESSAGE_UNPINNED = "message_unpinned"
+    STARRED_MESSAGES_READ = "starred_messages_read"
+    REPORT_STATUS_CHANGED = "report_status_changed"
+    LINK_PREVIEW_FETCHED = "link_preview_fetched"
 
 
 class TranscribeSpecialty(StrEnum):

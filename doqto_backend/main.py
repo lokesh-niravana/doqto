@@ -16,6 +16,7 @@ from app.api.v1 import (
     billing,
     conversations,
     groups,
+    links,
     messages,
     network,
     notifications,
@@ -25,6 +26,7 @@ from app.api.v1 import (
 )
 from app.core.config import settings
 from app.core.constants import DISAPPEAR_PURGE_INTERVAL_SEC, SCHEDULED_SEND_INTERVAL_SEC
+from app.core.enums import WsEventServer
 from app.core.redis_keys import purge_lock_key, scheduled_send_lock_key
 from app.core.routes import ApiPrefix
 from app.db.postgres import SessionLocal
@@ -54,9 +56,29 @@ async def _purge_expired_loop() -> None:
                 async with SessionLocal() as db:
                     purged = await MessageService.purge_expired(db)
                     purged_keys = await MessageService.purge_content(db)
+                    # Stars never extend retention; pins expire on schedule.
+                    orphan_stars = await MessageService.purge_orphan_stars(db)
+                    unpinned = await MessageService.expire_pins(db)
+                    unpin_recipients = [
+                        (cid, mid, await MessageService.member_ids(conversation_id=cid, db=db))
+                        for cid, mid in unpinned
+                    ]
                     await db.commit()
                     if purged:
                         logger.info("purged %d expired messages", purged)
+                    if orphan_stars:
+                        logger.info("purged %d stars on gone messages", orphan_stars)
+                for cid, mid, recipients in unpin_recipients:
+                    await ws_manager.publish_to_users(
+                        recipients,
+                        WsEventServer.MESSAGE_UNPINNED,
+                        {
+                            "conversation_id": str(cid),
+                            "message_id": str(mid),
+                            "pinned_until": None,
+                            "actor_id": None,
+                        },
+                    )
                 # S3 disposal is best-effort per key; a failed delete only
                 # orphans an unreferenced, SSE-encrypted object.
                 for key in purged_keys:
@@ -200,6 +222,7 @@ app.include_router(network.router, prefix=ApiPrefix.NETWORK, tags=["network"])
 app.include_router(people.router, prefix=ApiPrefix.PEOPLE, tags=["people"])
 app.include_router(groups.router, prefix=ApiPrefix.GROUPS, tags=["groups"])
 app.include_router(billing.router, prefix=ApiPrefix.BILLING, tags=["billing"])
+app.include_router(links.router, prefix=ApiPrefix.LINKS, tags=["links"])
 app.include_router(
     notifications.router, prefix=ApiPrefix.NOTIFICATIONS, tags=["notifications"]
 )

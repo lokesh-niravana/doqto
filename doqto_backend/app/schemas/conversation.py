@@ -75,6 +75,9 @@ class ConversationOut(ORMModel):
     # client hides from the badge / surfaces separately. Always False elsewhere.
     is_hidden: bool = False
     disappear_after_sec: int | None
+    # Pinned message (batch 4) — null when nothing is pinned / pin expired.
+    pinned_message_id: uuid.UUID | None = None
+    pinned_until: datetime | None = None
     created_at: datetime
     updated_at: datetime
     member_ids: list[uuid.UUID] = []

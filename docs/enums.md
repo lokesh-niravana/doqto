@@ -160,10 +160,33 @@ on `GET /users/{id}/profile`; the initials avatar always renders.
 | `everyone` | Anyone who can reach my profile (default) |
 | `connections` | Connections and colleagues only |
 
+## ReportReason
+
+Why a user or message is being reported (`POST /network/reports`, batch 4).
+SHARED — the client renders the reason picker from it.
+
+| Wire value | Meaning |
+|---|---|
+| `spam` | Unsolicited promotion / bulk messages |
+| `harassment` | Abusive or threatening conduct |
+| `phi_misuse` | Patient information shared or requested improperly |
+| `impersonation` | Pretending to be another clinician / organisation |
+| `other` | Anything else (details field) |
+
+## ReportSubjectType (backend-only)
+
+What a report points at. Backend-only — the client sends the string.
+
+| Wire value | Meaning |
+|---|---|
+| `user` | A person (reported from their profile; default) |
+| `message` | A message (batch 4) — reporter must be a conversation member; `context_message_ids` (≤5 ids, never bodies) travel with it |
+
 ## ReportStatus (backend-only)
 
-Moderation report lifecycle — never sent to the Flutter client (queue UI is M7),
-so deliberately NOT in the parity-check SHARED set and no Dart mirror.
+Moderation report lifecycle — set by super-admins through
+`GET/PATCH /admin/reports` (batch 4); never sent to the Flutter client, so
+deliberately NOT in the parity-check SHARED set and no Dart mirror.
 
 | Wire value | Meaning |
 |---|---|
@@ -293,12 +316,17 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `message_edited` | full `MessageOut` (incl. `reactions`, `changed_at`) — replace the row by id |
 | `message_deleted` | full `MessageOut` tombstone — replace the row by id |
 | `message_reacted` | `conversation_id, message_id, reactions[], changed_at, actor_id, emoji` (null = removed) — patch reactions only, drop if `changed_at` is not newer |
+
+`new_message` / `message_edited` / `message_deleted` payloads are a full `MessageOut`, which since batch 4 also carries `reply_to_id`, `reply_to {id, sender_id, type, preview}` (rendered live from the quoted row; `preview` is "Message deleted" for a tombstone and the whole object is `null` once the quoted message expired), `forwarded`, `forward_depth`, `mentions[]` (user ids) and `starred` (always `false` in fan-outs — per-viewer, only true on the viewer's own reads).
 | `connected` | `user_id` — first server frame after a successful `auth` |
 | `invitation_withdrawn` | `invitation_id, sender_id` — the sender withdrew it |
 | `org_updated` | `org_id, status` — org status or details changed; refetch |
 | `group_updated` | `group_id` — group details changed; refetch |
 | `profile_updated` | `user_id` — a profile you can see changed; refetch |
 | `conversation_prefs_updated` | `conversation_id, prefs{pinned_at, archived, muted_until, custom_tone, custom_vibrate, theme, wallpaper, marked_unread, cleared_before_seq, hidden_until_seq}` (batch 3) — sent ONLY to the caller's own devices; patch the conversation's `prefs` in place |
+| `message_pinned` | `conversation_id, message_id, pinned_until, actor_id` (batch 4) — every member; show the banner |
+| `message_unpinned` | `conversation_id, message_id, pinned_until: null, actor_id` (null when the auto-unpin job cleared it) — every member |
+| `message_starred` | `conversation_id, message_id, starred` (batch 4) — the actor's OWN devices only; stars are private |
 
 ## WsEventClient (client → server)
 
@@ -367,6 +395,12 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `message_receipts_read` | Sender viewed a message's read-by / delivered-to list (`GET /messages/{id}/receipts`) |
 | `privacy_updated` | A privacy setting changed (`PATCH /users/me/privacy`); meta lists the field names only |
 | `conversation_prefs_updated` | A conversation preference changed (`PATCH /conversations/{id}/prefs`: pin / archive / mute / mark unread / clear / delete); meta lists the field names only (batch 3) |
+| `message_forwarded` | A message was forwarded (`POST /messages/{id}/forward`); meta: `source_id`, `destinations[]`, `copies[]` (batch 4) |
+| `message_pinned` | A message was pinned to its conversation; meta: `message_id`, `duration_sec` (batch 4) |
+| `message_unpinned` | The pin was removed by a member (the auto-unpin job does not audit) (batch 4) |
+| `starred_messages_read` | `GET /messages/starred` returned decrypted bodies; one row per page (batch 4) |
+| `report_status_changed` | A super-admin moved a report between statuses; meta: `from`, `to` (batch 4) |
+| `link_preview_fetched` | The server fetched a link preview on the user's behalf; meta: `host` only (batch 4) |
 
 ## TranscribeSpecialty (AWS Transcribe Medical)
 

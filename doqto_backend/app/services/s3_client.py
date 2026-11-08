@@ -94,6 +94,18 @@ class RealS3Client:
         )
         log.info("[S3] uploaded %d bytes to %s", len(data), key)
 
+    async def copy_object(self, *, src_key: str, dst_key: str) -> None:
+        """Server-side copy (forwarding): the copy gets its own key and its own
+        SSE, so deleting either message never strands the other."""
+        bucket = settings.AWS_S3_BUCKET_NAME
+        _get_client().copy_object(
+            Bucket=bucket,
+            Key=dst_key,
+            CopySource={"Bucket": bucket, "Key": src_key},
+            ServerSideEncryption="AES256",
+        )
+        log.info("[S3] copied %s -> %s", src_key, dst_key)
+
     async def delete_object(self, *, key: str) -> None:
         """Disposal (§164.310(d)(2)(i)): remove media for purged/deleted content."""
         _get_client().delete_object(Bucket=settings.AWS_S3_BUCKET_NAME, Key=key)

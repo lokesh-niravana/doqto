@@ -219,7 +219,12 @@ enum WsEventServer {
   groupUpdated,
   profileUpdated,
   /// Conversation preferences (batch 3) — sent only to my own devices.
-  conversationPrefsUpdated;
+  conversationPrefsUpdated,
+  // Message features (batch 4). Pin events reach every member; the star
+  // event only the actor's own devices (stars are private).
+  messagePinned,
+  messageUnpinned,
+  messageStarred;
 
   String get wire => switch (this) {
         WsEventServer.newMessage => 'new_message',
@@ -254,6 +259,9 @@ enum WsEventServer {
         WsEventServer.groupUpdated => 'group_updated',
         WsEventServer.profileUpdated => 'profile_updated',
         WsEventServer.conversationPrefsUpdated => 'conversation_prefs_updated',
+        WsEventServer.messagePinned => 'message_pinned',
+        WsEventServer.messageUnpinned => 'message_unpinned',
+        WsEventServer.messageStarred => 'message_starred',
       };
 
   static WsEventServer? fromWire(String s) => switch (s) {
@@ -289,6 +297,9 @@ enum WsEventServer {
         'group_updated' => WsEventServer.groupUpdated,
         'profile_updated' => WsEventServer.profileUpdated,
         'conversation_prefs_updated' => WsEventServer.conversationPrefsUpdated,
+        'message_pinned' => WsEventServer.messagePinned,
+        'message_unpinned' => WsEventServer.messageUnpinned,
+        'message_starred' => WsEventServer.messageStarred,
         _ => null,
       };
 }
@@ -318,6 +329,33 @@ enum DevicePlatform {
         'ios' => DevicePlatform.ios,
         'android' => DevicePlatform.android,
         _ => throw ArgumentError('Unknown DevicePlatform: $s'),
+      };
+}
+
+/// Why a user or message is being reported (`POST /network/reports`, batch 4).
+/// Shared wire enum — mirrors backend ReportReason; the reason picker renders
+/// from it. Tolerant: unknown → [other].
+enum ReportReason {
+  @JsonValue('spam') spam,
+  @JsonValue('harassment') harassment,
+  @JsonValue('phi_misuse') phiMisuse,
+  @JsonValue('impersonation') impersonation,
+  @JsonValue('other') other;
+
+  String get wire => switch (this) {
+        ReportReason.spam => 'spam',
+        ReportReason.harassment => 'harassment',
+        ReportReason.phiMisuse => 'phi_misuse',
+        ReportReason.impersonation => 'impersonation',
+        ReportReason.other => 'other',
+      };
+
+  static ReportReason fromWire(String? s) => switch (s) {
+        'spam' => ReportReason.spam,
+        'harassment' => ReportReason.harassment,
+        'phi_misuse' => ReportReason.phiMisuse,
+        'impersonation' => ReportReason.impersonation,
+        _ => ReportReason.other,
       };
 }
 

@@ -16,6 +16,8 @@ class ApiPrefix:
     # sibling /group-invites and /me/groups surfaces.
     GROUPS = "/api/v1"
     BILLING = "/api/v1/billing"
+    # Link previews (batch 4) — bare V1 prefix, single route.
+    LINKS = "/api/v1"
 
 
 class ApiRoutes:
@@ -85,6 +87,7 @@ class ApiRoutes:
     CONVERSATIONS_SETTINGS = "/{conversation_id}/settings"
     # Per-member preferences: pin / archive / mute / mark unread / clear / delete.
     CONVERSATIONS_PREFS = "/{conversation_id}/prefs"
+    CONVERSATIONS_PIN = "/{conversation_id}/pin"  # PUT pin / DELETE unpin (batch 4)
     # Message-request tier (M4) — recipient-only accept / decline.
 
     # Messages
@@ -95,6 +98,11 @@ class ApiRoutes:
     MESSAGES_HIDE = "/hide"  # POST delete-for-me (batch)
     MESSAGES_FILE_URL = "/{message_id}/file-url"
     MESSAGES_RECEIPTS = "/{message_id}/receipts"  # sender-only read-by / delivered-to
+    # Batch 4
+    MESSAGES_FORWARD = "/{message_id}/forward"  # POST {conversation_ids}
+    MESSAGES_STAR = "/{message_id}/star"  # PUT star / DELETE unstar (own, private)
+    MESSAGES_STARRED = "/starred"  # GET my starred messages, all conversations
+    LINK_PREVIEW = "/link-preview"  # GET ?url=
 
     # Groups (M5) — router mounted at /api/v1 (see ApiPrefix.GROUPS).
     GROUPS_LIST = "/groups"
@@ -116,6 +124,8 @@ class ApiRoutes:
     ADMIN_ORGS = "/orgs"
     ADMIN_VERIFY_ORG = "/orgs/{org_id}/verify"
     ADMIN_REJECT_ORG = "/orgs/{org_id}/reject"
+    ADMIN_REPORTS = "/reports"  # GET moderation queue (super-admin)
+    ADMIN_REPORT_DETAIL = "/reports/{report_id}"  # PATCH status
 
     # WebSocket
     WS = "/ws"  # user-scoped socket (A1)

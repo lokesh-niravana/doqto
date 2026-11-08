@@ -3,7 +3,18 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
@@ -11,11 +22,17 @@ from app.core.constants import (
     AVATAR_ALLOWED_MIME,
     AVATAR_MAX_BYTES,
     PRESENCE_QUERY_MAX_IDS,
+    RATE_LIMIT_EXPORTS_PER_HOUR,
+    RATE_LIMIT_NOTIFICATION_SETTINGS_PER_MINUTE,
+    RATE_LIMIT_PHONE_CHANGES_PER_HOUR,
+    RATE_LIMIT_PIN_WRITES_PER_MINUTE,
     RATE_LIMIT_PRIVACY_WRITES_PER_MINUTE,
     RATE_LIMIT_READS_PER_MINUTE,
+    RATE_LIMIT_SESSION_WRITES_PER_MINUTE,
+    RATE_LIMIT_STATUS_WRITES_PER_MINUTE,
 )
 from app.api.ws_manager import ws_manager
-from app.core.dependencies import get_current_user
+from app.core.dependencies import bearer_jti, get_current_user
 from app.core.enums import AuditAction, InvitationStatus, WsEventServer
 from app.core.permissions import (
     can_message,
@@ -26,20 +43,36 @@ from app.core.permissions import (
 from app.core.rate_limit import enforce_rate_limit
 from app.core.routes import ApiRoutes
 from app.db.postgres import get_db
-from app.models import Block, ConnectionInvitation, User, UserPrivacySettings
+from app.db.redis import get_redis
+from app.models import Block, ConnectionInvitation, Session, User, UserPrivacySettings
 from app.schemas.auth import LinkPhoneIn
 from app.schemas.common import OkResponse
 from app.schemas.people import PublicProfileOut, location_label
 from app.schemas.privacy import PresenceOut, PrivacyOut, PrivacyPatch
 from app.schemas.push import PushTokenDeleteIn, PushTokenIn
-from app.schemas.user import UserOut, UserPatch, build_user_out
+from app.schemas.settings import (
+    ExportOut,
+    NotificationSettingsOut,
+    NotificationSettingsPatch,
+    PinDeleteIn,
+    PinSetIn,
+    PinStatusOut,
+    SessionOut,
+    SessionRevokeOut,
+    StatusOut,
+    StatusPatch,
+)
+from app.schemas.user import UserOut, UserPatch, build_user_out, pin_clears_at
 from app.services.account_deletion_service import AccountDeletionService
 from app.services.auth_service import AuthError, AuthService, PhoneTaken, WrongAccount
 from app.services.audit_service import AuditService
 from app.services.file_service import FileService
+from app.services.notification_settings_service import NotificationSettingsService
 from app.services.presence_service import PresenceService
 from app.services.push_service import PushService
 from app.services.relationship_service import RelationshipService
+from app.services.session_service import PinError, PinService, SessionService
+from app.services.status_service import ExportService, StatusService
 from app.services.stripe_client import StripeGateway, get_optional_stripe
 from sqlalchemy import and_, or_, select
 
@@ -322,6 +355,7 @@ async def get_public_profile(
         can_message=msg_mode,
         context_label=context_label,
         is_colleague=bool(ctx.shared_org_ids),
+        **StatusService.to_out(target).model_dump(),
     )
 
 
@@ -366,6 +400,41 @@ async def link_phone(
     return await build_user_out(updated)
 
 
+@router.patch(ApiRoutes.USERS_ME_PHONE, response_model=UserOut)
+async def change_phone(
+    body: LinkPhoneIn,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserOut:
+    """Change number (batch 6). Firebase verified the NEW number on the device
+    (`updatePhoneNumber` / link); the refreshed ID token's phone claim is the
+    proof. Same ownership and uniqueness rules as linking; audited without
+    either number in the row."""
+    await enforce_rate_limit(
+        user.id, "change_phone", RATE_LIMIT_PHONE_CHANGES_PER_HOUR, window_seconds=3600
+    )
+    try:
+        updated = await AuthService.link_phone(user=user, id_token=body.id_token, db=db)
+    except WrongAccount as e:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except PhoneTaken as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(e)) from e
+    except AuthError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await AuditService.log_request(
+        request,
+        user_id=user.id,
+        action=AuditAction.PHONE_CHANGED,
+        resource_type="user",
+        resource_id=user.id,
+        db=db,
+    )
+    await db.commit()
+    await db.refresh(updated)
+    return await build_user_out(updated)
+
+
 @router.post(ApiRoutes.USERS_PUSH_TOKENS, response_model=OkResponse)
 async def register_push_token(
     body: PushTokenIn,
@@ -407,3 +476,240 @@ async def delete_avatar(
     await db.refresh(user)
     await _commit_and_publish_profile_updated(user, db)
     return await build_user_out(user)
+
+
+# --------------------------------------------------------------------------- #
+# Settings (batch 6)
+# --------------------------------------------------------------------------- #
+@router.get(ApiRoutes.USERS_NOTIFICATIONS, response_model=NotificationSettingsOut)
+async def get_notification_settings(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> NotificationSettingsOut:
+    return await NotificationSettingsService.effective(user.id, db)
+
+
+@router.patch(ApiRoutes.USERS_NOTIFICATIONS, response_model=NotificationSettingsOut)
+async def update_notification_settings(
+    body: NotificationSettingsPatch,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> NotificationSettingsOut:
+    """Partial update, or `reset: true` for the defaults. Fans
+    `notification_settings_updated` out to the caller's own devices."""
+    await enforce_rate_limit(
+        user.id, "notification_settings", RATE_LIMIT_NOTIFICATION_SETTINGS_PER_MINUTE
+    )
+    out, changed = await NotificationSettingsService.update(user_id=user.id, body=body, db=db)
+    if changed:
+        await AuditService.log_request(
+            request,
+            user_id=user.id,
+            action=AuditAction.NOTIFICATION_SETTINGS_UPDATED,
+            resource_type="user",
+            resource_id=user.id,
+            db=db,
+            metadata={"fields": sorted(changed)},
+        )
+    await db.commit()
+    if changed:
+        await ws_manager.publish_to_users(
+            [user.id], WsEventServer.NOTIFICATION_SETTINGS_UPDATED, out.model_dump(mode="json")
+        )
+    return out
+
+
+def _session_out(row: Session, current_jti: str | None) -> SessionOut:
+    return SessionOut(
+        id=row.id,
+        device_name=row.device_name,
+        platform=row.platform,
+        app_version=row.app_version,
+        ip=str(row.ip) if row.ip else None,
+        created_at=row.created_at,
+        last_seen_at=row.last_seen_at,
+        current=row.access_jti == current_jti,
+    )
+
+
+@router.get(ApiRoutes.USERS_SESSIONS, response_model=list[SessionOut])
+async def list_sessions(
+    authorization: str | None = Header(default=None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[SessionOut]:
+    """Linked devices: live sessions, newest activity first, with `current`
+    on the one behind this request's token."""
+    jti = bearer_jti(authorization)
+    rows = await SessionService.list_active(user.id, db)
+    return [_session_out(r, jti) for r in rows]
+
+
+@router.delete(ApiRoutes.USERS_SESSION_DETAIL, response_model=OkResponse)
+async def revoke_session(
+    session_id: uuid.UUID,
+    request: Request,
+    user: User = Depends(get_current_user),
+    redis: Redis = Depends(get_redis),
+    db: AsyncSession = Depends(get_db),
+) -> OkResponse:
+    """Sign one device out. Its next call answers 401 session_revoked and it
+    hears `session_revoked` over WS right away. Revoking THIS device works
+    too (same as logout). Someone else's session is a 404."""
+    await enforce_rate_limit(user.id, "revoke_session", RATE_LIMIT_SESSION_WRITES_PER_MINUTE)
+    row = await db.get(Session, session_id)
+    if row is None or row.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="session_not_found")
+    if row.revoked_at is None:
+        await SessionService.revoke(row=row, redis=redis, db=db)
+        await AuditService.log_request(
+            request,
+            user_id=user.id,
+            action=AuditAction.SESSION_REVOKED,
+            resource_type="session",
+            resource_id=row.id,
+            db=db,
+            metadata={"count": 1},
+        )
+        await db.commit()
+        await SessionService.publish_revoked(user.id, [row.id])
+    return OkResponse()
+
+
+@router.post(ApiRoutes.USERS_SESSIONS_REVOKE_OTHERS, response_model=SessionRevokeOut)
+async def revoke_other_sessions(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    user: User = Depends(get_current_user),
+    redis: Redis = Depends(get_redis),
+    db: AsyncSession = Depends(get_db),
+) -> SessionRevokeOut:
+    """"Sign out of all other devices." Keeps the session behind this token."""
+    await enforce_rate_limit(user.id, "revoke_session", RATE_LIMIT_SESSION_WRITES_PER_MINUTE)
+    revoked = await SessionService.revoke_others(
+        user_id=user.id, keep_jti=bearer_jti(authorization), redis=redis, db=db
+    )
+    if revoked:
+        await AuditService.log_request(
+            request,
+            user_id=user.id,
+            action=AuditAction.SESSION_REVOKED,
+            resource_type="user",
+            resource_id=user.id,
+            db=db,
+            metadata={"count": len(revoked), "session_ids": [str(r.id) for r in revoked]},
+        )
+        await db.commit()
+        await SessionService.publish_revoked(user.id, [r.id for r in revoked])
+    return SessionRevokeOut(revoked=len(revoked))
+
+
+_PIN_STATUS = {
+    "pin_invalid": status.HTTP_401_UNAUTHORIZED,
+    "pin_not_set": status.HTTP_409_CONFLICT,
+}
+
+
+@router.put(ApiRoutes.USERS_PIN, response_model=PinStatusOut)
+async def set_pin(
+    body: PinSetIn,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PinStatusOut:
+    """Turn two-step verification on, or change the PIN (needs `current_pin`).
+    New devices must then enter it after OTP until `/auth/pin/verify`."""
+    await enforce_rate_limit(user.id, "pin_write", RATE_LIMIT_PIN_WRITES_PER_MINUTE)
+    try:
+        await PinService.set_pin(user=user, pin=body.pin, current_pin=body.current_pin, db=db)
+    except PinError as e:
+        raise HTTPException(_PIN_STATUS.get(str(e), 400), detail=str(e)) from e
+    await AuditService.log_request(
+        request, user_id=user.id, action=AuditAction.PIN_SET, resource_type="user",
+        resource_id=user.id, db=db,
+    )
+    await db.commit()
+    return PinStatusOut(pin_enabled=True)
+
+
+@router.delete(ApiRoutes.USERS_PIN, response_model=PinStatusOut)
+async def remove_pin(
+    body: PinDeleteIn,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PinStatusOut:
+    """Turn two-step verification off. The current PIN is required."""
+    await enforce_rate_limit(user.id, "pin_write", RATE_LIMIT_PIN_WRITES_PER_MINUTE)
+    try:
+        await PinService.remove_pin(user=user, pin=body.pin, db=db)
+    except PinError as e:
+        raise HTTPException(_PIN_STATUS.get(str(e), 400), detail=str(e)) from e
+    await AuditService.log_request(
+        request, user_id=user.id, action=AuditAction.PIN_REMOVED, resource_type="user",
+        resource_id=user.id, db=db,
+    )
+    await db.commit()
+    return PinStatusOut(pin_enabled=False)
+
+
+@router.get(ApiRoutes.USERS_PIN, response_model=PinStatusOut)
+async def pin_status(user: User = Depends(get_current_user)) -> PinStatusOut:
+    return PinStatusOut(pin_enabled=user.pin_hash is not None, pin_clears_at=pin_clears_at(user))
+
+
+@router.post(ApiRoutes.USERS_EXPORT, response_model=ExportOut)
+async def export_account(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ExportOut:
+    """Account info export: profile, settings, organizations, connections and
+    groups — NO messages — as a JSON file behind a 10-minute presigned URL."""
+    await enforce_rate_limit(
+        user.id, "account_export", RATE_LIMIT_EXPORTS_PER_HOUR, window_seconds=3600
+    )
+    url, expires_at = await ExportService.upload(user=user, db=db)
+    await AuditService.log_request(
+        request,
+        user_id=user.id,
+        action=AuditAction.ACCOUNT_EXPORTED,
+        resource_type="user",
+        resource_id=user.id,
+        db=db,
+    )
+    await db.commit()
+    return ExportOut(url=url, expires_at=expires_at)
+
+
+@router.patch(ApiRoutes.USERS_STATUS, response_model=StatusOut)
+async def update_status(
+    body: StatusPatch,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> StatusOut:
+    """Status under the name: a preset or custom text (≤ 40), with an expiry
+    of 1h / 8h / 24h or never; `{}` clears it. The audience hears
+    `profile_updated`. Audited with the preset name only, never custom text."""
+    await enforce_rate_limit(user.id, "status", RATE_LIMIT_STATUS_WRITES_PER_MINUTE)
+    changed = await StatusService.update(user=user, body=body, db=db)
+    if changed:
+        await AuditService.log_request(
+            request,
+            user_id=user.id,
+            action=AuditAction.STATUS_UPDATED,
+            resource_type="user",
+            resource_id=user.id,
+            db=db,
+            metadata={
+                "preset": body.preset.value if body.preset else None,
+                "custom": body.text is not None,
+                "expires_in_sec": body.expires_in_sec,
+            },
+        )
+    await db.commit()
+    if changed:
+        await StatusService.publish(user.id, db)
+    return StatusService.to_out(user)

@@ -38,6 +38,9 @@ class Tables:
     APP_INVITES = "app_invites"
     REPORTS = "reports"
     USER_PRIVACY_SETTINGS = "user_privacy_settings"
+    # Settings (batch 6): tones / vibrate / previews, and linked devices.
+    USER_NOTIFICATION_SETTINGS = "user_notification_settings"
+    SESSIONS = "sessions"
     NOTIFICATIONS = "notifications"
     # Groups (M5)
     GROUPS = "groups"

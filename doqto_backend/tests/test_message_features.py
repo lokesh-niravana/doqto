@@ -53,7 +53,7 @@ class RecordingSender:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def send(self, *, token, title, body, data, collapse_key, badge=None):
+    async def send(self, *, token, title, body, data, collapse_key, badge=None, **_):
         self.calls.append(
             {"token": token, "title": title, "body": body, "data": data, "collapse_key": collapse_key, "badge": badge}
         )
@@ -452,6 +452,7 @@ async def test_forward_respects_org_policy_allow_forward_outside_org(client, cha
         ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG: False,
         "allow_copy": True,
         "allow_media_export": False,  # batch 5 default
+        "block_screenshots": False,  # batch 6 default
     }
 
     src2 = await _send(client, org_group.id, chat.bob_headers, "internal protocol v2")

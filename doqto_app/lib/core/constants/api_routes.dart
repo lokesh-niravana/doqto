@@ -9,14 +9,27 @@ class ApiRoutes {
   static const String authRefresh = '$apiV1/auth/refresh';
   static const String authLogout = '$apiV1/auth/logout';
   static const String authRegister = '$apiV1/auth/register';
+  // Two-step PIN (batch 6): verify on a new device / start the 7-day reset.
+  static const String authPinVerify = '$apiV1/auth/pin/verify';
+  static const String authPinResetRequest = '$apiV1/auth/pin/reset-request';
 
   // Users
   static const String usersMe = '$apiV1/users/me';
   static const String usersMeAvatar = '$apiV1/users/me/avatar';
   static const String usersMePushTokens = '$apiV1/users/me/push-tokens';
-  // Attach a phone to the signed-in account. NOT YET ON THE BACKEND — see
-  // docs/phone-verification.md for the contract.
+  // Attach a phone to the signed-in account (POST, sign-up) or change the
+  // number (PATCH, batch 6) — both take a Firebase ID token for the number.
+  // See docs/phone-verification.md and docs/settings.md.
   static const String usersMePhone = '$apiV1/users/me/phone';
+  // Settings (batch 6)
+  static const String usersMeNotifications = '$apiV1/users/me/notifications';
+  static const String usersMeSessions = '$apiV1/users/me/sessions';
+  static String usersMeSession(String id) => '$apiV1/users/me/sessions/$id';
+  static const String usersMeSessionsRevokeOthers =
+      '$apiV1/users/me/sessions/revoke-others';
+  static const String usersMePin = '$apiV1/users/me/pin';
+  static const String usersMeExport = '$apiV1/users/me/export';
+  static const String usersMeStatus = '$apiV1/users/me/status';
 
   // Orgs
   static const String orgs = '$apiV1/orgs';
@@ -152,6 +165,13 @@ class ApiRoutes {
       '$apiV1/groups/$id/transfer-ownership';
   static const String meGroups = '$apiV1/me/groups';
 
+
+  // Audit (batch 6): iOS reports a detected screenshot of a chat.
+  static const String auditScreenshot = '$apiV1/audit/screenshot';
+
+  // App metadata (batch 6) — unauthenticated.
+  static const String appMinVersion = '$apiV1/app/min-version';
+  static const String appLegal = '$apiV1/app/legal';
 
   // Admin endpoints live in the separate Next.js admin panel — not in the mobile app.
 

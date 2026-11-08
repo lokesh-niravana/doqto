@@ -33,7 +33,7 @@ class RecordingSender:
 
     async def send(
         self, *, token: str, title: str, body: str, data: dict[str, str], collapse_key: str,
-        badge: int | None = None,
+        badge: int | None = None, **extra,
     ) -> PushResult:
         self.calls.append(
             {
@@ -42,6 +42,7 @@ class RecordingSender:
                 "body": body,
                 "data": data,
                 "collapse_key": collapse_key,
+                **extra,
             }
         )
         if token in self.invalid_tokens:

@@ -16,6 +16,7 @@ from app.core.constants import (
     WS_HEARTBEAT_TIMEOUT_SECONDS,
 )
 from app.core.enums import JwtTokenType, PresenceStatus, WsEventClient, WsEventServer
+from app.core.dependencies import pin_pending
 from app.core.redis_keys import presence_key
 from app.core.security import TokenError, decode_token
 from app.db.postgres import SessionLocal
@@ -59,6 +60,12 @@ async def _authorize(token: str) -> tuple[uuid.UUID, frozenset[uuid.UUID]]:
         user = await db.scalar(select(User).where(User.id == user_id))
         if user is None:
             raise TokenError("user_not_found")
+        # A device that still owes its two-step PIN gets no socket (batch 6).
+        # Revocation reaches an open socket as a `session_revoked` event; the
+        # Redis gate applies on the next HTTP call / reconnect.
+        jti = payload.get("jti")
+        if jti and await pin_pending(user, jti, db):
+            raise TokenError("pin_required")
         rows = await db.execute(
             select(OrgMember.org_id).where(OrgMember.user_id == user_id)
         )

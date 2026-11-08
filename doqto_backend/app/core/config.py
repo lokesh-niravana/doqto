@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     # client ships, at which point it is turned on.
     NETWORK_DM_ENABLED: bool = True
 
+    # Minimum app builds (GET /app/min-version). Bump to force an update.
+    MIN_VERSION_IOS: str = "1.0.0+45"
+    MIN_VERSION_ANDROID: str = "1.0.0+35"
+    MIN_VERSION_MESSAGE: str = "Please update Doqto to keep messaging securely."
+
     SUPER_ADMIN_PHONE: str = ""
     SUPER_ADMIN_NAME: str = ""
     SUPER_ADMIN_NPI: str = ""

@@ -71,3 +71,13 @@ def purge_lock_key() -> str:
 def scheduled_send_lock_key() -> str:
     """Singleton lock so only one replica delivers due scheduled messages."""
     return "lock:scheduled_send"
+
+
+def pin_verify_attempts_key(user_id: UUID | str) -> str:
+    """Wrong-PIN attempt counter (batch 6), windowed."""
+    return f"pin:attempts:{user_id}"
+
+
+def settings_jobs_lock_key() -> str:
+    """Singleton lock for the status-expiry / PIN-reset pass (batch 6)."""
+    return "lock:settings_jobs"

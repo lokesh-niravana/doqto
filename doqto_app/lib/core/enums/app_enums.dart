@@ -233,7 +233,14 @@ enum WsEventServer {
   messageUnpinned,
   messageStarred,
   // Polls (batch 5): tallies + voter ids after a vote changed — every member.
-  pollUpdated;
+  pollUpdated,
+  // Settings (batch 6) — all sent ONLY to my own devices.
+  /// Another device signed in to my account; payload has its session_id.
+  sessionCreated,
+  /// A session was revoked; if session_id is mine, wipe and go to login.
+  sessionRevoked,
+  /// My notification settings changed elsewhere; payload is the full set.
+  notificationSettingsUpdated;
 
   String get wire => switch (this) {
         WsEventServer.newMessage => 'new_message',
@@ -272,6 +279,10 @@ enum WsEventServer {
         WsEventServer.messageUnpinned => 'message_unpinned',
         WsEventServer.messageStarred => 'message_starred',
         WsEventServer.pollUpdated => 'poll_updated',
+        WsEventServer.sessionCreated => 'session_created',
+        WsEventServer.sessionRevoked => 'session_revoked',
+        WsEventServer.notificationSettingsUpdated =>
+          'notification_settings_updated',
       };
 
   static WsEventServer? fromWire(String s) => switch (s) {
@@ -311,6 +322,10 @@ enum WsEventServer {
         'message_unpinned' => WsEventServer.messageUnpinned,
         'message_starred' => WsEventServer.messageStarred,
         'poll_updated' => WsEventServer.pollUpdated,
+        'session_created' => WsEventServer.sessionCreated,
+        'session_revoked' => WsEventServer.sessionRevoked,
+        'notification_settings_updated' =>
+          WsEventServer.notificationSettingsUpdated,
         _ => null,
       };
 }
@@ -665,4 +680,56 @@ enum DisappearAfter {
 
   final int? seconds;
   const DisappearAfter(this.seconds);
+}
+
+/// Status under a doctor's name (batch 6). Shared wire enum — mirrors backend
+/// StatusPreset. `PATCH /users/me/status {preset}`; anything that is not a
+/// preset arrives as `status_text` instead. Tolerant: unknown → null.
+enum StatusPreset {
+  @JsonValue('on_call') onCall,
+  @JsonValue('in_clinic') inClinic,
+  @JsonValue('in_surgery') inSurgery,
+  @JsonValue('off_duty') offDuty,
+  @JsonValue('available') available;
+
+  String get wire => switch (this) {
+        StatusPreset.onCall => 'on_call',
+        StatusPreset.inClinic => 'in_clinic',
+        StatusPreset.inSurgery => 'in_surgery',
+        StatusPreset.offDuty => 'off_duty',
+        StatusPreset.available => 'available',
+      };
+
+  static StatusPreset? fromWire(String? s) => switch (s) {
+        'on_call' => StatusPreset.onCall,
+        'in_clinic' => StatusPreset.inClinic,
+        'in_surgery' => StatusPreset.inSurgery,
+        'off_duty' => StatusPreset.offDuty,
+        'available' => StatusPreset.available,
+        _ => null,
+      };
+}
+
+/// Notification vibration pattern (batch 6, Android only — iOS ignores it).
+/// Shared wire enum — mirrors backend VibratePattern. Tolerant: unknown →
+/// [defaultPattern].
+enum VibratePattern {
+  @JsonValue('default') defaultPattern,
+  @JsonValue('short') short,
+  @JsonValue('long') long,
+  @JsonValue('off') off;
+
+  String get wire => switch (this) {
+        VibratePattern.defaultPattern => 'default',
+        VibratePattern.short => 'short',
+        VibratePattern.long => 'long',
+        VibratePattern.off => 'off',
+      };
+
+  static VibratePattern fromWire(String? s) => switch (s) {
+        'short' => VibratePattern.short,
+        'long' => VibratePattern.long,
+        'off' => VibratePattern.off,
+        _ => VibratePattern.defaultPattern,
+      };
 }

@@ -27,6 +27,7 @@ from app.core.redis_keys import last_seen_throttle_key, presence_key
 from app.db.redis import get_redis
 from app.models import OrgMember, User, UserPrivacySettings
 from app.schemas.privacy import PresenceOut
+from app.schemas.settings import split_status
 from app.services.relationship_service import RelationshipService
 
 
@@ -122,11 +123,18 @@ class PresenceService:
         if not target_ids:
             return []
         rows = await db.execute(
-            select(User.id, User.last_seen_at).where(
+            select(User.id, User.last_seen_at, User.status_text, User.status_expires_at).where(
                 User.id.in_(target_ids), User.deleted_at.is_(None)
             )
         )
-        last_seen = dict(rows.all())
+        last_seen: dict[uuid.UUID, datetime | None] = {}
+        statuses: dict[uuid.UUID, tuple[str | None, datetime | None]] = {}
+        now = datetime.now(tz=timezone.utc)
+        for uid, seen_at, status_text, status_exp in rows.all():
+            last_seen[uid] = seen_at
+            # An expired status reads as cleared even before the loop runs.
+            if status_text is not None and (status_exp is None or status_exp > now):
+                statuses[uid] = (status_text, status_exp)
         redis = await get_redis()
         out: list[PresenceOut] = []
         for tid in target_ids:
@@ -141,5 +149,15 @@ class PresenceService:
                     status = PresenceStatus(raw)
             if can_see_last_seen(ctx):
                 seen = last_seen[tid]
-            out.append(PresenceOut(user_id=tid, status=status, last_seen_at=seen))
+            preset, text = split_status(statuses.get(tid, (None, None))[0])
+            out.append(
+                PresenceOut(
+                    user_id=tid,
+                    status=status,
+                    last_seen_at=seen,
+                    status_preset=preset,
+                    status_text=text,
+                    status_expires_at=statuses.get(tid, (None, None))[1],
+                )
+            )
         return out

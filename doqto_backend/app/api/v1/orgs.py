@@ -12,6 +12,7 @@ from app.core.constants import (
     ORG_POLICY_ALLOW_COPY,
     ORG_POLICY_ALLOW_MEDIA_EXPORT,
     ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG,
+    ORG_POLICY_BLOCK_SCREENSHOTS,
     ORG_POLICY_DEFAULTS,
     RATE_LIMIT_READS_PER_MINUTE,
 )
@@ -293,6 +294,7 @@ async def update_networking_settings(
         ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG,
         ORG_POLICY_ALLOW_COPY,
         ORG_POLICY_ALLOW_MEDIA_EXPORT,
+        ORG_POLICY_BLOCK_SCREENSHOTS,
     ):
         value = getattr(body, key)
         if value is not None:

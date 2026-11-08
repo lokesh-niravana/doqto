@@ -252,6 +252,10 @@ class WsEventServer(StrEnum):
     MESSAGE_STARRED = "message_starred"
     # Polls (batch 5) — every member: tallies + voter ids after a vote change.
     POLL_UPDATED = "poll_updated"
+    # Settings (batch 6) — all sent ONLY to the user's own devices.
+    SESSION_CREATED = "session_created"
+    SESSION_REVOKED = "session_revoked"
+    NOTIFICATION_SETTINGS_UPDATED = "notification_settings_updated"
 
 
 class WsEventClient(StrEnum):
@@ -334,6 +338,18 @@ class AuditAction(StrEnum):
     # Media (batch 5) — backend-only.
     FILE_EXPORTED = "file_exported"
     POLL_VOTED = "poll_voted"
+    # Settings (batch 6) — backend-only.
+    SCREENSHOT_TAKEN = "screenshot_taken"
+    NOTIFICATION_SETTINGS_UPDATED = "notification_settings_updated"
+    SESSION_REVOKED = "session_revoked"
+    PHONE_CHANGED = "phone_changed"
+    PIN_SET = "pin_set"
+    PIN_REMOVED = "pin_removed"
+    PIN_VERIFIED = "pin_verified"
+    PIN_RESET_REQUESTED = "pin_reset_requested"
+    PIN_RESET_COMPLETED = "pin_reset_completed"
+    ACCOUNT_EXPORTED = "account_exported"
+    STATUS_UPDATED = "status_updated"
 
 
 class TranscribeSpecialty(StrEnum):
@@ -342,3 +358,21 @@ class TranscribeSpecialty(StrEnum):
     RADIOLOGY = "RADIOLOGY"
     NEUROLOGY = "NEUROLOGY"
     UROLOGY = "UROLOGY"
+
+
+class StatusPreset(StrEnum):
+    # SHARED (batch 6): the status under a doctor's name. Stored as the wire
+    # value in users.status_text; anything else there is custom text.
+    ON_CALL = "on_call"
+    IN_CLINIC = "in_clinic"
+    IN_SURGERY = "in_surgery"
+    OFF_DUTY = "off_duty"
+    AVAILABLE = "available"
+
+
+class VibratePattern(StrEnum):
+    # SHARED (batch 6): notification vibration (Android only; iOS ignores it).
+    DEFAULT = "default"
+    SHORT = "short"
+    LONG = "long"
+    OFF = "off"

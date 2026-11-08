@@ -78,6 +78,8 @@ ORG_POLICY_DEFAULTS = {
     ORG_POLICY_ALLOW_COPY: True,
     # Batch 5 — key defined below (ORG_POLICY_ALLOW_MEDIA_EXPORT).
     "allow_media_export": False,
+    # Batch 6 — key defined below (ORG_POLICY_BLOCK_SCREENSHOTS).
+    "block_screenshots": False,
 }
 
 # Voice notes
@@ -275,3 +277,67 @@ SCHEDULED_SEND_INTERVAL_SEC = 15  # delivery granularity for scheduled messages
 # Hard-delete grace: content of soft-deleted/expired messages is crypto-shredded
 # (encrypted blobs nulled, S3 objects deleted) once older than this.
 PURGE_CONTENT_GRACE_SEC = 30 * 24 * 3600  # 30 days
+
+# --- Settings (batch 6) ---------------------------------------------------- #
+# Notification tones: bundled CAF files on iOS (ios/Runner/Resources/<tone>.caf)
+# and raw resources on Android. "default" = the system sound. The server only
+# validates the name and puts it in aps.sound; it never ships the file.
+NOTIFICATION_TONES = frozenset(
+    {
+        "default",
+        "chime",
+        "pulse",
+        "ping",
+        "bell",
+        "glass",
+        "note",
+        "pop",
+        "ripple",
+        "signal",
+        "tap",
+        "whistle",
+        "none",
+    }
+)
+NOTIFICATION_TONE_DEFAULT = "default"
+# FCM Android notification channels — created by the app on first launch.
+PUSH_CHANNEL_MESSAGES = "messages"
+PUSH_CHANNEL_GROUPS = "groups"
+PUSH_CHANNEL_INVITATIONS = "invitations"
+RATE_LIMIT_NOTIFICATION_SETTINGS_PER_MINUTE = 30
+# Screenshot audit (iOS detects, Android blocks behind the org policy).
+ORG_POLICY_BLOCK_SCREENSHOTS = "block_screenshots"
+RATE_LIMIT_SCREENSHOT_AUDITS_PER_MINUTE = 30
+# Sessions / linked devices.
+DEVICE_NAME_MAX_LEN = 80
+APP_VERSION_MAX_LEN = 32
+RATE_LIMIT_SESSION_WRITES_PER_MINUTE = 20
+PUSH_BODY_NEW_SIGN_IN_FALLBACK = "New sign-in on another device"
+# Two-step verification PIN: exactly 6 digits, bcrypt-hashed. Verification
+# attempts are capped per user; the forgot-PIN cooldown clears the PIN after
+# PIN_RESET_COOLDOWN_SEC with no code of ours in an email or SMS.
+PIN_LENGTH = 6
+RATE_LIMIT_PIN_VERIFY_PER_15_MIN = 5
+PIN_VERIFY_WINDOW_SEC = 15 * 60
+RATE_LIMIT_PIN_WRITES_PER_MINUTE = 10
+PIN_RESET_COOLDOWN_SEC = 7 * 24 * 3600
+# Account info export: JSON (no messages) to S3, handed back as a short URL.
+EXPORT_URL_TTL_SEC = 10 * 60
+RATE_LIMIT_EXPORTS_PER_HOUR = 3
+# Status under the name: preset wire value or custom text, with an expiry.
+STATUS_CUSTOM_MAX_LEN = 40
+STATUS_EXPIRY_OPTIONS_SEC = {
+    60 * 60: "1 hour",
+    8 * 60 * 60: "8 hours",
+    24 * 60 * 60: "24 hours",
+}
+RATE_LIMIT_STATUS_WRITES_PER_MINUTE = 30
+RATE_LIMIT_PHONE_CHANGES_PER_HOUR = 5
+# Legal / help links served by GET /app/legal so the app never hard-codes them.
+LEGAL_URLS = {
+    "help": "https://doqto.ai/help",
+    "contact": "mailto:support@doqto.ai",
+    "terms": "https://doqto.ai/terms",
+    "privacy": "https://doqto.ai/privacy",
+    "hipaa": "https://doqto.ai/hipaa",
+}

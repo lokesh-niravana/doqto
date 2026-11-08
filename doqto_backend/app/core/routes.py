@@ -18,6 +18,9 @@ class ApiPrefix:
     BILLING = "/api/v1/billing"
     # Link previews (batch 4) — bare V1 prefix, single route.
     LINKS = "/api/v1"
+    # Settings (batch 6)
+    AUDIT = "/api/v1/audit"
+    APP = "/api/v1/app"
 
 
 class ApiRoutes:
@@ -26,6 +29,9 @@ class ApiRoutes:
     AUTH_REFRESH = "/refresh"
     AUTH_LOGOUT = "/logout"
     AUTH_REGISTER = "/register"
+    # Two-step PIN (batch 6): verify on a new device / start the 7-day reset.
+    AUTH_PIN_VERIFY = "/pin/verify"
+    AUTH_PIN_RESET_REQUEST = "/pin/reset-request"
 
     # Orgs
     ORGS_CREATE = ""
@@ -41,7 +47,15 @@ class ApiRoutes:
     ORGS_NETWORKING_SETTINGS = "/{org_id}/settings/networking"
 
     # Users
-    USERS_ME_PHONE = "/me/phone"
+    USERS_ME_PHONE = "/me/phone"  # POST link (sign-up) / PATCH change (batch 6)
+    # Settings (batch 6)
+    USERS_NOTIFICATIONS = "/me/notifications"  # GET / PATCH tones, vibrate, previews
+    USERS_SESSIONS = "/me/sessions"  # GET linked devices
+    USERS_SESSION_DETAIL = "/me/sessions/{session_id}"  # DELETE revoke one
+    USERS_SESSIONS_REVOKE_OTHERS = "/me/sessions/revoke-others"  # POST
+    USERS_PIN = "/me/pin"  # PUT set / change, DELETE disable
+    USERS_EXPORT = "/me/export"  # POST → presigned JSON (no messages)
+    USERS_STATUS = "/me/status"  # PATCH preset / custom text + expiry
     USERS_PUSH_TOKENS = "/me/push-tokens"
     USERS_PRIVACY = "/me/privacy"
     USERS_PRESENCE = "/presence"  # ?ids=a,b,c (max 50) — privacy-filtered
@@ -140,6 +154,13 @@ class ApiRoutes:
     # WebSocket
     WS = "/ws"  # user-scoped socket (A1)
     WS_ORG = "/ws/{org_id}"  # legacy alias — path org ignored, one release only
+
+    # Audit (batch 6) — client-detected events worth a row.
+    AUDIT_SCREENSHOT = "/screenshot"  # POST {conversation_id}
+
+    # App metadata (batch 6) — unauthenticated.
+    APP_MIN_VERSION = "/min-version"
+    APP_LEGAL = "/legal"
 
     # Billing
     BILLING_STATUS = ""

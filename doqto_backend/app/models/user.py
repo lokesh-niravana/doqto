@@ -78,6 +78,16 @@ class User(Base):
         ARRAY(String(40)), nullable=False, server_default="{}", default=list
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Settings (batch 6). Two-step PIN: bcrypt hash of 6 digits; pin_reset_at
+    # starts the 7-day forgot-PIN cooldown after which the loop clears both.
+    pin_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    pin_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Status under the name: a StatusPreset wire value or custom text (≤ 40),
+    # cleared by the loop once status_expires_at passes (NULL = never).
+    status_text: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    status_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # Set by AccountDeletionService. The row survives as a scrubbed tombstone
     # (audit rows FK to it, HIPAA retention); this makes the account unusable.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -12,6 +12,8 @@ from app.api import websocket as ws_router
 from app.api.ws_manager import ws_manager
 from app.api.v1 import (
     admin,
+    app_meta,
+    audit,
     auth,
     billing,
     conversations,
@@ -27,13 +29,15 @@ from app.api.v1 import (
 from app.core.config import settings
 from app.core.constants import DISAPPEAR_PURGE_INTERVAL_SEC, SCHEDULED_SEND_INTERVAL_SEC
 from app.core.enums import WsEventServer
-from app.core.redis_keys import purge_lock_key, scheduled_send_lock_key
+from app.core.redis_keys import purge_lock_key, scheduled_send_lock_key, settings_jobs_lock_key
 from app.core.routes import ApiPrefix
 from app.db.postgres import SessionLocal
 from app.db.redis import close_redis, get_redis
 from app.services.file_service import FileService
 from app.services.media_service import MediaService
 from app.services.message_service import MessageService
+from app.services.session_service import PinService
+from app.services.status_service import StatusService
 
 # App loggers (doqto.*) have no handler under uvicorn's default config — give them one.
 logging.basicConfig(level=logging.INFO)
@@ -179,6 +183,31 @@ async def _scheduled_send_loop() -> None:
         await asyncio.sleep(SCHEDULED_SEND_INTERVAL_SEC)
 
 
+async def _settings_jobs_loop() -> None:
+    """Batch 6 housekeeping, forever: clear statuses past their expiry (the
+    audience hears `profile_updated`) and finish forgot-PIN cooldowns."""
+    while True:
+        try:
+            redis = await get_redis()
+            got_lock = await redis.set(
+                settings_jobs_lock_key(), "1", nx=True, ex=DISAPPEAR_PURGE_INTERVAL_SEC - 5
+            )
+            if got_lock:
+                async with SessionLocal() as db:
+                    expired = await StatusService.expire(db)
+                    pins_cleared = await PinService.complete_resets(db)
+                    await db.commit()
+                    for uid in expired:
+                        await StatusService.publish(uid, db)
+                if expired:
+                    logger.info("cleared %d expired statuses", len(expired))
+                if pins_cleared:
+                    logger.info("completed %d PIN resets", len(pins_cleared))
+        except Exception:
+            logger.exception("settings_jobs failed")
+        await asyncio.sleep(DISAPPEAR_PURGE_INTERVAL_SEC)
+
+
 def verify_boot_secrets(s=settings) -> None:
     """Refuse to boot outside local with placeholder or malformed secrets.
 
@@ -204,11 +233,13 @@ async def lifespan(_: FastAPI):
     verify_boot_secrets()
     purge_task = asyncio.create_task(_purge_expired_loop())
     scheduled_task = asyncio.create_task(_scheduled_send_loop())
+    settings_task = asyncio.create_task(_settings_jobs_loop())
     # Pumps Redis pub/sub → this instance's sockets (multi-worker fanout).
     subscriber_task = asyncio.create_task(ws_manager.run_subscriber())
     yield
     purge_task.cancel()
     scheduled_task.cancel()
+    settings_task.cancel()
     subscriber_task.cancel()
     await close_redis()
 
@@ -238,6 +269,8 @@ app.include_router(people.router, prefix=ApiPrefix.PEOPLE, tags=["people"])
 app.include_router(groups.router, prefix=ApiPrefix.GROUPS, tags=["groups"])
 app.include_router(billing.router, prefix=ApiPrefix.BILLING, tags=["billing"])
 app.include_router(links.router, prefix=ApiPrefix.LINKS, tags=["links"])
+app.include_router(audit.router, prefix=ApiPrefix.AUDIT, tags=["audit"])
+app.include_router(app_meta.router, prefix=ApiPrefix.APP, tags=["app"])
 app.include_router(
     notifications.router, prefix=ApiPrefix.NOTIFICATIONS, tags=["notifications"]
 )

@@ -10,6 +10,13 @@ Apple/Google unencrypted-to-us). Data carries only the conversation UUID for
 deep-linking; collapse key dedupes per conversation. Mentions (batch 4) send
 "<sender> mentioned you in <group>" to the people named INSTEAD of the generic
 banner — still names only.
+
+Batch 6: each recipient's notification settings pick `aps.sound`
+("default" / "<tone>.caf" / silent), the Android channel (messages / groups /
+invitations) and priority; a per-chat `conversation_prefs.custom_tone` wins;
+reaction pushes are dropped when the recipient turned them off; mention pushes
+bypass the chat mute but honour the tone. "New sign-in on <device>" goes to the
+user's own devices — a device model is not PHI.
 """
 
 from __future__ import annotations
@@ -32,12 +39,16 @@ from app.core.config import settings
 from app.core.constants import (
     PUSH_BODY_MENTION_FALLBACK,
     PUSH_BODY_NEW_MESSAGE,
+    PUSH_BODY_NEW_SIGN_IN_FALLBACK,
+    PUSH_CHANNEL_INVITATIONS,
+    PUSH_CHANNEL_MESSAGES,
     PUSH_TITLE,
 )
 from app.db.postgres import SessionLocal
-from app.models import Conversation, DeviceToken, User
+from app.models import Conversation, ConversationPref, DeviceToken, User
 from app.services.conversation_prefs_service import ConversationPrefsService
 from app.services.message_service import MessageService
+from app.services.notification_settings_service import NotificationSettingsService, PushPrefs
 
 log = logging.getLogger("doqto.push")
 
@@ -50,22 +61,37 @@ PUSH_TTL_SECONDS = 28 * 24 * 3600
 def fcm_message(
     *, token: str, title: str, body: str, data: dict[str, str], collapse_key: str,
     now: float | None = None, badge: int | None = None,
+    sound: str | None = "default", channel_id: str | None = None,
+    high_priority: bool = True,
 ) -> dict:
     """FCM HTTP v1 message. Pure, so the delivery contract is testable.
-    `badge` is the recipient's total unread (not content) → `aps.badge`."""
+    `badge` is the recipient's total unread (not content) → `aps.badge`.
+    `sound` is "default", "<tone>.caf" or None (silent); `channel_id` is the
+    Android notification channel; `high_priority=False` lets Android defer."""
     now = time.time() if now is None else now
-    aps: dict = {"sound": "default"}
+    aps: dict = {}
+    if sound is not None:
+        aps["sound"] = sound
     if badge is not None:
         aps["badge"] = badge
+    android: dict = {
+        "collapse_key": collapse_key,
+        "priority": "high" if high_priority else "normal",
+        "ttl": f"{PUSH_TTL_SECONDS}s",
+    }
+    android_notification: dict = {}
+    if channel_id:
+        android_notification["channel_id"] = channel_id
+    if sound is not None:
+        # Android plays the raw resource of the same name ("default" = system).
+        android_notification["sound"] = sound.removesuffix(".caf")
+    if android_notification:
+        android["notification"] = android_notification
     return {
         "token": token,
         "notification": {"title": title, "body": body},
         "data": data,
-        "android": {
-            "collapse_key": collapse_key,
-            "priority": "high",
-            "ttl": f"{PUSH_TTL_SECONDS}s",
-        },
+        "android": android,
         "apns": {
             "headers": {
                 "apns-collapse-id": collapse_key,
@@ -97,6 +123,13 @@ def mention_body(actor_name: str | None, group_name: str | None) -> str:
     return f"{actor_name} mentioned you"
 
 
+def new_sign_in_body(device_name: str | None) -> str:
+    """'New sign-in on iPhone 16 Pro' — a device model is not PHI (batch 6)."""
+    if not device_name:
+        return PUSH_BODY_NEW_SIGN_IN_FALLBACK
+    return f"New sign-in on {device_name}"
+
+
 def new_message_body(sender_name: str | None, unread: int) -> str:
     """Sender name is directory data, not PHI; the count is not content."""
     if not sender_name:
@@ -126,6 +159,9 @@ class PushSender(Protocol):
         data: dict[str, str],
         collapse_key: str,
         badge: int | None = None,
+        sound: str | None = "default",
+        channel_id: str | None = None,
+        high_priority: bool = True,
     ) -> PushResult:
         """Deliver one push and say what happened."""
         ...
@@ -143,8 +179,14 @@ class DevLogPushSender:
         data: dict[str, str],
         collapse_key: str,
         badge: int | None = None,
+        sound: str | None = "default",
+        channel_id: str | None = None,
+        high_priority: bool = True,
     ) -> PushResult:
-        log.info("[FAKE PUSH] %s → %s / %s %s badge=%s", token[:12], title, body, data, badge)
+        log.info(
+            "[FAKE PUSH] %s → %s / %s %s badge=%s sound=%s channel=%s",
+            token[:12], title, body, data, badge, sound, channel_id,
+        )
         return PushResult.SENT
 
 
@@ -182,9 +224,13 @@ class FcmPushSender:
         data: dict[str, str],
         collapse_key: str,
         badge: int | None = None,
+        sound: str | None = "default",
+        channel_id: str | None = None,
+        high_priority: bool = True,
     ) -> PushResult:
         message = fcm_message(
-            token=token, title=title, body=body, data=data, collapse_key=collapse_key, badge=badge
+            token=token, title=title, body=body, data=data, collapse_key=collapse_key, badge=badge,
+            sound=sound, channel_id=channel_id, high_priority=high_priority,
         )
         bearer = await asyncio.to_thread(self._bearer)
         async with httpx.AsyncClient(timeout=10) as client:
@@ -304,12 +350,17 @@ class PushService:
         for uid in mentioned_ids:
             if uid == sender_id:
                 continue
+            # Mute is bypassed on purpose; the tone / channel still apply.
+            prefs = await PushService._prefs_for(
+                recipient_id=uid, conversation_id=conversation_id, conv=conv
+            )
             await PushService._dispatch_simple(
                 recipient_id=uid,
                 title=PUSH_TITLE,
                 body=body,
                 data={"type": "mention", "conversation_id": str(conversation_id)},
                 collapse_key=str(conversation_id),
+                prefs=prefs,
             )
 
     @staticmethod
@@ -347,16 +398,24 @@ class PushService:
                 ):
                     log.info("push muted user=%s conv=%s (reaction)", author_id, conversation_id)
                     return
+                conv = await db.get(Conversation, conversation_id)
+                prefs = await PushService._prefs_for(
+                    recipient_id=author_id, conversation_id=conversation_id, conv=conv, db=db
+                )
+                if not prefs.reaction_notifications:
+                    log.info("push off user=%s (reaction notifications)", author_id)
+                    return
                 name = await db.scalar(select(User.full_name).where(User.id == actor_id))
         except Exception:  # noqa: BLE001
             log.exception("reaction push name lookup failed")
-            name = None
+            name, prefs = None, None
         await PushService._dispatch_simple(
             recipient_id=author_id,
             title=PUSH_TITLE,
             body=reaction_body(name, emoji),
             data={"type": "reaction", "conversation_id": str(conversation_id)},
             collapse_key=f"reaction:{conversation_id}",
+            prefs=prefs,
         )
 
     @staticmethod
@@ -377,6 +436,7 @@ class PushService:
                 body=group_invite_body(actor_name, group_name),
                 data={"type": "group_invite", "group_id": str(group_id)},
                 collapse_key=f"group_invite:{group_id}",
+                channel_id=PUSH_CHANNEL_INVITATIONS,
             )
         )
 
@@ -392,6 +452,7 @@ class PushService:
                 body=f"{actor_name} wants to connect",
                 data={"type": "invitation_received", "invitation_id": str(invitation_id)},
                 collapse_key=f"invite:{invitation_id}",
+                channel_id=PUSH_CHANNEL_INVITATIONS,
             )
         )
 
@@ -406,6 +467,7 @@ class PushService:
                 body=f"{actor_name} accepted your connection request",
                 data={"type": "invitation_accepted"},
                 collapse_key=f"accept:{recipient_id}",
+                channel_id=PUSH_CHANNEL_INVITATIONS,
             )
         )
 
@@ -420,8 +482,57 @@ class PushService:
                 body=f"{actor_name} joined from your invite. You're connected.",
                 data={"type": "invite_joined", "user_id": str(user_id or "")},
                 collapse_key=f"joined:{user_id}",
+                channel_id=PUSH_CHANNEL_INVITATIONS,
             )
         )
+
+    @staticmethod
+    def notify_new_sign_in(
+        *, recipient_id: uuid.UUID, device_name: str | None, session_id: uuid.UUID
+    ) -> None:
+        """'New sign-in on iPhone 16 Pro' to the user's own devices (batch 6).
+        A device model is not PHI. The new device itself usually has no push
+        token yet, and ignores the event by session_id if it does."""
+        asyncio.create_task(
+            PushService._dispatch_simple(
+                recipient_id=recipient_id,
+                title=PUSH_TITLE,
+                body=new_sign_in_body(device_name),
+                data={"type": "new_sign_in", "session_id": str(session_id)},
+                collapse_key=f"signin:{session_id}",
+                channel_id=PUSH_CHANNEL_INVITATIONS,
+            )
+        )
+
+    @staticmethod
+    async def _prefs_for(
+        *,
+        recipient_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        conv: Conversation | None,
+        db: AsyncSession | None = None,
+        pref: ConversationPref | None = None,
+    ) -> PushPrefs:
+        """Sound / channel / priority for one recipient of one chat: the
+        per-chat custom tone wins over the global messages / groups tone."""
+
+        async def _load(session: AsyncSession) -> PushPrefs:
+            row = pref
+            if row is None:
+                row = await ConversationPrefsService.get(
+                    conversation_id=conversation_id, user_id=recipient_id, db=session
+                )
+            return await NotificationSettingsService.push_prefs(
+                user_id=recipient_id,
+                conv_type=conv.type if conv is not None else None,
+                custom_tone=row.custom_tone if row is not None else None,
+                db=session,
+            )
+
+        if db is not None:
+            return await _load(db)
+        async with SessionLocal() as session:
+            return await _load(session)
 
     @staticmethod
     async def _silenced(
@@ -449,9 +560,16 @@ class PushService:
         body: str,
         data: dict[str, str],
         collapse_key: str,
+        prefs: PushPrefs | None = None,
+        channel_id: str = PUSH_CHANNEL_MESSAGES,
     ) -> None:
         """Single-recipient push (fire-and-forget). Carries the recipient's
-        unread total as the icon badge — a number, never content."""
+        unread total as the icon badge — a number, never content. `prefs`
+        (tone / channel / priority) wins over the bare `channel_id`."""
+        sound: str | None = "default"
+        high_priority = True
+        if prefs is not None:
+            sound, channel_id, high_priority = prefs.sound, prefs.channel_id, prefs.high_priority
         try:
             sender = _sender()
             async with SessionLocal() as db:
@@ -471,6 +589,9 @@ class PushService:
                         data=data,
                         collapse_key=collapse_key,
                         badge=badge,
+                        sound=sound,
+                        channel_id=channel_id,
+                        high_priority=high_priority,
                     )
                     log.info("push %s user=%s platform=%s", result.value, recipient_id, row.platform)
                     if result is PushResult.DEAD:
@@ -504,11 +625,17 @@ class PushService:
                         continue
                     # Muted chat, or a muted person (batch 3 / M1): no banner.
                     # The message still arrives over WS and in the list.
-                    if await PushService._silenced(
-                        recipient_id=uid, actor_id=sender_id, conversation_id=conversation_id, db=db
+                    pref = await ConversationPrefsService.get(
+                        conversation_id=conversation_id, user_id=uid, db=db
+                    )
+                    if ConversationPrefsService.is_muted(pref) or sender_id in (
+                        await ConversationPrefsService.muted_user_ids(user_id=uid, db=db)
                     ):
                         log.info("push muted user=%s conv=%s", uid, conversation_id)
                         continue
+                    prefs = await PushService._prefs_for(
+                        recipient_id=uid, conversation_id=conversation_id, conv=conv, db=db, pref=pref
+                    )
                     # The banner collapses per conversation, so it carries the
                     # unread count: eight messages read "8 new messages", not
                     # one indistinguishable banner.
@@ -536,6 +663,9 @@ class PushService:
                             data=data,
                             collapse_key=str(conversation_id),
                             badge=badge,
+                            sound=prefs.sound,
+                            channel_id=prefs.channel_id,
+                            high_priority=prefs.high_priority,
                         )
                         log.info(
                             "push %s user=%s platform=%s conv=%s",

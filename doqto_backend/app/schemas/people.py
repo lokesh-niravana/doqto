@@ -12,9 +12,12 @@ purely client-facing display badge. See docs/enums.md note.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
+
+from app.core.enums import StatusPreset
 
 DegreeLabel = Literal["1st", "2nd", "3rd", "out"]
 # "blocked" is only ever returned to the BLOCKER (the blocked party gets 404).
@@ -78,6 +81,10 @@ class PublicProfileOut(BaseModel):
     degree: DegreeLabel
     connection_state: ConnectionState
     mutual_count: int = 0
+    # Status under the name (batch 6): preset wire value or custom text.
+    status_preset: StatusPreset | None = None
+    status_text: str | None = None
+    status_expires_at: datetime | None = None
     can_message: CanMessage
     context_label: str | None = None
     # True when viewer and target share an organization. `can_message: open`

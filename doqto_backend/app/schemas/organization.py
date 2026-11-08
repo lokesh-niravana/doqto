@@ -95,6 +95,8 @@ class OrgNetworkingSettingsIn(BaseModel):
     allow_copy: bool | None = None
     # Batch 5: Save to Photos / share sheet for media in org chats.
     allow_media_export: bool | None = None
+    # Batch 6: Android FLAG_SECURE in org chats (iOS only audits screenshots).
+    block_screenshots: bool | None = None
 
 
 class OrgNetworkingSettingsOut(ORMModel):

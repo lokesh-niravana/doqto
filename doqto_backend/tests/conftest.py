@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import os
 
-TEST_DATABASE_URL = "postgresql+asyncpg://doqto:doqto@localhost:5432/doqto_test"
+TEST_DB_NAME = os.environ.get("DOQTO_TEST_DB", "doqto_test")
+TEST_DATABASE_URL = f"postgresql+asyncpg://doqto:doqto@localhost:5432/{TEST_DB_NAME}"
 # Env vars beat .env in pydantic-settings — repoint the whole app at test infra.
 # ENVIRONMENT must be explicit: the code default is the fail-safe "production".
 os.environ["ENVIRONMENT"] = "local"
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
-os.environ["REDIS_URL"] = "redis://:doqto-dev@localhost:6379/1"
+os.environ["REDIS_URL"] = os.environ.get("DOQTO_TEST_REDIS_URL", "redis://:doqto-dev@localhost:6379/1")
 
 import asyncio  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
@@ -58,10 +59,10 @@ def _test_database():
             user="doqto", password="doqto", database="doqto", host="localhost", port=5432
         )
         exists = await conn.fetchval(
-            "SELECT 1 FROM pg_database WHERE datname = 'doqto_test'"
+            f"SELECT 1 FROM pg_database WHERE datname = '{TEST_DB_NAME}'"
         )
         if not exists:
-            await conn.execute("CREATE DATABASE doqto_test")
+            await conn.execute(f"CREATE DATABASE {TEST_DB_NAME}")
         await conn.close()
 
         engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)

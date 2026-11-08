@@ -275,9 +275,14 @@ void main() {
     // ---- 9. Read-by: peer reads the thread → Message info lists them under Read by.
     await _rest('POST', '/conversations/$convId/read');
     await _settle(tester, 800);
+    // Since batch 4 a long-press opens the context sheet (not selection mode);
+    // "Message info" is the `ctx-info` row there.
     await tester.longPress(find.text(text));
-    await _until(tester, 'selection with info', () => _has(find.byKey(const ValueKey('select-info'))));
-    await tester.tap(find.byKey(const ValueKey('select-info')));
+    await _until(tester, 'context menu with info', () => _has(find.byKey(const ValueKey('ctx-info'))));
+    await _settle(tester, 500); // let the sheet finish sliding in
+    await tester.ensureVisible(find.byKey(const ValueKey('ctx-info')));
+    await _settle(tester, 300);
+    await tester.tap(find.byKey(const ValueKey('ctx-info')));
     await _until(tester, 'receipts sheet', () => _has(find.byKey(ValueKey('receipt-$_peer'))));
     await _settle(tester, 800);
     expect(find.text('${Strings.groupReadBy} · 1'), findsOneWidget);

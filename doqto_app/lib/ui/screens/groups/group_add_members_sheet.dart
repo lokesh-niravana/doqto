@@ -7,6 +7,7 @@ import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../data/models/group.dart';
+import '../../../data/models/organization.dart';
 import '../../../state/auth_state.dart';
 import '../../../state/groups_state.dart';
 import '../../../state/network_state.dart';
@@ -107,7 +108,7 @@ class _AddMembersSheetState extends ConsumerState<_AddMembersSheet> {
           ),
     ];
     final seen = {for (final p in people) p.id};
-    for (final m in membersAsync?.value ?? const []) {
+    for (final OrgMember m in membersAsync?.value ?? const <OrgMember>[]) {
       if (skip.contains(m.id) || seen.contains(m.id)) continue;
       people.add((
         id: m.id,

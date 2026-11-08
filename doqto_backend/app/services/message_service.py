@@ -485,9 +485,23 @@ class MessageService:
             reply_to_id=reply_to_id,
             mentions=mentions or None,
         )
-        db.add(msg)
         conv.updated_at = datetime.now(tz=timezone.utc)
-        await db.flush()
+        try:
+            async with db.begin_nested():
+                db.add(msg)
+                await db.flush()
+        except IntegrityError:
+            # Lost a concurrent-retry race on (conversation_id, client_id):
+            # the first copy is committed by now — hand it back, as a later
+            # retry would have been. Anything else is a genuine failure.
+            if client_id is None:
+                raise
+            existing = await MessageService.find_by_client_id(
+                conversation_id=conversation_id, client_id=client_id, db=db
+            )
+            if existing is None:
+                raise
+            return existing
         await AuditService.log(
             db,
             user_id=sender_id,

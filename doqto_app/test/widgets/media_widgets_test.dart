@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:doqto_app/core/chat_theme.dart';
 import 'package:doqto_app/core/constants/strings.dart';
 import 'package:doqto_app/core/di/providers.dart';
 import 'package:doqto_app/core/utils/waveform.dart';
@@ -604,5 +605,55 @@ void main() {
     final w = Uint8List.fromList([1, 2, 3]);
     final b = VoiceNoteBubble(messageId: 'x', conversationId: 'c', durationSec: 1, transcript: null, isMine: true, timestamp: DateTime(2026), waveform: w);
     expect(b.waveform, w);
+  });
+
+  group('chat theme on media bubbles (batch 6 dark palette)', () {
+    // Received voice/document bubbles used to be hard-coded white, which left
+    // their dark-palette text unreadable. They follow ChatThemeScope now.
+    const dark = ChatThemeData(theme: ChatTheme.teal, dark: true);
+
+    Color? bubbleBg(WidgetTester t, Type root) {
+      for (final c in t.widgetList<Container>(find.descendant(of: find.byType(root), matching: find.byType(Container)))) {
+        final d = c.decoration;
+        if (d is BoxDecoration && d.color != null && d.borderRadius != null) return d.color;
+      }
+      return null;
+    }
+
+    testWidgets('received voice note takes the themed received colour', (tester) async {
+      final wave = Waveform.encode([for (var i = 0; i < 16; i++) i / 16]);
+      await tester.pumpWidget(app(ChatThemeScope(
+        data: dark,
+        child: VoiceNoteBubble(
+          messageId: 'vd', conversationId: 'c1', durationSec: 3, transcript: null,
+          waveform: wave, isMine: false, timestamp: DateTime(2026, 11, 8, 10), resolve: null,
+        ),
+      )));
+      expect(dark.receivedBg, isNot(const Color(0xFFFFFFFF)), reason: 'precondition');
+      expect(bubbleBg(tester, VoiceNoteBubble), dark.receivedBg);
+    });
+
+    testWidgets('received document takes the themed received colour and foreground', (tester) async {
+      await tester.pumpWidget(app(ChatThemeScope(
+        data: dark,
+        child: FileBubble(
+          getFileUrl: null, fileName: 'discharge.pdf', fileSizeBytes: 598,
+          isMine: false, timestamp: DateTime(2026, 11, 8, 10),
+        ),
+      )));
+      expect(bubbleBg(tester, FileBubble), dark.receivedBg);
+      final name = tester.widget<Text>(find.text('discharge.pdf'));
+      expect(name.style?.color, dark.receivedFg);
+    });
+
+    testWidgets('sent document follows the sent colour of the theme', (tester) async {
+      await tester.pumpWidget(app(ChatThemeScope(
+        data: dark,
+        child: FileBubble(
+          getFileUrl: null, fileName: 'mine.pdf', isMine: true, timestamp: DateTime(2026, 11, 8, 10),
+        ),
+      )));
+      expect(bubbleBg(tester, FileBubble), dark.sentBg);
+    });
   });
 }

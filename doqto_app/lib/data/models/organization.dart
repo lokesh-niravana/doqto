@@ -1,4 +1,5 @@
 import '../../core/enums/app_enums.dart';
+import 'network_profile.dart' show avatarIndexFrom;
 
 /// Org policies (batch 4 + batch 7), defaults mirrored from
 /// `ORG_POLICY_DEFAULTS` on the server. `GET /orgs/{id}/policies` returns
@@ -195,6 +196,9 @@ class OrgMember {
         avatarUrl: j['avatar_url'] as String?,
         avatarPresignedUrl: j['avatar_presigned_url'] as String?,
       );
+
+  /// Avatar palette slot, same rule as every other person model.
+  int get avatarIndex => avatarIndexFrom(avatarColor, id);
 
   String get initials {
     final parts = fullName.trim().split(RegExp(r'\s+'));

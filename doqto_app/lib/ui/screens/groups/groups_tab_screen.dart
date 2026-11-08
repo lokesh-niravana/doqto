@@ -94,12 +94,15 @@ class _GroupRow extends ConsumerWidget {
 
   Future<void> _accept(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
+    // The row moves from "Invited" to the member list as soon as the
+    // optimistic state flips, so this context is dead after the await.
+    final router = GoRouter.maybeOf(context); // null in widget tests
     try {
       await ref.read(myGroupsProvider.notifier).acceptInvite(group);
       messenger.showSnackBar(
         const SnackBar(content: Text(Strings.groupJoinedToast)),
       );
-      if (context.mounted) context.push(AppRoutes.group(group.id));
+      router?.push(AppRoutes.group(group.id));
     } catch (e) {
       messenger.showSnackBar(SnackBar(
         content: Text(ErrorMessages.forApi(e)),

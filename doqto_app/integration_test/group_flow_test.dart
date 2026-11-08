@@ -24,6 +24,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
+import 'package:doqto_app/core/constants/api_routes.dart';
 import 'package:doqto_app/core/constants/app_constants.dart';
 import 'package:doqto_app/core/di/providers.dart';
 import 'package:doqto_app/core/router/app_router.dart';
@@ -59,6 +60,11 @@ Future<void> _until(WidgetTester t, String what, bool Function() ready) async {
   final start = DateTime.now();
   while (!ready()) {
     if (DateTime.now().difference(start) > _liveTimeout) {
+      // Leave evidence: a screenshot plus every visible string.
+      await _shot(t, 'FAIL_${what.replaceAll(' ', '_')}');
+      final texts = find.byType(Text).evaluate().map((e) => (e.widget as Text).data ?? '').where((s) => s.isNotEmpty).toSet();
+      // ignore: avoid_print
+      print('FAIL-TEXTS ${texts.join(' | ')}');
       fail('not within $_liveTimeout: $what');
     }
     await t.pump(const Duration(milliseconds: 100));
@@ -163,7 +169,7 @@ void main() {
     await _settle(tester, 800);
     expect(find.textContaining('permission'), findsNothing,
         reason: 'an invitee must not see a 403 on Group info');
-    expect(find.text('1 member'), findsOneWidget);
+    expect(find.text('1 member'), findsWidgets); // header + members section
     await _shot(tester, '01_invitee_group_info');
 
     // Accept → the chat opens for me; everyone sees "<me> joined the group".
@@ -199,7 +205,10 @@ void main() {
     final g2Conv = g2.conversationId;
 
     router.push(AppRoutes.groupInfo(g2Id));
-    await _until(tester, 'owner group info', () => _has(find.byKey(const ValueKey('members-add'))));
+    // The members section sits below the fold of a lazy list: wait for the
+    // header, then scroll the Add button into view.
+    await _until(tester, 'owner group info', () => _has(find.text('Doqto Test $stamp')));
+    await _settle(tester, 600);
     await _reveal(tester, const ValueKey('members-add'));
     await tester.tap(find.byKey(const ValueKey('members-add')));
     await _until(tester, 'add members sheet', () => _has(find.byKey(const ValueKey('add-members-search'))));
@@ -216,6 +225,8 @@ void main() {
     expect(inviteId, isNotNull, reason: 'the add sheet sends a direct invite');
     await _rest('GET', '/groups/$g2Id/members', status: 403); // invitee: no list yet
     await _rest('POST', '/groups/$g2Id/invites/$inviteId/accept');
+    await _settle(tester, 600);
+    await _reveal(tester, const ValueKey('members-add'));
     await _until(tester, 'peer appears in the member list live',
         () => _has(find.byKey(ValueKey('member-$_peer'))));
     await _settle(tester, 600);
@@ -230,11 +241,15 @@ void main() {
 
     // Remove the peer from the member actions sheet → "removed by" banner.
     router.push(AppRoutes.groupInfo(g2Id));
+    await _until(tester, 'group info again', () => _has(find.byKey(const ValueKey('group-info-list'))));
+    await _settle(tester, 600);
     await _reveal(tester, ValueKey('member-$_peer'));
     await tester.tap(find.byKey(ValueKey('member-$_peer')));
     await _until(tester, 'member actions', () => _has(find.byKey(const ValueKey('member-action-remove'))));
+    await _settle(tester, 500);
     await tester.tap(find.byKey(const ValueKey('member-action-remove')));
     await _until(tester, 'remove confirm', () => _has(find.byKey(const ValueKey('confirm-action'))));
+    await _settle(tester, 400);
     await tester.tap(find.byKey(const ValueKey('confirm-action')));
     await _until(tester, 'peer gone from the list', () => !_has(find.byKey(ValueKey('member-$_peer'))));
     await _rest('GET', '/groups/$g2Id', status: 404); // removed: undiscoverable again
@@ -246,9 +261,12 @@ void main() {
 
     // Invite link → the peer joins by link → "joined the group" again.
     router.push(AppRoutes.groupInfo(g2Id));
+    await _until(tester, 'group info for links', () => _has(find.byKey(const ValueKey('group-info-list'))));
+    await _settle(tester, 600);
     await _reveal(tester, const ValueKey('link-create'));
     await tester.tap(find.byKey(const ValueKey('link-create')));
     await _until(tester, 'create link sheet', () => _has(find.byKey(const ValueKey('link-create-confirm'))));
+    await _settle(tester, 500); // let the sheet finish sliding up
     await tester.tap(find.byKey(const ValueKey('link-create-confirm')));
     await _until(tester, 'link listed', () => _has(find.textContaining('doqto:///g/')));
     final invites = (await repo.listInvites(g2Id));
@@ -283,9 +301,10 @@ void main() {
 /// The owner's own view of the banners (the peer is no longer a member).
 Future<List<String>> _bannersAsMe(ProviderContainer c, String convId) async {
   final api = c.read(apiClientProvider);
-  final j = await api.getList('/conversations/$convId/messages');
+  final j = await api.getList(ApiRoutes.conversationMessages(convId));
+  // The page comes newest first; return oldest first like the thread.
   return [
-    for (final m in j.cast<Map<String, dynamic>>())
+    for (final m in j.cast<Map<String, dynamic>>().reversed)
       if (m['type'] == 'system') (m['content'] as String? ?? ''),
   ];
 }

@@ -163,6 +163,7 @@ void main() {
     // ---- 3. Tap my 👍 again → removed (toggle).
     await tester.longPress(find.text(text));
     await _until(tester, 'tray again', () => find.byKey(const ValueKey('reaction-tray')).evaluate().isNotEmpty);
+    await _settle(tester, 500); // the sheet is still sliding in when the key appears
     await tester.tap(find.byKey(const ValueKey('reaction-pick-👍')));
     await _until(tester, 'my 👍 removed', () => mineOnScreen().isEmpty);
     await _settle(tester, 800);
@@ -171,6 +172,7 @@ void main() {
     // ---- 4. "+" → picker → search → 🔥.
     await tester.longPress(find.text(text));
     await _until(tester, 'tray for picker', () => find.byKey(const ValueKey('reaction-more')).evaluate().isNotEmpty);
+    await _settle(tester, 500);
     await tester.tap(find.byKey(const ValueKey('reaction-more')));
     await _until(tester, 'picker open', () => find.byKey(const ValueKey('emoji-search')).evaluate().isNotEmpty);
     await _settle(tester, 800);
@@ -189,6 +191,7 @@ void main() {
     // ---- 5. Tray shows my custom reaction selected.
     await tester.longPress(find.text(text));
     await _until(tester, 'tray shows 🔥 slot', () => find.byKey(const ValueKey('reaction-pick-🔥')).evaluate().isNotEmpty);
+    await _settle(tester, 500);
     // The tray lives in the long-press sheet since batch 4: dismiss via the barrier.
     await tester.tapAt(const Offset(20, 80));
     await _until(tester, 'sheet closed', () => find.byKey(const ValueKey('message-context-menu')).evaluate().isEmpty);

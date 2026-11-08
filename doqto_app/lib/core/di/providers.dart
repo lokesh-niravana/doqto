@@ -40,7 +40,11 @@ final networkUsageProvider = ChangeNotifierProvider<NetworkUsage>(
 final apiClientProvider = Provider<ApiClient>(
   (ref) => ApiClient(
     tokens: ref.watch(tokenStorageProvider),
-    usage: ref.watch(networkUsageProvider),
+    // `.notifier`, never the value: the counter notifies on every byte, and
+    // watching the value would rebuild the client, every repository and
+    // everything downstream (outbox drainer, socket session…) per request —
+    // duplicate client_id sends were the visible symptom.
+    usage: ref.watch(networkUsageProvider.notifier),
   ),
 );
 

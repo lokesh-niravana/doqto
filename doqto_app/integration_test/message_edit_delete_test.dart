@@ -29,6 +29,21 @@ Future<void> _settle(WidgetTester t, [int ms = 1500]) async {
   }
 }
 
+/// Long-press → the batch-4 context sheet. The key appears while the sheet is
+/// still sliding in, so settle before anything in it is tapped.
+Future<void> _openMenu(WidgetTester t, Finder bubbleText) async {
+  await t.longPress(bubbleText);
+  await _settle(t, 800);
+  expect(find.byKey(const ValueKey('message-context-menu')), findsOneWidget);
+}
+
+Future<void> _pick(WidgetTester t, String key) async {
+  await t.ensureVisible(find.byKey(ValueKey(key)));
+  await _settle(t, 300);
+  await t.tap(find.byKey(ValueKey(key)));
+  await _settle(t, 800);
+}
+
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   // A route pushed mid-press (the long-press sheet) makes Navigator cancel the
@@ -67,12 +82,10 @@ void main() {
     await _settle(tester, 2500);
     expect(find.text(unique), findsOneWidget);
 
-    // Edit: long-press selects → pencil in the selection bar
-    await tester.longPress(find.text(unique));
-    await _settle(tester);
-    expect(find.byKey(const ValueKey('select-edit')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('select-edit')));
-    await _settle(tester);
+    // Edit: long-press opens the context sheet (batch 4) → "Edit" row
+    await _openMenu(tester, find.text(unique));
+    expect(find.byKey(const ValueKey('ctx-edit')), findsOneWidget);
+    await _pick(tester, 'ctx-edit');
     expect(find.text(Strings.chatEditingMessage), findsOneWidget);
     // Focus the composer by tapping it (as a user would) before typing; the
     // harness's implicit focus request can race the field's own refocus.
@@ -104,10 +117,8 @@ void main() {
     expect(find.text(Strings.chatEditHistory), findsNothing);
 
     // Delete for everyone (own, < 3 min) → tombstone
-    await tester.longPress(find.text('$unique edited'));
-    await _settle(tester);
-    await tester.tap(find.byKey(const ValueKey('select-delete')));
-    await _settle(tester);
+    await _openMenu(tester, find.text('$unique edited'));
+    await _pick(tester, 'ctx-delete');
     expect(find.byKey(const ValueKey('delete-for-everyone')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('delete-for-everyone')));
     await _settle(tester, 2500);
@@ -118,11 +129,9 @@ void main() {
     // no "everyone" option, no pencil); both vanish from MY view.
     final tombs = find.text(Strings.chatMessageDeleted);
     final tombCount = tester.widgetList(tombs).length;
-    await tester.longPress(tombs.first);
-    await _settle(tester);
-    expect(find.byKey(const ValueKey('select-edit')), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('select-delete')));
-    await _settle(tester);
+    await _openMenu(tester, tombs.first);
+    expect(find.byKey(const ValueKey('ctx-edit')), findsNothing);
+    await _pick(tester, 'ctx-delete');
     expect(find.byKey(const ValueKey('delete-for-everyone')), findsNothing);
     await tester.tap(find.byKey(const ValueKey('delete-for-me')));
     await _settle(tester, 2500);

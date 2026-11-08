@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/chat_theme.dart';
 import '../../core/constants/strings.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/radii.dart';
@@ -38,10 +39,11 @@ class BubbleFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final sentFg = ChatThemeScope.of(context).sentFg;
     final timeColor = onMedia
         ? AppColors.white
         : isMine
-            ? AppColors.white.withValues(alpha: 0.55)
+            ? sentFg.withValues(alpha: 0.55)
             : AppColors.textMuted;
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -56,7 +58,7 @@ class BubbleFooter extends StatelessWidget {
             status: status,
             read: read,
             delivered: delivered,
-            idleColor: onMedia ? AppColors.white : AppColors.white.withValues(alpha: 0.55),
+            idleColor: onMedia ? AppColors.white : sentFg.withValues(alpha: 0.55),
           ),
         ],
       ],
@@ -181,11 +183,17 @@ Widget _frame(BuildContext context, {required bool isMine, required Widget bubbl
   );
 }
 
-BoxDecoration _mediaDecoration(bool isMine) => BoxDecoration(
-      color: isMine ? AppColors.medBlue : AppColors.white,
-      borderRadius: isMine ? AppRadii.bubbleSent : AppRadii.bubbleReceived,
-      border: isMine ? null : Border.all(color: AppColors.gray100),
-    );
+/// Bubble chrome from the thread's chat theme (batch 6), like MessageBubble —
+/// a hard-coded white received bubble was unreadable under the dark palette.
+BoxDecoration _mediaDecoration(BuildContext context, bool isMine) {
+  final chatTheme = ChatThemeScope.of(context);
+  final border = chatTheme.receivedBorder;
+  return BoxDecoration(
+    color: isMine ? chatTheme.sentBg : chatTheme.receivedBg,
+    borderRadius: isMine ? AppRadii.bubbleSent : AppRadii.bubbleReceived,
+    border: isMine || border == null ? null : Border.all(color: border),
+  );
+}
 
 String fileSizeLabel(int? b) {
   if (b == null) return '';
@@ -365,7 +373,7 @@ class _ImageBubbleState extends ConsumerState<ImageBubble> {
     final bubble = Container(
       constraints: BoxConstraints(maxWidth: maxW),
       padding: const EdgeInsets.all(4),
-      decoration: _mediaDecoration(widget.isMine),
+      decoration: _mediaDecoration(context, widget.isMine),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
@@ -415,7 +423,7 @@ class PendingImageBubble extends StatelessWidget {
     final bubble = Container(
       constraints: BoxConstraints(maxWidth: maxW),
       padding: const EdgeInsets.all(4),
-      decoration: _mediaDecoration(isMine),
+      decoration: _mediaDecoration(context, isMine),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
@@ -531,7 +539,7 @@ class _VideoBubbleState extends ConsumerState<VideoBubble> {
     final bubble = Container(
       constraints: BoxConstraints(maxWidth: maxW),
       padding: const EdgeInsets.all(4),
-      decoration: _mediaDecoration(widget.isMine),
+      decoration: _mediaDecoration(context, widget.isMine),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
@@ -643,7 +651,7 @@ class PendingVideoBubble extends StatelessWidget {
     final bubble = Container(
       constraints: BoxConstraints(maxWidth: maxW),
       padding: const EdgeInsets.all(4),
-      decoration: _mediaDecoration(isMine),
+      decoration: _mediaDecoration(context, isMine),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
@@ -766,7 +774,8 @@ class _FileBubbleState extends ConsumerState<FileBubble> {
 
   @override
   Widget build(BuildContext context) {
-    final fg = widget.isMine ? AppColors.white : AppColors.textPrimary;
+    final chatTheme = ChatThemeScope.of(context);
+    final fg = widget.isMine ? chatTheme.sentFg : chatTheme.receivedFg;
     final sizeLabel = fileSizeLabel(widget.fileSizeBytes);
     final sending = widget.status == MessageStatus.sending;
     final bubble = AppPressable(
@@ -774,7 +783,7 @@ class _FileBubbleState extends ConsumerState<FileBubble> {
       child: Container(
         constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.72),
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm + 2),
-        decoration: _mediaDecoration(widget.isMine),
+        decoration: _mediaDecoration(context, widget.isMine),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           mainAxisSize: MainAxisSize.min,
@@ -809,7 +818,7 @@ class _FileBubbleState extends ConsumerState<FileBubble> {
                               ? '${(widget.progress! * 100).clamp(0, 100).round()}%${sizeLabel.isEmpty ? '' : ' · $sizeLabel'}'
                               : sizeLabel,
                           style: AppText.timestamp.copyWith(
-                            color: widget.isMine ? AppColors.white.withValues(alpha: 0.7) : AppColors.textMuted,
+                            color: widget.isMine ? fg.withValues(alpha: 0.7) : AppColors.textMuted,
                           ),
                         ),
                     ],

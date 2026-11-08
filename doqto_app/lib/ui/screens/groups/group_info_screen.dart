@@ -451,6 +451,10 @@ class _InviteBannerState extends ConsumerState<_InviteBanner> {
     if (_busy) return;
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.of(context);
+    // Grab the router now: this banner leaves the tree the moment the
+    // optimistic state clears the invite, so `context` is dead after the
+    // await and a `mounted` guard would silently skip the navigation.
+    final router = GoRouter.maybeOf(context); // null in widget tests
     final id = widget.group.id;
     try {
       await ref.read(groupDetailProvider(id).notifier).acceptInvite();
@@ -458,7 +462,7 @@ class _InviteBannerState extends ConsumerState<_InviteBanner> {
         const SnackBar(content: Text(Strings.groupJoinedToast)),
       );
       // Land in the chat: this info screen stays underneath.
-      if (mounted) context.pushReplacement(AppRoutes.group(id));
+      router?.pushReplacement(AppRoutes.group(id));
     } catch (e) {
       showApiError(messenger, e);
     } finally {

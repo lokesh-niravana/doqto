@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/chat_theme.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/radii.dart';
 import '../../core/tokens/spacing.dart';
@@ -58,8 +59,12 @@ class VoiceNoteBubble extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final playback = ref.watch(voicePlaybackProvider);
     final radius = isMine ? AppRadii.bubbleSent : AppRadii.bubbleReceived;
-    final bg = isMine ? AppColors.medBlue : AppColors.white;
-    final contrast = isMine ? AppColors.white : AppColors.medBlue;
+    // Chat colour theme (batch 6), like MessageBubble: a hard-coded white
+    // received bubble was unreadable under the dark palette.
+    final chatTheme = ChatThemeScope.of(context);
+    final bg = isMine ? chatTheme.sentBg : chatTheme.receivedBg;
+    final contrast = isMine ? chatTheme.sentFg : AppColors.medBlue;
+    final receivedBorder = chatTheme.receivedBorder;
     final current = playback.isCurrent(messageId);
     final playing = playback.isPlaying(messageId);
     final loading = playback.isLoading(messageId);
@@ -83,7 +88,7 @@ class VoiceNoteBubble extends ConsumerWidget {
           decoration: BoxDecoration(
             color: bg,
             borderRadius: radius,
-            border: isMine ? null : Border.all(color: AppColors.gray100),
+            border: isMine || receivedBorder == null ? null : Border.all(color: receivedBorder),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

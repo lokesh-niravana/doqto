@@ -43,6 +43,9 @@ class Group {
   final String? memberDmPolicy;
   final String? postPolicy;
   final String? avatarUrl;
+
+  /// Short-lived GET URL for [avatarUrl] (an S3 key) — what the UI renders.
+  final String? avatarPresignedUrl;
   final int memberCount;
   final String conversationId;
   final String ownerId;
@@ -52,6 +55,10 @@ class Group {
   final GroupRole? myRole;
   final GroupMemberState? myState;
   final DateTime? createdAt;
+
+  /// My PENDING invite to this group, when I have one — what Accept /
+  /// Decline act on. Null for members.
+  final String? inviteId;
 
   /// Client-only tag (see [GroupMembershipTag]); never from the wire.
   final GroupMembershipTag membershipTag;
@@ -63,6 +70,7 @@ class Group {
     required this.memberDmPolicy,
     required this.postPolicy,
     required this.avatarUrl,
+    this.avatarPresignedUrl,
     required this.memberCount,
     required this.conversationId,
     required this.ownerId,
@@ -70,6 +78,7 @@ class Group {
     required this.myRole,
     required this.myState,
     required this.createdAt,
+    this.inviteId,
     this.membershipTag = GroupMembershipTag.none,
   });
 
@@ -80,6 +89,7 @@ class Group {
         memberDmPolicy: j['member_dm_policy'] as String?,
         postPolicy: j['post_policy'] as String?,
         avatarUrl: j['avatar_url'] as String?,
+        avatarPresignedUrl: j['avatar_presigned_url'] as String?,
         memberCount: (j['member_count'] as num?)?.toInt() ?? 0,
         conversationId: (j['conversation_id'] ?? '') as String,
         ownerId: (j['owner_id'] ?? '') as String,
@@ -93,6 +103,7 @@ class Group {
         createdAt: j['created_at'] != null
             ? DateTime.tryParse(j['created_at'] as String)
             : null,
+        inviteId: j['invite_id'] as String?,
       );
 
   /// True when the requesting user is an active member.
@@ -103,23 +114,47 @@ class Group {
   /// True when the requesting user can manage the group (owner/admin/mod).
   bool get isAdmin => isMember && (myRole?.isAdminTier ?? false);
 
+  /// Owner or admin: may edit the group, its settings, add/remove members
+  /// and mint invite links. Moderators may not (server rule).
+  bool get canManage =>
+      isMember && (myRole == GroupRole.owner || myRole == GroupRole.admin);
+
+  bool get isOwner => isMember && myRole == GroupRole.owner;
+
+  /// A pending invite I can accept or decline.
+  bool get hasPendingInvite => !isMember && inviteId != null;
+
+  /// Only owner/admin may post when the group is admins-only.
+  bool get adminsOnlyPosting => postPolicy == 'admins_only';
+  bool get canPost => isMember && (!adminsOnlyPosting || canManage);
+
   String get initials => initialsOf(name);
   int get avatarIndex => avatarIndexFrom(null, id);
 
   Group copyWith({
+    String? name,
+    String? description,
+    String? memberDmPolicy,
+    String? postPolicy,
+    String? avatarUrl,
+    String? avatarPresignedUrl,
+    bool clearAvatar = false,
     GroupRole? myRole,
     GroupMemberState? myState,
     int? memberCount,
     GroupMembershipTag? membershipTag,
     bool clearMyRole = false,
+    bool clearInvite = false,
   }) =>
       Group(
         id: id,
-        name: name,
-        description: description,
-        memberDmPolicy: memberDmPolicy,
-        postPolicy: postPolicy,
-        avatarUrl: avatarUrl,
+        name: name ?? this.name,
+        description: description ?? this.description,
+        memberDmPolicy: memberDmPolicy ?? this.memberDmPolicy,
+        postPolicy: postPolicy ?? this.postPolicy,
+        avatarUrl: clearAvatar ? null : (avatarUrl ?? this.avatarUrl),
+        avatarPresignedUrl:
+            clearAvatar ? null : (avatarPresignedUrl ?? this.avatarPresignedUrl),
         memberCount: memberCount ?? this.memberCount,
         conversationId: conversationId,
         ownerId: ownerId,
@@ -127,6 +162,7 @@ class Group {
         myRole: clearMyRole ? null : (myRole ?? this.myRole),
         myState: clearMyRole ? null : (myState ?? this.myState),
         createdAt: createdAt,
+        inviteId: clearInvite ? null : inviteId,
         membershipTag: membershipTag ?? this.membershipTag,
       );
 
@@ -137,6 +173,7 @@ class Group {
         'member_dm_policy': memberDmPolicy,
         'post_policy': postPolicy,
         'avatar_url': avatarUrl,
+        'avatar_presigned_url': avatarPresignedUrl,
         'member_count': memberCount,
         'conversation_id': conversationId,
         'owner_id': ownerId,
@@ -158,6 +195,7 @@ class GroupMember {
   final String? headline;
   final String? avatarColor;
   final String? avatarUrl;
+  final String? avatarPresignedUrl;
   final GroupRole role;
   final GroupMemberState state;
 
@@ -168,6 +206,7 @@ class GroupMember {
     required this.headline,
     required this.avatarColor,
     required this.avatarUrl,
+    this.avatarPresignedUrl,
     required this.role,
     required this.state,
   });
@@ -179,12 +218,78 @@ class GroupMember {
         headline: j['headline'] as String?,
         avatarColor: j['avatar_color'] as String?,
         avatarUrl: j['avatar_url'] as String?,
+        avatarPresignedUrl: j['avatar_presigned_url'] as String?,
         role: GroupRole.fromWire(j['role'] as String?),
         state: GroupMemberState.fromWire(j['state'] as String?),
       );
 
   String get initials => initialsOf(fullName);
   int get avatarIndex => avatarIndexFrom(avatarColor, userId);
+
+  GroupMember copyWith({GroupRole? role}) => GroupMember(
+        userId: userId,
+        fullName: fullName,
+        specialty: specialty,
+        headline: headline,
+        avatarColor: avatarColor,
+        avatarUrl: avatarUrl,
+        avatarPresignedUrl: avatarPresignedUrl,
+        role: role ?? this.role,
+        state: state,
+      );
+}
+
+/// A pending invite into a group — direct (has [inviteeId]) or a shareable
+/// link (has [token]). Mirrors backend GroupInviteOut. Admins list and
+/// revoke these.
+class GroupInvite {
+  final String id;
+  final String groupId;
+  final String inviterId;
+  final String? inviteeId;
+  final String? token;
+  final int? maxUses;
+  final int useCount;
+  final DateTime? expiresAt;
+  final String state;
+  final DateTime? createdAt;
+
+  const GroupInvite({
+    required this.id,
+    required this.groupId,
+    required this.inviterId,
+    required this.inviteeId,
+    required this.token,
+    required this.maxUses,
+    required this.useCount,
+    required this.expiresAt,
+    required this.state,
+    required this.createdAt,
+  });
+
+  bool get isLink => token != null && token!.isNotEmpty;
+
+  /// The app-scheme deep link that joins through this invite. Universal
+  /// (https) links need an associated domain the iOS target does not have
+  /// yet, so the scheme form is the one we share.
+  String get deepLink => 'doqto:///g/$token';
+
+  factory GroupInvite.fromJson(Map<String, dynamic> j) => GroupInvite(
+        id: (j['id'] ?? '') as String,
+        groupId: (j['group_id'] ?? '') as String,
+        inviterId: (j['inviter_id'] ?? '') as String,
+        inviteeId: j['invitee_id'] as String?,
+        token: j['token'] as String?,
+        maxUses: (j['max_uses'] as num?)?.toInt(),
+        useCount: (j['use_count'] as num?)?.toInt() ?? 0,
+        expiresAt: j['expires_at'] != null
+            ? DateTime.tryParse(j['expires_at'] as String)
+            : null,
+        state: (j['state'] ?? 'pending') as String,
+        createdAt: j['created_at'] != null
+            ? DateTime.tryParse(j['created_at'] as String)
+            : null,
+      );
 }
 
 /// Result of accepting an invite link: `{result: 'joined'}`.

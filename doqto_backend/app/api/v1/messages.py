@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,11 +13,14 @@ from app.core.constants import (
     PRESIGNED_URL_TTL_SECONDS,
     RATE_LIMIT_REACTIONS_PER_MINUTE,
     RATE_LIMIT_READS_PER_MINUTE,
+    VOICE_NOTE_MAX_DURATION_SECONDS,
     VOICE_NOTE_MAX_FILE_BYTES,
+    VOICE_NOTE_MIN_DURATION_SECONDS,
 )
 from app.core.dependencies import get_current_user
 from app.core.enums import (
     AuditAction,
+    ConversationType,
     MessageType,
     TranscriptStatus,
     WsEventServer,
@@ -26,7 +29,7 @@ from app.core.routes import ApiRoutes
 from app.core.rate_limit import enforce_rate_limit
 from app.core.security import decrypt_message, encrypt_message
 from app.db.postgres import get_db
-from app.models import Conversation, ConversationMember, Message, User
+from app.models import Conversation, ConversationMember, Message, MessageReceipt, User
 from app.schemas.common import OkResponse
 from app.schemas.message import (
     FileUrlOut,
@@ -36,6 +39,7 @@ from app.schemas.message import (
     MessageOut,
     MessageReactedEvent,
     MessageReactIn,
+    MessageReceiptOut,
 )
 from app.services.audit_service import AuditService
 from app.services.file_service import FileService
@@ -143,6 +147,12 @@ async def upload_voice_note(
 ) -> MessageOut:
     await enforce_rate_limit(user.id, "upload_voice_note")
     conv = await _assert_conv_member(conversation_id, user.id, db)
+    # The bounds declared in constants are the contract: a clip the recorder
+    # cut too short, or one longer than the server-side cap, is refused.
+    if not (VOICE_NOTE_MIN_DURATION_SECONDS <= duration_sec <= VOICE_NOTE_MAX_DURATION_SECONDS):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="voice_note_duration"
+        )
 
     # Idempotency: a retried upload (same outbox client_id) returns the
     # original row — no re-upload, no re-broadcast.
@@ -257,6 +267,80 @@ async def mark_read(
     return OkResponse()
 
 
+@router.get(ApiRoutes.MESSAGES_RECEIPTS, response_model=list[MessageReceiptOut])
+async def message_receipts(
+    message_id: uuid.UUID,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[MessageReceiptOut]:
+    """Message info: who it was delivered to and who read it, with times.
+    Sender-only (the way WhatsApp shows it). Groups derive the state from the
+    A3 member seq cursors; direct chats from message_receipts rows. A non-member
+    gets the same 404 as a message that does not exist."""
+    await enforce_rate_limit(user.id, "message_receipts", RATE_LIMIT_READS_PER_MINUTE)
+    msg = await db.scalar(select(Message).where(Message.id == message_id))
+    if msg is None or msg.is_deleted:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="message_not_found")
+    conv = await db.scalar(select(Conversation).where(Conversation.id == msg.conversation_id))
+    members = (
+        await db.execute(
+            select(ConversationMember, User)
+            .join(User, User.id == ConversationMember.user_id)
+            .where(ConversationMember.conversation_id == msg.conversation_id)
+        )
+    ).all()
+    if conv is None or not any(m.user_id == user.id for m, _ in members):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="message_not_found")
+    if msg.sender_id != user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="not_message_sender")
+    # Who-read-what is PHI-adjacent access to the thread: audit like a read.
+    await AuditService.log_request(
+        request,
+        user_id=user.id,
+        action=AuditAction.MESSAGE_RECEIPTS_READ,
+        resource_type="message",
+        resource_id=message_id,
+        db=db,
+    )
+    await db.commit()
+    receipts: dict[uuid.UUID, MessageReceipt] = {}
+    if conv.type != ConversationType.GROUP:
+        rows = await db.scalars(
+            select(MessageReceipt).where(MessageReceipt.message_id == message_id)
+        )
+        receipts = {r.user_id: r for r in rows.all()}
+    out: list[MessageReceiptOut] = []
+    for member, u in members:
+        if member.user_id == msg.sender_id:
+            continue
+        row = MessageReceiptOut(
+            user_id=u.id,
+            full_name=u.full_name,
+            avatar_color=u.avatar_color,
+            avatar_url=u.avatar_url,
+            avatar_presigned_url=(
+                await FileService.presigned_url(key=u.avatar_url) if u.avatar_url else None
+            ),
+        )
+        if conv.type == ConversationType.GROUP:
+            row.read = member.last_read_seq >= msg.seq
+            row.delivered = row.read or member.last_delivered_seq >= msg.seq
+            row.read_at = member.last_read_at if row.read else None
+            row.delivered_at = row.read_at
+        else:
+            r = receipts.get(member.user_id)
+            if r is not None:
+                row.read = r.read_at is not None
+                row.delivered = row.read or r.delivered_at is not None
+                row.read_at = r.read_at
+                row.delivered_at = r.delivered_at or r.read_at
+        out.append(row)
+    # Read first, then delivered, then pending; stable by name inside each.
+    out.sort(key=lambda r: (0 if r.read else 1 if r.delivered else 2, r.full_name))
+    return out
+
+
 @router.get(ApiRoutes.MESSAGES_FILE_URL, response_model=FileUrlOut)
 async def get_file_url(
     message_id: uuid.UUID,
@@ -287,6 +371,8 @@ _EDIT_DELETE_STATUS = {
     "invalid_emoji": status.HTTP_422_UNPROCESSABLE_ENTITY,
     "not_reachable": status.HTTP_403_FORBIDDEN,
     "not_connected": status.HTTP_403_FORBIDDEN,
+    "group_dm_request": status.HTTP_403_FORBIDDEN,
+    "group_dm_disabled": status.HTTP_403_FORBIDDEN,
 }
 
 

@@ -61,6 +61,8 @@ class ApiRoutes {
   static const String messagesHide =
       '$apiV1/messages/hide'; // POST delete-for-me
   static String messageFileUrl(String id) => '$apiV1/messages/$id/file-url';
+  static String messageReceipts(String id) =>
+      '$apiV1/messages/$id/receipts'; // sender-only read-by / delivered-to
 
   // People / profiles (networking M1/M2)
   static String userProfile(String userId) => '$apiV1/users/$userId/profile';
@@ -99,6 +101,7 @@ class ApiRoutes {
   // Groups (M5) — router mounted at /api/v1.
   static const String groups = '$apiV1/groups';
   static String group(String id) => '$apiV1/groups/$id';
+  static String groupAvatar(String id) => '$apiV1/groups/$id/avatar';
   static String groupInvites(String id) => '$apiV1/groups/$id/invites';
   static String groupInvite(String groupId, String inviteId) =>
       '$apiV1/groups/$groupId/invites/$inviteId';

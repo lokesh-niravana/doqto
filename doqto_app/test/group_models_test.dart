@@ -123,6 +123,69 @@ void main() {
     });
   });
 
+  group('Group role helpers (B)', () {
+    Group g(String role, {String state = 'active', String? invite, String post = 'all'}) =>
+        Group.fromJson({
+          'id': 'g1',
+          'name': 'X',
+          'my_role': role,
+          'my_state': state,
+          'post_policy': post,
+          'invite_id': ?invite,
+        });
+
+    test('canManage / isOwner / canPost follow role and post policy', () {
+      expect(g('owner').canManage, isTrue);
+      expect(g('owner').isOwner, isTrue);
+      expect(g('admin').canManage, isTrue);
+      expect(g('admin').isOwner, isFalse);
+      expect(g('member').canManage, isFalse);
+      expect(g('member').canPost, isTrue);
+      expect(g('member', post: 'admins_only').canPost, isFalse);
+      expect(g('admin', post: 'admins_only').canPost, isTrue);
+      expect(g('owner', state: 'invited').canManage, isFalse);
+    });
+
+    test('hasPendingInvite needs a non-member with an invite id', () {
+      expect(g('member', state: 'invited', invite: 'i1').hasPendingInvite, isTrue);
+      expect(g('member', state: 'invited').hasPendingInvite, isFalse);
+      expect(g('member', invite: 'i1').hasPendingInvite, isFalse);
+      expect(g('member', invite: 'i1').copyWith(clearInvite: true).inviteId, isNull);
+    });
+  });
+
+  group('GroupInvite', () {
+    test('link invites carry a deep link; direct ones do not', () {
+      final link = GroupInvite.fromJson({
+        'id': 'i1',
+        'group_id': 'g1',
+        'inviter_id': 'u1',
+        'token': 'abc',
+        'max_uses': 3,
+        'use_count': 1,
+        'state': 'pending',
+        'expires_at': '2026-12-01T00:00:00Z',
+      });
+      expect(link.isLink, isTrue);
+      expect(link.deepLink, 'doqto:///g/abc');
+      expect(link.expiresAt!.isUtc, isTrue);
+      final direct = GroupInvite.fromJson({
+        'id': 'i2',
+        'group_id': 'g1',
+        'inviter_id': 'u1',
+        'invitee_id': 'u2',
+        'state': 'pending',
+      });
+      expect(direct.isLink, isFalse);
+      expect(direct.useCount, 0);
+    });
+
+    test('already_member is not a join', () {
+      expect(JoinResult.fromJson({'result': 'already_member', 'group_id': 'g1'}).joined,
+          isFalse);
+    });
+  });
+
   group('JoinResult', () {
     test('accepting an invite link reports joined', () {
       expect(JoinResult.fromJson({'result': 'joined', 'group_id': 'g1'}).joined,

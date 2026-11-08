@@ -96,6 +96,22 @@ class MessageReactedEvent(BaseModel):
     emoji: str | None  # None = the actor removed their reaction
 
 
+class MessageReceiptOut(BaseModel):
+    """One recipient's delivery/read state for a message (sender-only view).
+    Group chats derive it from the member seq cursors, so read_at is the
+    member's last read time and delivered carries no timestamp."""
+
+    user_id: uuid.UUID
+    full_name: str
+    avatar_color: str | None = None
+    avatar_url: str | None = None
+    avatar_presigned_url: str | None = None
+    delivered: bool = False
+    read: bool = False
+    delivered_at: datetime | None = None
+    read_at: datetime | None = None
+
+
 class FileUrlOut(BaseModel):
     url: str
     expires_in: int

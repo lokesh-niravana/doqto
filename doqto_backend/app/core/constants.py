@@ -164,6 +164,9 @@ GROUP_REJOIN_COOLDOWN_DAYS = 14
 GROUPS_PAGE_SIZE = 30
 # Link-invite token length (url-safe).
 GROUP_INVITE_TOKEN_BYTES = 24
+# Hard cap on ACTIVE members per group — enforced on invite, invite accept and
+# link accept (409 group_full). WhatsApp-scale, not a channel.
+GROUP_MAX_MEMBERS = 256
 
 DISAPPEAR_PURGE_INTERVAL_SEC = 60
 SCHEDULED_SEND_INTERVAL_SEC = 15  # delivery granularity for scheduled messages

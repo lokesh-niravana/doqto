@@ -166,9 +166,11 @@ Whether a member may DM a co-member from group context (M5). Backend-only.
 
 | Wire value | Meaning |
 |---|---|
-| `open` | Co-member DM opens directly |
-| `request` | Co-member DM goes through the message-request tier |
-| `disabled` | No member-to-member DM from group context |
+| `open` | Co-members may open a direct chat with each other (`shared_group` in the permission module) |
+| `request` | Co-members must connect first — the direct-chat gate answers `group_dm_request` (the request tier is retired) |
+| `disabled` | No member-to-member DM — the gate answers `group_dm_disabled` |
+
+Enforced on `POST /conversations` (direct) and on every send into a direct chat whenever the two doctors share no org and are not connected; the most permissive policy across their shared groups wins. Groups cap at `GROUP_MAX_MEMBERS` (256) active members — invite, accept and link-accept answer `409 group_full`.
 
 ## GroupMemberState (backend-only)
 
@@ -329,6 +331,7 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `group_ownership_transferred` | Group ownership transferred to a new owner (M5) |
 | `group_invite_sent` | A direct or link group invite was created (M5) |
 | `group_invite_accepted` | A group invite was accepted → membership formed (M5) |
+| `message_receipts_read` | Sender viewed a message's read-by / delivered-to list (`GET /messages/{id}/receipts`) |
 
 ## TranscribeSpecialty (AWS Transcribe Medical)
 

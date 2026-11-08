@@ -15,6 +15,7 @@ import '../../ui/screens/chat/new_message_screen.dart';
 import '../../ui/screens/groups/create_group_flow_screen.dart';
 import '../../ui/screens/groups/group_detail_screen.dart';
 import '../../ui/screens/groups/group_info_screen.dart';
+import '../../ui/screens/groups/group_invite_link_screen.dart';
 import '../../ui/screens/groups/groups_tab_screen.dart';
 import '../../ui/screens/home/main_shell.dart';
 import '../../ui/screens/my_org/my_org_screen.dart';
@@ -71,6 +72,8 @@ class AppRoutes {
   static const groupsCreate = '/groups/create';
   static String group(String id) => '/groups/$id';
   static String groupInfo(String id) => '/groups/$id/info';
+  // An invite link: `doqto:///g/<token>` joins the group and opens it.
+  static String groupInviteLink(String token) => '/g/$token';
   static const settings = '/settings';
   static const profile = '/profile';
   static const profileEdit = '/profile/edit';
@@ -173,6 +176,14 @@ final routerProvider = Provider<GoRouter>((ref) {
         parentNavigatorKey: rootNavigatorKey,
         builder: (_, state) =>
             GroupDetailScreen(groupId: state.pathParameters['id']!),
+      ),
+      // Invite link landing (deep link `doqto:///g/<token>`): accepts the
+      // link, then replaces itself with the group.
+      GoRoute(
+        path: '/g/:token',
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, state) =>
+            GroupInviteLinkScreen(token: state.pathParameters['token']!),
       ),
       GoRoute(
         path: AppRoutes.newMessage,

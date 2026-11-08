@@ -187,6 +187,14 @@ class ChatRepository {
     await _api.post(ApiRoutes.conversationDelivered(conversationId));
   }
 
+  /// Message info: who my message reached and who read it (sender-only).
+  Future<List<MessageReceipt>> messageReceipts(String messageId) async {
+    final list = await _api.getList(ApiRoutes.messageReceipts(messageId));
+    return list
+        .map((e) => MessageReceipt.fromJson((e as Map).cast<String, dynamic>()))
+        .toList();
+  }
+
   Future<String> fileUrl(String messageId) async {
     final j = await _api.get(ApiRoutes.messageFileUrl(messageId));
     return j['url'] as String;

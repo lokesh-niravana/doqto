@@ -682,7 +682,10 @@ class MessageService:
                 decision = permissions.can_message(ctx)
                 if decision.mode == "denied":
                     raise MessageError(
-                        "not_connected" if decision.reason == "not_connected" else "not_reachable"
+                        decision.reason
+                        if decision.reason
+                        in ("not_connected", "group_dm_request", "group_dm_disabled")
+                        else "not_reachable"
                     )
         return msg
 

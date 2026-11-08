@@ -112,6 +112,36 @@ class ErrorMessages {
     'conversation_not_open':
         'You can\'t schedule messages in this conversation yet.',
 
+    // Voice notes
+    'voice_note_duration':
+        'Voice notes must be between 1 second and 5 minutes long.',
+
+    // Groups
+    'post_restricted': 'Only admins can send messages in this group.',
+    'group_full': 'This group is full (256 members). Remove someone to invite more.',
+    'group_not_found': 'This group isn\'t available.',
+    'not_a_group_member': 'You\'re not a member of this group.',
+    'not_invitable':
+        'You can only invite connections and colleagues from your organization.',
+    'already_a_member': 'They\'re already in this group.',
+    'cannot_invite_self': 'You\'re already in this group.',
+    'invite_not_found': 'This invite is no longer valid.',
+    'invite_not_pending': 'This invite was already answered.',
+    'invite_expired': 'This invite link has expired. Ask for a new one.',
+    'invite_exhausted': 'This invite link has been used up. Ask for a new one.',
+    'not_authorized': 'Only group admins can do that.',
+    'owner_only': 'Only the group owner can do that.',
+    'owner_must_transfer':
+        'Transfer ownership to another member before leaving the group.',
+    'cannot_change_owner_role': 'The owner\'s role can\'t be changed.',
+    'use_transfer_ownership': 'Use "Transfer ownership" to make someone the owner.',
+    'cannot_ban_self': 'You can\'t ban yourself.',
+    'already_owner': 'You already own this group.',
+    'group_owner_limit': 'You own the maximum number of groups.',
+    'group_dm_disabled':
+        'This group doesn\'t allow direct messages between members.',
+    'group_dm_request':
+        'Connect with this doctor first — this group only allows direct messages between connections.',
   };
 
   /// Translate any thrown error into a physician-friendly single-line message.

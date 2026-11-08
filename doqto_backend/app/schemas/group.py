@@ -41,12 +41,17 @@ class GroupOut(ORMModel):
     owner_id: uuid.UUID
     org_id: uuid.UUID | None
     avatar_url: str | None
+    # Short-lived GET URL for avatar_url (an S3 key), when there is one.
+    avatar_presigned_url: str | None = None
     member_count: int
     created_at: datetime
     updated_at: datetime
     # Populated by the router for the requesting user.
     my_role: GroupRole | None = None
     my_state: GroupMemberState | None = None
+    # The requesting user's PENDING invite to this group, when they have one —
+    # what Accept / Decline act on.
+    invite_id: uuid.UUID | None = None
 
 
 class GroupCardOut(BaseModel):
@@ -57,9 +62,11 @@ class GroupCardOut(BaseModel):
     name: str
     member_count: int
     avatar_url: str | None = None
+    avatar_presigned_url: str | None = None
     description: str | None = None
     my_role: GroupRole | None = None
     my_state: GroupMemberState | None = None
+    invite_id: uuid.UUID | None = None
 
 
 class InviteCreateIn(BaseModel):
@@ -100,10 +107,11 @@ class GroupMemberOut(BaseModel):
     specialty: str | None = None
     avatar_color: str | None = None
     avatar_url: str | None = None
+    avatar_presigned_url: str | None = None
 
 
 class JoinResultOut(BaseModel):
     """The only self-service way in is an invite link."""
 
-    result: str  # 'joined'
+    result: str  # 'joined' | 'already_member'
     group_id: uuid.UUID

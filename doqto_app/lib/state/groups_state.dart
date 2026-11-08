@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/di/providers.dart';
@@ -104,6 +106,51 @@ class MyGroupsNotifier extends AsyncNotifier<MyGroupsData> {
       // Offline refresh: keep showing what we have.
     }
   }
+
+  /// Accept a pending invite from the tab: the row jumps to "member" at once
+  /// (role member, count +1); the server confirms with a refresh, a failure
+  /// puts the invite back and rethrows for the snackbar.
+  Future<void> acceptInvite(Group g) async {
+    final inviteId = g.inviteId;
+    final before = state.valueOrNull;
+    if (inviteId == null || before == null) return;
+    final optimistic = g.copyWith(
+      myRole: GroupRole.member,
+      myState: GroupMemberState.active,
+      memberCount: g.memberCount + 1,
+      membershipTag: GroupMembershipTag.member,
+      clearInvite: true,
+    );
+    state = AsyncData(MyGroupsData(
+      member: [optimistic, ...before.member],
+      invited: [for (final x in before.invited) if (x.id != g.id) x],
+    ));
+    try {
+      await ref.read(groupsRepositoryProvider).acceptInvite(g.id, inviteId);
+      ref.invalidate(groupDetailProvider(g.id));
+      await refresh();
+    } catch (e) {
+      state = AsyncData(before);
+      rethrow;
+    }
+  }
+
+  /// Decline: the row disappears at once; a failure brings it back.
+  Future<void> declineInvite(Group g) async {
+    final inviteId = g.inviteId;
+    final before = state.valueOrNull;
+    if (inviteId == null || before == null) return;
+    state = AsyncData(MyGroupsData(
+      member: before.member,
+      invited: [for (final x in before.invited) if (x.id != g.id) x],
+    ));
+    try {
+      await ref.read(groupsRepositoryProvider).declineInvite(g.id, inviteId);
+    } catch (e) {
+      state = AsyncData(before);
+      rethrow;
+    }
+  }
 }
 
 final myGroupsProvider =
@@ -157,6 +204,162 @@ class GroupDetailNotifier extends FamilyAsyncNotifier<Group, String> {
       rethrow;
     }
   }
+
+  // ---- Invite (non-member with a pending invite) --------------------------
+
+  /// Accept my pending invite: I become a member at once (so the chat opens
+  /// without waiting); the server's answer confirms, a failure rolls back.
+  Future<void> acceptInvite() async {
+    final g = _g;
+    final inviteId = g?.inviteId;
+    if (g == null || inviteId == null) return;
+    state = AsyncData(g.copyWith(
+      myRole: GroupRole.member,
+      myState: GroupMemberState.active,
+      memberCount: g.memberCount + 1,
+      membershipTag: GroupMembershipTag.member,
+      clearInvite: true,
+    ));
+    try {
+      await ref.read(groupsRepositoryProvider).acceptInvite(arg, inviteId);
+      ref.invalidate(myGroupsProvider);
+      ref.invalidate(groupMembersProvider(arg));
+      await refresh();
+    } catch (e) {
+      state = AsyncData(g);
+      rethrow;
+    }
+  }
+
+  Future<void> declineInvite() async {
+    final g = _g;
+    final inviteId = g?.inviteId;
+    if (g == null || inviteId == null) return;
+    state = AsyncData(g.copyWith(clearInvite: true));
+    try {
+      await ref.read(groupsRepositoryProvider).declineInvite(arg, inviteId);
+      ref.invalidate(myGroupsProvider);
+    } catch (e) {
+      state = AsyncData(g);
+      rethrow;
+    }
+  }
+
+  // ---- Owner / admin: identity + settings (optimistic, rollback) ---------
+
+  Future<void> updateGroup({
+    String? name,
+    String? description,
+    String? postPolicy,
+    String? memberDmPolicy,
+  }) async {
+    final g = _g;
+    if (g == null) return;
+    state = AsyncData(g.copyWith(
+      name: name,
+      description: description,
+      postPolicy: postPolicy,
+      memberDmPolicy: memberDmPolicy,
+    ));
+    try {
+      final fresh = await ref.read(groupsRepositoryProvider).updateGroup(
+            arg,
+            name: name,
+            description: description,
+            postPolicy: postPolicy,
+            memberDmPolicy: memberDmPolicy,
+          );
+      state = AsyncData(fresh.copyWith(membershipTag: g.membershipTag));
+      ref.invalidate(myGroupsProvider);
+    } catch (e) {
+      state = AsyncData(g);
+      rethrow;
+    }
+  }
+
+  Future<void> setAvatar(File file) async {
+    final g = _g;
+    if (g == null) return;
+    final fresh = await ref.read(groupsRepositoryProvider).uploadAvatar(arg, file);
+    state = AsyncData(fresh.copyWith(membershipTag: g.membershipTag));
+    ref.invalidate(myGroupsProvider);
+  }
+
+  Future<void> removeAvatar() async {
+    final g = _g;
+    if (g == null) return;
+    state = AsyncData(g.copyWith(clearAvatar: true));
+    try {
+      final fresh = await ref.read(groupsRepositoryProvider).deleteAvatar(arg);
+      state = AsyncData(fresh.copyWith(membershipTag: g.membershipTag));
+      ref.invalidate(myGroupsProvider);
+    } catch (e) {
+      state = AsyncData(g);
+      rethrow;
+    }
+  }
+
+  // ---- Owner / admin: members ---------------------------------------------
+
+  Future<void> invite(String userId) =>
+      ref.read(groupsRepositoryProvider).inviteUser(arg, userId);
+
+  Future<void> changeRole(String userId, GroupRole role) async {
+    final members = ref.read(groupMembersProvider(arg).notifier);
+    final undo = members.applyRole(userId, role);
+    try {
+      await ref.read(groupsRepositoryProvider).changeRole(arg, userId, role);
+    } catch (e) {
+      undo();
+      rethrow;
+    }
+  }
+
+  Future<void> removeMember(String userId) => _drop(
+        userId,
+        () => ref.read(groupsRepositoryProvider).removeMember(arg, userId),
+      );
+
+  Future<void> banMember(String userId) => _drop(
+        userId,
+        () => ref.read(groupsRepositoryProvider).banMember(arg, userId),
+      );
+
+  Future<void> _drop(String userId, Future<void> Function() call) async {
+    final g = _g;
+    final members = ref.read(groupMembersProvider(arg).notifier);
+    final undo = members.drop(userId);
+    if (g != null) {
+      state = AsyncData(g.copyWith(
+        memberCount: g.memberCount > 0 ? g.memberCount - 1 : 0,
+      ));
+    }
+    try {
+      await call();
+    } catch (e) {
+      undo();
+      if (g != null) state = AsyncData(g);
+      rethrow;
+    }
+  }
+
+  /// Owner → admin, target → owner. Both rows flip at once.
+  Future<void> transferOwnership(String userId, String myUserId) async {
+    final g = _g;
+    final members = ref.read(groupMembersProvider(arg).notifier);
+    final undoMe = members.applyRole(myUserId, GroupRole.admin);
+    final undoThem = members.applyRole(userId, GroupRole.owner);
+    if (g != null) state = AsyncData(g.copyWith(myRole: GroupRole.admin));
+    try {
+      await ref.read(groupsRepositoryProvider).transferOwnership(arg, userId);
+      await refresh();
+    } catch (e) {
+      undoThem();
+      undoMe();
+      if (g != null) state = AsyncData(g);
+      rethrow;
+    }
+  }
 }
 
 final groupDetailProvider =
@@ -193,8 +396,76 @@ class GroupMembersNotifier
       // Keep showing what we have.
     }
   }
+
+  /// Optimistic role flip; returns the undo.
+  void Function() applyRole(String userId, GroupRole role) {
+    final before = state.valueOrNull;
+    if (before == null) return () {};
+    state = AsyncData([
+      for (final m in before) if (m.userId == userId) m.copyWith(role: role) else m,
+    ]);
+    return () => state = AsyncData(before);
+  }
+
+  /// Optimistic removal; returns the undo.
+  void Function() drop(String userId) {
+    final before = state.valueOrNull;
+    if (before == null) return () {};
+    state = AsyncData([for (final m in before) if (m.userId != userId) m]);
+    return () => state = AsyncData(before);
+  }
 }
 
 final groupMembersProvider = AsyncNotifierProvider.autoDispose
     .family<GroupMembersNotifier, List<GroupMember>, String>(
         GroupMembersNotifier.new);
+
+/// Pending invites (direct + link) of a group — owner/admin only; the server
+/// answers 403 for members, which the section hides on. Create and revoke
+/// are optimistic; `group_updated` (a decline, a revoke elsewhere) refreshes.
+class GroupInvitesNotifier
+    extends AutoDisposeFamilyAsyncNotifier<List<GroupInvite>, String> {
+  @override
+  Future<List<GroupInvite>> build(String groupId) async {
+    listenRealtime(
+      ref,
+      refresh: refresh,
+      onEvent: (event, refresh) {
+        if (event.type == WsEventServer.groupUpdated &&
+            event.data['group_id'] == groupId) {
+          refresh();
+        }
+      },
+    );
+    return ref.read(groupsRepositoryProvider).listInvites(groupId);
+  }
+
+  Future<void> refresh() async {
+    try {
+      state = AsyncData(await ref.read(groupsRepositoryProvider).listInvites(arg));
+    } catch (_) {}
+  }
+
+  Future<GroupInvite> createLink({int? maxUses, DateTime? expiresAt}) async {
+    final invite = await ref
+        .read(groupsRepositoryProvider)
+        .createLinkInvite(arg, maxUses: maxUses, expiresAt: expiresAt);
+    state = AsyncData([invite, ...(state.valueOrNull ?? const [])]);
+    return invite;
+  }
+
+  Future<void> revoke(String inviteId) async {
+    final before = state.valueOrNull ?? const <GroupInvite>[];
+    state = AsyncData([for (final i in before) if (i.id != inviteId) i]);
+    try {
+      await ref.read(groupsRepositoryProvider).revokeInvite(arg, inviteId);
+    } catch (e) {
+      state = AsyncData(before);
+      rethrow;
+    }
+  }
+}
+
+final groupInvitesProvider = AsyncNotifierProvider.autoDispose
+    .family<GroupInvitesNotifier, List<GroupInvite>, String>(
+        GroupInvitesNotifier.new);

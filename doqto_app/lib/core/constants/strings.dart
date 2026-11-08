@@ -297,6 +297,69 @@ class Strings {
   static const String groupsCopyLink = 'Copy invite link';
   static const String groupsLinkCopiedToast = 'Invite link copied';
   static const String groupsCreateCta = 'Create group';
+  // -- Group management (batch 1)
+  static const String groupAccept = 'Accept';
+  static const String groupDecline = 'Decline';
+  static const String groupInvitedBy = 'You\'ve been invited to this group';
+  static const String groupDeclinedToast = 'Invite declined';
+  static const String groupEditName = 'Group name';
+  static const String groupEditDescription = 'Description';
+  static const String groupAddDescription = 'Add a description';
+  static const String groupChangePhoto = 'Change group photo';
+  static const String groupRemovePhoto = 'Remove photo';
+  static const String groupAddMembersTitle = 'Add members';
+  static const String groupInviteSent = 'Invite sent';
+  static String groupInvitesSent(int n) =>
+      n == 1 ? '1 invite sent' : '$n invites sent';
+  static const String groupNoOneToAdd =
+      'Everyone you can invite is already here. Share an invite link instead.';
+  static const String groupMemberMessage = 'Message';
+  static const String groupMemberViewProfile = 'View profile';
+  static const String groupMemberPromote = 'Make admin';
+  static const String groupMemberDemote = 'Remove as admin';
+  static const String groupMemberRemove = 'Remove from group';
+  static const String groupMemberBan = 'Ban from group';
+  static const String groupMemberTransfer = 'Transfer ownership';
+  static String groupRemoveConfirm(String name) => 'Remove $name from the group?';
+  static String groupBanConfirm(String name) =>
+      'Ban $name? They won\'t be able to rejoin, even by invite.';
+  static String groupTransferConfirm(String name) =>
+      'Make $name the owner? You\'ll become an admin.';
+  static const String groupSettingsLabel = 'Group settings';
+  static const String groupSendMessagesLabel = 'Send messages';
+  static const String groupSendAll = 'All members';
+  static const String groupSendAdmins = 'Admins only';
+  static const String groupDmLabel = 'Member direct messages';
+  static const String groupDmOpenShort = 'Open';
+  static const String groupDmRequestShort = 'Connections only';
+  static const String groupDmDisabledShort = 'Off';
+  static const String groupDisappearingLabel = 'Disappearing messages';
+  static const String groupAdminsOnlyNotice = 'Only admins can send messages';
+  static const String groupInviteLinksLabel = 'Invite links';
+  static const String groupCreateLink = 'Create invite link';
+  static const String groupLinkMaxUses = 'Max uses';
+  static const String groupLinkMaxUsesHint = 'Unlimited';
+  static const String groupLinkExpires = 'Expires';
+  static const String groupLinkExpiry1Day = '1 day';
+  static const String groupLinkExpiry7Days = '7 days';
+  static const String groupLinkExpiryNever = 'Never';
+  static const String groupLinkShare = 'Share';
+  static const String groupLinkCopy = 'Copy';
+  static const String groupLinkRevoke = 'Revoke';
+  static const String groupLinkRevoked = 'Invite link revoked';
+  static const String groupLinkNone = 'No active invite links';
+  static const String groupPendingInvitesLabel = 'Pending invites';
+  static const String groupJoinedViaLink = 'You joined the group';
+  static const String groupJoiningViaLink = 'Joining group…';
+  static const String groupMessageInfo = 'Message info';
+  static const String groupReadBy = 'Read by';
+  static const String groupDeliveredTo = 'Delivered to';
+  static const String groupNotYetDelivered = 'Not yet delivered';
+  static const String groupInviteNotificationTitle = 'Group invite';
+  static String groupInviteNotificationBody(String name, String group) =>
+      '$name invited you to $group';
+  static const String groupInviteNotificationBodyGeneric =
+      'You\'ve been invited to a group';
   static const String groupsNext = 'Next';
   static const String groupsBack = 'Back';
   // -- Inline explanations

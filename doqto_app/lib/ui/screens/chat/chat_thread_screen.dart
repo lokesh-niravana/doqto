@@ -35,7 +35,9 @@ import '../../widgets/attachment_bubbles.dart';
 import '../../widgets/connectivity_banner.dart';
 import '../../widgets/doctor_avatar.dart';
 import '../../widgets/emoji_picker_sheet.dart';
+import '../../widgets/inline_banner.dart';
 import '../../widgets/message_bubble.dart';
+import '../../widgets/message_receipts_sheet.dart';
 import '../../widgets/reactions.dart';
 import '../../widgets/typing_indicator.dart';
 import '../../widgets/voice_note_bubble.dart';
@@ -271,9 +273,32 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     }
   }
 
-  /// Selection-mode app bar: count, pencil (single editable), trash.
+  /// With exactly one of my own sent messages selected, "Message info"
+  /// (who has read / received it) is on offer.
+  Message? _infoable() {
+    final me = ref.read(authProvider).user?.id;
+    final sel = _selectedMessages();
+    if (me == null || sel.length != 1) return null;
+    final m = sel.first;
+    if (m.senderId != me ||
+        m.status != MessageStatus.sent ||
+        m.isDeleted ||
+        m.type == MessageType.system) {
+      return null;
+    }
+    return m;
+  }
+
+  void _showMessageInfo(Message m) {
+    _clearSelection();
+    showMessageReceiptsSheet(context: context, message: m);
+  }
+
+  /// Selection-mode app bar: count, info (single own message), pencil
+  /// (single editable), trash.
   PreferredSizeWidget _selectionBar() {
     final editable = _editable();
+    final infoable = _infoable();
     return AppBar(
       leading: IconButton(
         key: const ValueKey('select-close'),
@@ -282,6 +307,13 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       ),
       title: Text('${_selected.length}'),
       actions: [
+        if (infoable != null)
+          IconButton(
+            key: const ValueKey('select-info'),
+            icon: const Icon(Icons.info_outline),
+            tooltip: Strings.groupMessageInfo,
+            onPressed: () => _showMessageInfo(infoable),
+          ),
         if (editable != null)
           IconButton(
             key: const ValueKey('select-edit'),
@@ -1162,6 +1194,13 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         ? const <GroupMember>[]
         : (ref.watch(groupMembersProvider(groupId)).asData?.value ??
               const <GroupMember>[]);
+    // Admins-only posting: members see a notice where the composer was. A
+    // legacy org group (no groups row) has no detail → composer as always.
+    final group = groupId == null
+        ? null
+        : ref.watch(groupDetailProvider(groupId)).asData?.value;
+    final postingClosed =
+        group != null && group.isMember && !group.canPost;
     _members = {for (final m in members) m.userId: m};
     _peerName = groupId == null ? display?.title : null;
     final subtitle = otherTyping
@@ -1327,18 +1366,40 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
             if (otherTyping) const TypingIndicator(),
             // Anyone who can open this thread can send: the server allows
             // direct chats only between colleagues or connections.
-            _showRecorder
-                ? VoiceRecorderPanel(
-                    conversationId: widget.conversationId,
-                    onSent: () => setState(() => _showRecorder = false),
-                    onCancel: () => setState(() => _showRecorder = false),
-                  )
-                : _composer(),
+            postingClosed
+                ? _postingClosedNotice()
+                : _showRecorder
+                    ? VoiceRecorderPanel(
+                        conversationId: widget.conversationId,
+                        onSent: () => setState(() => _showRecorder = false),
+                        onCancel: () => setState(() => _showRecorder = false),
+                      )
+                    : _composer(),
           ],
         ),
       ),
     );
   }
+
+  /// Read-only footer for a member of an admins-only group.
+  Widget _postingClosedNotice() => Container(
+        key: const ValueKey('posting-closed'),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          border: Border(top: BorderSide(color: AppColors.divider)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: const InlineBanner(
+              tone: BannerTone.info,
+              icon: Icons.lock_outline_rounded,
+              text: Strings.groupAdminsOnlyNotice,
+            ),
+          ),
+        ),
+      );
 
   /// The normal message composer. [hideAttachments] drops the attach/mic
   /// affordances (request tier allows exactly one text message, no media).

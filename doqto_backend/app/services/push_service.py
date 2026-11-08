@@ -74,6 +74,11 @@ def reaction_body(actor_name: str | None, emoji: str) -> str:
     return f"{actor_name or 'Someone'} reacted {emoji} to your message"
 
 
+def group_invite_body(actor_name: str | None, group_name: str) -> str:
+    """Names only — a doctor's name and a group name are directory data."""
+    return f"{actor_name or 'Someone'} invited you to {group_name}"
+
+
 def new_message_body(sender_name: str | None, unread: int) -> str:
     """Sender name is directory data, not PHI; the count is not content."""
     if not sender_name:
@@ -259,6 +264,27 @@ class PushService:
             body=reaction_body(name, emoji),
             data={"type": "reaction", "conversation_id": str(conversation_id)},
             collapse_key=f"reaction:{conversation_id}",
+        )
+
+    @staticmethod
+    def notify_group_invite(
+        *,
+        recipient_id: uuid.UUID,
+        actor_name: str,
+        group_name: str,
+        group_id: uuid.UUID,
+    ) -> None:
+        """'Dr X invited you to <group>' — PHI-free; data carries only the group
+        id so a tap lands on Group info. One banner per group (collapse key):
+        a re-sent invite replaces, never stacks. Fire-and-forget."""
+        asyncio.create_task(
+            PushService._dispatch_simple(
+                recipient_id=recipient_id,
+                title=PUSH_TITLE,
+                body=group_invite_body(actor_name, group_name),
+                data={"type": "group_invite", "group_id": str(group_id)},
+                collapse_key=f"group_invite:{group_id}",
+            )
         )
 
     @staticmethod

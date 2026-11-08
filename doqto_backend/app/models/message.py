@@ -112,10 +112,13 @@ class MessageReaction(Base):
         ForeignKey(f"{Tables.MESSAGES}.id", ondelete="CASCADE"),
         primary_key=True,
     )
+    # Indexed: a member leaving/removed from a group has every reaction of
+    # theirs in that conversation purged (migration 0029).
     user_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey(f"{Tables.USERS}.id", ondelete="CASCADE"),
         primary_key=True,
+        index=True,
     )
     emoji: Mapped[str] = mapped_column(String(32), nullable=False)
     # Re-stamped when the emoji changes: when the CURRENT reaction was made.

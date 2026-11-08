@@ -77,8 +77,6 @@ class ApiRoutes:
     CONVERSATIONS_MESSAGES_SCHEDULE = "/{conversation_id}/messages/schedule"
     CONVERSATIONS_READ = "/{conversation_id}/read"
     CONVERSATIONS_DELIVERED = "/{conversation_id}/delivered"
-    CONVERSATIONS_UPLOAD = "/{conversation_id}/messages/upload"
-    CONVERSATIONS_VOICE_NOTE = "/{conversation_id}/voice-notes"
     CONVERSATIONS_MEMBERS = "/{conversation_id}/members"
     CONVERSATIONS_MEMBER_DETAIL = "/{conversation_id}/members/{user_id}"
     CONVERSATIONS_SETTINGS = "/{conversation_id}/settings"
@@ -91,11 +89,13 @@ class ApiRoutes:
     MESSAGES_REACTION = "/{message_id}/reaction"  # PUT set / DELETE remove (own)
     MESSAGES_HIDE = "/hide"  # POST delete-for-me (batch)
     MESSAGES_FILE_URL = "/{message_id}/file-url"
+    MESSAGES_RECEIPTS = "/{message_id}/receipts"  # sender-only read-by / delivered-to
 
     # Groups (M5) — router mounted at /api/v1 (see ApiPrefix.GROUPS).
     GROUPS_LIST = "/groups"
     GROUPS_CREATE = "/groups"
     GROUPS_DETAIL = "/groups/{group_id}"
+    GROUPS_AVATAR = "/groups/{group_id}/avatar"
     GROUPS_INVITES = "/groups/{group_id}/invites"
     GROUPS_INVITE_DETAIL = "/groups/{group_id}/invites/{invite_id}"
     GROUPS_INVITE_ACCEPT = "/groups/{group_id}/invites/{invite_id}/accept"

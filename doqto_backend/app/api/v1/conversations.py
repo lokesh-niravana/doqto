@@ -357,7 +357,12 @@ async def send_message(
             ctx = await RelationshipService.load_context(user.id, other_id, db)
             decision = permissions.can_message(ctx)
             if decision.mode == "denied":
-                detail = "not_connected" if decision.reason == "not_connected" else "not_reachable"
+                detail = (
+                    decision.reason
+                    if decision.reason
+                    in ("not_connected", "group_dm_request", "group_dm_disabled")
+                    else "not_reachable"
+                )
                 raise HTTPException(status.HTTP_403_FORBIDDEN, detail=detail)
     ip, user_agent = request_meta(request)
     try:
@@ -594,6 +599,13 @@ async def update_settings(
     db: AsyncSession = Depends(get_db),
 ) -> OkResponse:
     conv = await _assert_member(conversation_id, user.id, db)
+    # A network group's timer is a group setting: owner/admin only. Legacy org
+    # group chats (no groups row) and direct chats keep any-member semantics.
+    if conv.type == ConversationType.GROUP:
+        if not await GroupService.can_manage_conversation(
+            conversation_id=conversation_id, user_id=user.id, db=db
+        ):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="not_authorized")
     val = body.disappear_after_sec
     if val is not None and val not in DISAPPEAR_OPTIONS_SEC:
         raise HTTPException(

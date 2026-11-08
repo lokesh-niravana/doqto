@@ -52,6 +52,10 @@ class RelationshipContext:
     target_account_age_days: int = 3650
     has_pending_invitation: bool = False
     existing_conversation_access: str | None = None
+    # Best member_dm_policy across the groups BOTH are active members of
+    # ('open' | 'request' | 'denied'); None when they share no group. Loaded by
+    # relationship_service via GroupService.group_dm_decision (M5 §9.4).
+    shared_group_dm_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -129,8 +133,11 @@ def can_send_invitation(ctx: RelationshipContext) -> Decision:
 # Direct messaging  (open | request | denied)
 # --------------------------------------------------------------------------- #
 def _direct_decision(ctx: RelationshipContext) -> Decision:
-    """Only colleagues (shared org) and first-degree connections may chat.
-    There is no message-request tier and no DM-policy path any more."""
+    """Colleagues (shared org) and first-degree connections may chat. Two
+    doctors whose ONLY relationship is a shared group follow that group's
+    member_dm_policy: 'open' lets them chat; 'request' asks them to connect
+    first (the message-request tier is gone, so a connection is the request);
+    'disabled' keeps the group's members apart outside the group."""
     if ctx.is_blocked_either_way:
         return Decision.denied("blocked")
     if ctx.viewer_id == ctx.target_id:
@@ -139,6 +146,12 @@ def _direct_decision(ctx: RelationshipContext) -> Decision:
         return Decision.open("colleague")
     if ctx.is_first_degree:
         return Decision.open("connection")
+    if ctx.shared_group_dm_mode == "open":
+        return Decision.open("shared_group")
+    if ctx.shared_group_dm_mode == "request":
+        return Decision.denied("group_dm_request")
+    if ctx.shared_group_dm_mode == "denied":
+        return Decision.denied("group_dm_disabled")
     return Decision.denied("not_connected")
 
 

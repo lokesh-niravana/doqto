@@ -201,6 +201,10 @@ class RelationshipService:
             )
         )
 
+        shared_group_dm = await RelationshipService._shared_group_dm_mode(
+            viewer_id, target_id, db
+        )
+
         lo, hi = _pair_id(viewer_id, target_id)
         access = await db.scalar(
             select(Conversation.access)
@@ -231,7 +235,46 @@ class RelationshipService:
             target_account_age_days=age_days,
             has_pending_invitation=pending is not None,
             existing_conversation_access=access,
+            shared_group_dm_mode=shared_group_dm,
         )
+
+    # -- shared groups (M5 member_dm_policy) ------------------------------- #
+    _GROUP_DM_RANK = {"open": 2, "request": 1, "denied": 0}
+
+    @staticmethod
+    async def _shared_group_dm_mode(
+        viewer_id: UUID, target_id: UUID, db: AsyncSession
+    ) -> str | None:
+        """The most permissive member_dm_policy verdict across every group both
+        users are ACTIVE members of; None when they share none. Imported lazily:
+        group_service depends on this module."""
+        from app.core.enums import GroupMemberState
+        from app.models import Group, GroupMember
+        from app.services.group_service import GroupService
+
+        mine = GroupMember.__table__.alias("mine")
+        theirs = GroupMember.__table__.alias("theirs")
+        rows = await db.execute(
+            select(Group)
+            .join(mine, mine.c.group_id == Group.id)
+            .join(theirs, theirs.c.group_id == Group.id)
+            .where(
+                mine.c.user_id == viewer_id,
+                mine.c.state == GroupMemberState.ACTIVE,
+                theirs.c.user_id == target_id,
+                theirs.c.state == GroupMemberState.ACTIVE,
+            )
+        )
+        best: str | None = None
+        for group in rows.scalars().all():
+            mode = await GroupService.group_dm_decision(
+                group=group, actor_id=viewer_id, target_id=target_id, db=db
+            )
+            if best is None or RelationshipService._GROUP_DM_RANK[mode] > (
+                RelationshipService._GROUP_DM_RANK[best]
+            ):
+                best = mode
+        return best
 
     # -- mutual + degree -------------------------------------------------- #
     @staticmethod

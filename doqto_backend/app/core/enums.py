@@ -268,6 +268,7 @@ class AuditAction(StrEnum):
     GROUP_OWNERSHIP_TRANSFERRED = "group_ownership_transferred"
     GROUP_INVITE_SENT = "group_invite_sent"
     GROUP_INVITE_ACCEPTED = "group_invite_accepted"
+    MESSAGE_RECEIPTS_READ = "message_receipts_read"
 
 
 class TranscribeSpecialty(StrEnum):

@@ -37,6 +37,14 @@ String routePathForPayload(String payload) {
           return AppRoutes.person(segs[1]);
         case 'chat':
           return AppRoutes.chat(segs[1]);
+        case 'groups':
+          // `/groups/{id}` opens the group (chat, or info for an invitee);
+          // `/groups/{id}/info` lands on Group info directly.
+          return segs.length >= 3 && segs[2] == 'info'
+              ? AppRoutes.groupInfo(segs[1])
+              : AppRoutes.group(segs[1]);
+        case 'g':
+          return AppRoutes.groupInviteLink(segs[1]);
       }
     }
   }
@@ -45,11 +53,16 @@ String routePathForPayload(String payload) {
 }
 
 /// FCM data payload → route. The backend sends only ids (PHI-free):
-/// `conversation_id` for messages/requests, `type` for invitations.
+/// `conversation_id` for messages/requests, `type` for invitations, and
+/// `group_id` for a group invite (lands on Group info, where Accept lives).
 String? routePathForPushData(Map<String, dynamic> data) {
   final conv = data['conversation_id'] as String?;
   if (conv != null && conv.isNotEmpty) return AppRoutes.chat(conv);
   return switch (data['type']) {
+    'group_invite' => switch (data['group_id']) {
+        final String id when id.isNotEmpty => AppRoutes.groupInfo(id),
+        _ => AppRoutes.groups,
+      },
     'invitation_received' || 'invitation_accepted' => AppRoutes.network,
     // Someone we invited joined and is now connected: open their profile.
     'invite_joined' => switch (data['user_id']) {
@@ -100,6 +113,25 @@ Future<void> _notifyInvitationAccepted(
       );
 }
 
+/// "Dr X invited you to {group}" — banner + a tap that lands on Group info,
+/// where Accept / Decline live. From the `group_invite_received` WS event
+/// (names only, not PHI).
+Future<void> _notifyGroupInvite(Ref ref, Map<String, dynamic> data) async {
+  final groupId = data['group_id'] as String?;
+  if (groupId == null) return;
+  final name = (data['inviter_name'] as String?)?.trim();
+  final group = (data['group_name'] as String?)?.trim();
+  await ref.read(notificationServiceProvider).showNetworkEvent(
+        // One banner per group: a re-sent invite replaces, never stacks.
+        tag: 'group-invite:$groupId',
+        title: Strings.groupInviteNotificationTitle,
+        body: (name == null || name.isEmpty || group == null || group.isEmpty)
+            ? Strings.groupInviteNotificationBodyGeneric
+            : Strings.groupInviteNotificationBody(name, group),
+        route: 'doqto:///groups/$groupId/info',
+      );
+}
+
 final notificationListenerProvider = Provider<void>((ref) {
   final service = ref.watch(notificationServiceProvider);
   service.init(
@@ -130,6 +162,10 @@ final notificationListenerProvider = Provider<void>((ref) {
     }
     if (event.type == WsEventServer.invitationAccepted) {
       await _notifyInvitationAccepted(ref, event.data);
+      return;
+    }
+    if (event.type == WsEventServer.groupInviteReceived) {
+      await _notifyGroupInvite(ref, event.data);
       return;
     }
     if (event.type != WsEventServer.newMessage) return;

@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -19,12 +21,16 @@ import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/shadows.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
+import '../../../core/utils/album_grouping.dart';
 import '../../../core/utils/datetime_format.dart';
+import '../../../core/utils/image_metadata.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../core/utils/rich_text.dart';
 import '../../../data/api/api_client.dart';
 import '../../../data/models/conversation.dart';
 import '../../../data/models/group.dart';
+import '../../../data/models/media.dart';
+import '../../../data/models/media_settings.dart';
 import '../../../data/models/message.dart';
 import '../../../data/models/message_edit.dart';
 import '../../../data/models/organization.dart';
@@ -36,6 +42,9 @@ import '../../../state/notification_state.dart';
 import '../../../state/org_state.dart';
 import '../../../state/presence_state.dart';
 import '../../../state/link_preview_state.dart';
+import '../../../state/media_settings_state.dart';
+import '../../../state/voice_playback_state.dart';
+import '../../widgets/album_bubble.dart';
 import '../../widgets/app_pressable.dart';
 import '../../widgets/attachment_bubbles.dart';
 import '../../widgets/connectivity_banner.dart';
@@ -51,6 +60,7 @@ import '../../widgets/mention_controller.dart';
 import '../../widgets/message_context_menu.dart';
 import '../../widgets/message_text.dart';
 import '../../widgets/pinned_banner.dart';
+import '../../widgets/poll_bubble.dart';
 import '../../widgets/quote_strip.dart';
 import '../../widgets/reactions.dart';
 import '../../widgets/report_message_sheet.dart';
@@ -60,7 +70,10 @@ import '../../widgets/typing_indicator.dart';
 import '../../widgets/unread_divider.dart';
 import '../../widgets/voice_note_bubble.dart';
 import '_conversation_display.dart';
+import '../media/media_viewer_screen.dart';
+import 'caption_sheet.dart';
 import 'forward_picker_sheet.dart';
+import 'poll_create_sheet.dart';
 import 'voice_recorder_panel.dart';
 
 /// Pin durations — mirror of PIN_DURATIONS_SEC on the backend.
@@ -96,6 +109,20 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   final _input = MentionController();
   final _scroll = ScrollController();
   bool _showRecorder = false;
+  // Batch 5 D: hold-to-record. The mic is a plain icon; a [Listener] over the
+  // whole composer area owns the pointer, because the composer is swapped
+  // for the recorder panel mid-gesture and a recognizer on the mic itself
+  // would die with it.
+  bool _recorderHeld = false;
+  final _recorderKey = GlobalKey<VoiceRecorderPanelState>();
+  final _micKey = GlobalKey();
+  Timer? _holdTimer;
+  Offset? _micDown;
+  bool _holding = false;
+  static const _holdDelay = Duration(milliseconds: 300);
+  // Batch 5 G: what downloads without a tap on this network, resolved once
+  // per open (settings + radio), re-resolved when the settings change.
+  final Map<MediaDownloadKind, bool> _auto = {};
   bool _typing = false;
   bool _hasText = false;
   Timer? _typingPing;
@@ -200,6 +227,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     _ws = ref.read(websocketClientProvider);
     _drafts = ref.read(draftsProvider.notifier);
     _activeChat = ref.read(activeConversationProvider.notifier);
+    unawaited(_resolveAutoDownload());
     // Unread position before opening marks the chat read (jump to unread).
     _unreadAtOpen = ref
         .read(conversationsProvider.notifier)
@@ -246,6 +274,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _holdTimer?.cancel();
     _draftSave?.cancel();
     _highlightTimer?.cancel();
     _searchDebounce?.cancel();
@@ -1044,8 +1073,10 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     if (m.isDeleted || m.status != MessageStatus.sent) return false;
     final hay = switch (m.type) {
       MessageType.text => plainText(m.content ?? ''),
-      MessageType.file => m.fileName ?? '',
-      MessageType.voiceNote => m.transcript ?? '',
+      MessageType.file => '${m.fileName ?? ''} ${m.caption ?? ''}',
+      MessageType.voiceNote => '${m.transcript ?? ''} ${m.caption ?? ''}',
+      MessageType.image || MessageType.video => m.caption ?? '',
+      MessageType.poll => m.poll?.question ?? '',
       _ => '',
     };
     return hay.toLowerCase().contains(q);
@@ -1360,66 +1391,361 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   Future<void> _pickAttachment() async {
     final choice = await _showOptionsSheet(
       title: 'Share',
-      options: const [
-        (icon: Icons.photo_outlined, label: 'Photo', value: 'photo'),
-        (icon: Icons.description_outlined, label: 'Document', value: 'doc'),
+      options: [
+        (icon: Icons.photo_outlined, label: Strings.mediaPhotos, value: 'photo'),
+        (icon: Icons.videocam_outlined, label: Strings.mediaVideo, value: 'video'),
+        (icon: Icons.description_outlined, label: Strings.mediaDocument, value: 'doc'),
+        if (Platform.isIOS)
+          (icon: Icons.document_scanner_outlined, label: Strings.mediaScanDocument, value: 'scan')
+        else
+          (icon: Icons.camera_alt_outlined, label: Strings.mediaTakePhoto, value: 'camera'),
+        (icon: Icons.poll_outlined, label: Strings.mediaPoll, value: 'poll'),
       ],
     );
-    if (choice == 'photo') {
-      await _pickPhoto();
-    } else if (choice == 'doc') {
-      await _pickDocument();
+    switch (choice) {
+      case 'photo':
+        await _pickPhoto();
+      case 'video':
+        await _pickVideo();
+      case 'doc':
+        await _pickDocument();
+      case 'scan':
+        await _scanDocument();
+      case 'camera':
+        await _pickPhoto(cameraOnly: true);
+      case 'poll':
+        await _createPoll();
     }
   }
 
-  Future<void> _pickPhoto() async {
+  /// Photos (batch 5 B): camera → one; library → up to 30, each its own
+  /// message, grouped into an album by the thread. Pixels are capped by the
+  /// upload-quality setting, EXIF (GPS, device) is stripped on the phone,
+  /// and the caption rides on the last photo.
+  Future<void> _pickPhoto({bool cameraOnly = false}) async {
+    final source = cameraOnly
+        ? 'camera'
+        : await _showOptionsSheet(
+            title: Strings.mediaPhotos,
+            options: const [
+              (icon: Icons.camera_alt_outlined, label: Strings.mediaTakePhoto, value: 'camera'),
+              (icon: Icons.photo_library_outlined, label: Strings.mediaChooseGallery, value: 'gallery'),
+            ],
+          );
+    if (source == null) return;
+    final quality = ref.read(mediaSettingsProvider).uploadQuality;
+    final maxSide = quality.maxSide?.toDouble();
+    final picker = ImagePicker();
+    List<XFile> picked;
+    try {
+      if (source == 'camera') {
+        final x = await picker.pickImage(
+          source: ImageSource.camera,
+          maxWidth: maxSide,
+          maxHeight: maxSide,
+          imageQuality: maxSide == null ? null : 85,
+        );
+        picked = [?x];
+      } else {
+        picked = await picker.pickMultiImage(
+          maxWidth: maxSide,
+          maxHeight: maxSide,
+          imageQuality: maxSide == null ? null : 85,
+          limit: MediaLimits.multiPhotoMax,
+        );
+      }
+    } catch (_) {
+      _showError(source == 'camera' ? 'Camera not available on this device' : 'Could not open the photo library');
+      return;
+    }
+    if (picked.isEmpty || !mounted) return;
+    if (picked.length > MediaLimits.multiPhotoMax) {
+      _showError(Strings.mediaTooManyPhotos);
+      picked = picked.sublist(0, MediaLimits.multiPhotoMax);
+    }
+    final caption = await showCaptionSheet(
+      context,
+      previews: [for (final x in picked) CaptionPreview(imagePath: x.path, label: Strings.mediaPhoto)],
+    );
+    if (caption == null || !mounted) return;
+    await sendPhotoFiles([for (final x in picked) (path: x.path, name: x.name, mime: x.mimeType)], caption: caption);
+  }
+
+  /// Shared by the picker and the integration test hook: strip EXIF, send
+  /// each photo as its own message, caption on the last.
+  @visibleForTesting
+  Future<void> sendPhotoFiles(List<({String path, String name, String? mime})> files, {String? caption}) async {
+    for (final (i, x) in files.indexed) {
+      final raw = await File(x.path).readAsBytes();
+      final bytes = ImageMetadata.strip(raw);
+      await _upload(
+        bytes: bytes,
+        filename: x.name,
+        contentType: x.mime ?? lookupMimeType(x.name) ?? 'image/jpeg',
+        caption: i == files.length - 1 && (caption ?? '').isNotEmpty ? caption : null,
+      );
+    }
+  }
+
+  /// Video (batch 5 C): record or pick, ≤ 10 min / 100 MB, poster made on
+  /// the phone, presigned upload with progress in the bubble.
+  Future<void> _pickVideo() async {
     final source = await _showOptionsSheet(
-      title: 'Photo',
+      title: Strings.mediaVideo,
       options: const [
-        (icon: Icons.camera_alt_outlined, label: 'Take photo', value: 'camera'),
-        (
-          icon: Icons.photo_library_outlined,
-          label: 'Choose from gallery',
-          value: 'gallery',
-        ),
+        (icon: Icons.videocam_outlined, label: Strings.mediaRecordVideo, value: 'camera'),
+        (icon: Icons.video_library_outlined, label: Strings.mediaChooseGallery, value: 'gallery'),
       ],
     );
     if (source == null) return;
-    final XFile? picked;
+    XFile? picked;
     try {
-      picked = await ImagePicker().pickImage(
+      picked = await ImagePicker().pickVideo(
         source: source == 'camera' ? ImageSource.camera : ImageSource.gallery,
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 85,
+        maxDuration: MediaLimits.videoMaxDuration,
       );
     } catch (_) {
-      _showError(
-        source == 'camera'
-            ? 'Camera not available on this device'
-            : 'Could not open the photo library',
-      );
+      _showError(source == 'camera' ? 'Camera not available on this device' : 'Could not open the photo library');
       return;
     }
-    if (picked == null) return;
-    final bytes = await picked.readAsBytes();
-    await _upload(
-      bytes: bytes,
-      filename: picked.name,
-      contentType:
-          picked.mimeType ?? lookupMimeType(picked.name) ?? 'image/jpeg',
+    if (picked == null || !mounted) return;
+    await sendVideoFile(picked.path, fileName: picked.name, contentType: picked.mimeType);
+  }
+
+  /// Shared by the picker and the integration test hook: caption, limits,
+  /// then the notifier's outbox-first send.
+  @visibleForTesting
+  Future<void> sendVideoFile(String path, {required String fileName, String? contentType, bool askCaption = true, String? caption}) async {
+    if (await File(path).length() > MediaLimits.videoMaxBytes) {
+      _showError(Strings.mediaVideoTooLarge);
+      return;
+    }
+    if (!mounted) return;
+    if (askCaption) {
+      caption = await showCaptionSheet(
+        context,
+        previews: [CaptionPreview(icon: Icons.videocam_outlined, label: Strings.mediaVideo)],
+      );
+      if (caption == null || !mounted) return;
+    }
+    try {
+      final ok = await ref.read(messagesProvider(widget.conversationId).notifier).sendVideo(
+            sourcePath: path,
+            fileName: fileName,
+            contentType: contentType ?? lookupMimeType(fileName) ?? 'video/mp4',
+            caption: caption != null && caption.isNotEmpty ? caption : null,
+          );
+      if (!ok) _showError(Strings.mediaVideoTooLong);
+    } catch (e) {
+      _showError(ErrorMessages.forApi(e));
+    }
+  }
+
+  /// Documents up to 100 MB go by path (presigned parts above 8 MB) — never
+  /// through Dart memory.
+  Future<void> _pickDocument() async {
+    final result = await FilePicker.platform.pickFiles(withData: false);
+    final file = result?.files.firstOrNull;
+    if (file == null || file.path == null || !mounted) return;
+    if (file.size > MediaLimits.fileMaxBytes) {
+      _showError(Strings.mediaFileTooLarge);
+      return;
+    }
+    final caption = await showCaptionSheet(
+      context,
+      previews: [CaptionPreview(label: file.name)],
+    );
+    if (caption == null || !mounted) return;
+    try {
+      await ref.read(messagesProvider(widget.conversationId).notifier).sendFilePath(
+            sourcePath: file.path!,
+            fileName: file.name,
+            contentType: lookupMimeType(file.name) ?? 'application/octet-stream',
+            caption: caption.isNotEmpty ? caption : null,
+          );
+    } catch (e) {
+      _showError(ErrorMessages.forApi(e));
+    }
+  }
+
+  /// VisionKit scanner → PDF (batch 5 H). iOS only; Android offers the
+  /// camera instead (see [_pickAttachment]).
+  Future<void> _scanDocument() async {
+    final dir = await getTemporaryDirectory();
+    final out = '${dir.path}/scan_${DateTime.now().millisecondsSinceEpoch}.pdf';
+    final ok = await ref.read(mediaNativeProvider).scanDocument(out);
+    if (!mounted) return;
+    if (ok == null) {
+      _showError(Strings.mediaScanUnavailable);
+      return;
+    }
+    if (!ok) return; // user backed out
+    final name = 'Scan ${DateFormat('yyyy-MM-dd HH.mm').format(DateTime.now())}.pdf';
+    final caption = await showCaptionSheet(context, previews: [CaptionPreview(icon: Icons.document_scanner_outlined, label: name)]);
+    if (caption == null || !mounted) return;
+    try {
+      await ref.read(messagesProvider(widget.conversationId).notifier).sendFilePath(
+            sourcePath: out,
+            fileName: name,
+            contentType: 'application/pdf',
+            caption: caption.isNotEmpty ? caption : null,
+          );
+    } catch (e) {
+      _showError(ErrorMessages.forApi(e));
+    }
+  }
+
+  Future<void> _createPoll() async {
+    final draft = await showPollCreateSheet(context);
+    if (draft == null || !mounted) return;
+    try {
+      await ref.read(messagesProvider(widget.conversationId).notifier).sendPoll(
+            question: draft.question,
+            options: draft.options,
+            multiple: draft.multiple,
+            replyTo: _replyingTo,
+          );
+      if (_replyingTo != null) setState(() => _replyingTo = null);
+    } catch (e) {
+      _showError(ErrorMessages.forApi(e));
+    }
+  }
+
+  Future<void> _vote(Message m, List<String> optionIds) async {
+    try {
+      await ref.read(messagesProvider(widget.conversationId).notifier).vote(m.id, optionIds);
+    } catch (e) {
+      _showError(ErrorMessages.forApi(e));
+    }
+  }
+
+  void _showPollVoters(Message m) {
+    final poll = m.poll;
+    if (poll == null) return;
+    showPollVotersSheet(
+      context: context,
+      poll: poll,
+      nameFor: (uid) => _nameFor(uid) ?? 'Former member',
+      colorFor: (uid) => _members[uid]?.avatarIndex ?? 0,
     );
   }
 
-  Future<void> _pickDocument() async {
-    final result = await FilePicker.platform.pickFiles(withData: true);
-    final file = result?.files.firstOrNull;
-    if (file == null || file.bytes == null) return;
-    await _upload(
-      bytes: file.bytes!,
-      filename: file.name,
-      contentType: lookupMimeType(file.name) ?? 'application/octet-stream',
+  /// Every photo and video of the thread in send order, opened at [m].
+  void _openViewer(Message m) {
+    final msgs = ref.read(messagesProvider(widget.conversationId)).asData?.value ?? const <Message>[];
+    final items = [
+      for (final x in msgs.reversed)
+        if ((x.type == MessageType.image || x.type == MessageType.video) && !x.isDeleted && x.status == MessageStatus.sent) x,
+    ];
+    final index = items.indexWhere((x) => x.id == m.id);
+    MediaViewerScreen.open(
+      context,
+      conversationId: widget.conversationId,
+      items: index < 0 ? [m] : items,
+      initialIndex: index < 0 ? 0 : index,
     );
+  }
+
+  Future<String> _fileUrl(Message m) => ref.read(chatRepositoryProvider).fileUrl(m.id);
+  Future<String> _thumbUrl(Message m) => ref.read(chatRepositoryProvider).fileUrl(m.id, thumb: true);
+
+  Future<({String path, bool isFile})> _voiceSource(Message m) =>
+      resolveVoiceSource(ref, m, url: () => _fileUrl(m), download: true);
+
+  bool _autoFor(MediaDownloadKind kind) => _auto[kind] ?? (kind == MediaDownloadKind.photos);
+
+  Future<void> _resolveAutoDownload() async {
+    for (final kind in MediaDownloadKind.values) {
+      final allowed = await shouldAutoDownload(ref, kind);
+      if (!mounted) return;
+      if (_auto[kind] != allowed) setState(() => _auto[kind] = allowed);
+    }
+  }
+
+  // ---- Hold-to-record pointer handling (batch 5 D) ------------------------
+
+  bool _micHit(Offset global) {
+    final box = _micKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return false;
+    final local = box.globalToLocal(global);
+    return (Offset.zero & box.size).contains(local);
+  }
+
+  void _onComposerPointerDown(PointerDownEvent e) {
+    if (_showRecorder || !_micHit(e.position)) return;
+    _micDown = e.position;
+    _holdTimer?.cancel();
+    _holdTimer = Timer(_holdDelay, () {
+      if (!mounted || _micDown == null) return;
+      _holding = true;
+      HapticFeedback.mediumImpact();
+      setState(() {
+        _showRecorder = true;
+        _recorderHeld = true;
+      });
+    });
+  }
+
+  void _onComposerPointerMove(PointerMoveEvent e) {
+    final down = _micDown;
+    if (down == null) return;
+    final d = e.position - down;
+    if (!_holding) {
+      // Moved before the hold kicked in: a scroll or a slip, not a hold.
+      if (d.distance > 12) {
+        _holdTimer?.cancel();
+        _micDown = null;
+      }
+      return;
+    }
+    final panel = _recorderKey.currentState;
+    panel?.setSlide(d.dx);
+    if (d.dx < VoiceRecorderPanel.cancelDx) {
+      _endHold();
+      panel?.cancelHold();
+    } else if (d.dy < VoiceRecorderPanel.lockDy) {
+      _endHold();
+      panel?.lock();
+    }
+  }
+
+  void _onComposerPointerUp(PointerEvent e) {
+    if (_micDown == null) return;
+    if (!_holding) {
+      // A tap: the classic stop-review-send panel.
+      _holdTimer?.cancel();
+      _micDown = null;
+      if (e is PointerUpEvent) {
+        setState(() {
+          _showRecorder = true;
+          _recorderHeld = false;
+        });
+      }
+      return;
+    }
+    _endHold();
+    final panel = _recorderKey.currentState;
+    if (panel != null) {
+      panel.releaseHold();
+    } else {
+      // Let go before the panel's first frame: finish once it exists.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _recorderKey.currentState?.releaseHold());
+    }
+  }
+
+  void _endHold() {
+    _holding = false;
+    _micDown = null;
+    _holdTimer?.cancel();
+  }
+
+  void _closeRecorder() {
+    _endHold();
+    if (!mounted) return;
+    setState(() {
+      _showRecorder = false;
+      _recorderHeld = false;
+    });
   }
 
   /// Outbox-first: the notifier persists + enqueues and shows an optimistic
@@ -1429,6 +1755,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     required List<int> bytes,
     required String filename,
     required String contentType,
+    String? caption,
   }) async {
     try {
       await ref
@@ -1437,6 +1764,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
             bytes: bytes,
             filename: filename,
             contentType: contentType,
+            caption: caption,
           );
     } catch (e) {
       // Only local persistence can throw (e.g. disk full).
@@ -1755,27 +2083,53 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     final isLocalPending = m.clientId != null && m.status != MessageStatus.sent;
     if (isLocalPending && m.type != MessageType.text) {
       final Widget bubble;
+      final progress = ref.watch(uploadProgressProvider.select((p) => p[m.clientId]));
       if (m.type == MessageType.image && m.localPath != null) {
         bubble = PendingImageBubble(
           path: m.localPath!,
           isMine: isMine,
           timestamp: m.createdAt.toLocal(),
           status: m.status,
+          caption: m.caption,
+          progress: progress,
+        );
+      } else if (m.type == MessageType.video) {
+        bubble = PendingVideoBubble(
+          posterPath: m.localThumbPath,
+          durationSec: m.voiceDurationSec ?? 0,
+          isMine: isMine,
+          timestamp: m.createdAt.toLocal(),
+          status: m.status,
+          caption: m.caption,
+          progress: progress,
+          width: m.mediaWidth,
+          height: m.mediaHeight,
         );
       } else if (m.type == MessageType.file) {
         bubble = FileBubble(
           getFileUrl: null, // still local — nothing to open yet
           fileName: m.fileName ?? 'Document',
+          fileSizeBytes: m.fileSizeBytes,
+          isMine: isMine,
+          timestamp: m.createdAt.toLocal(),
+          status: m.status,
+          caption: m.caption,
+          progress: progress,
+        );
+      } else if (m.type == MessageType.voiceNote) {
+        bubble = VoiceNoteBubble(
+          messageId: m.id,
+          conversationId: widget.conversationId,
+          durationSec: m.voiceDurationSec ?? 0,
+          transcript: m.transcript,
+          caption: m.caption,
+          waveform: m.waveform,
           isMine: isMine,
           timestamp: m.createdAt.toLocal(),
           status: m.status,
         );
       } else {
-        final label = switch (m.type) {
-          MessageType.voiceNote =>
-            'Voice note (${(m.voiceDurationSec ?? 0) ~/ 60}:${((m.voiceDurationSec ?? 0) % 60).toString().padLeft(2, '0')})',
-          _ => m.fileName ?? 'Attachment',
-        };
+        final label = m.fileName ?? 'Attachment';
         bubble = MessageBubble(
           text: label,
           isMine: isMine,
@@ -1860,39 +2214,129 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   }
 
   Widget _buildMediaBubble(Message m, bool isMine) {
-    if (m.type == MessageType.voiceNote) {
-      return VoiceNoteBubble(
-        // Key by message id: these bubbles cache a resolved file URL in
-        // State — without a key, ListView reuses the State for a DIFFERENT
-        // message when the list shifts, showing the wrong media.
-        key: ValueKey(m.id),
-        durationSec: m.voiceDurationSec ?? 0,
-        transcript: m.transcript,
-        isMine: isMine,
-        getAudioUrl: () => ref.read(chatRepositoryProvider).fileUrl(m.id),
-      );
+    // Key by message id: these bubbles keep files / players in State —
+    // without a key, ListView reuses the State for a DIFFERENT message when
+    // the list shifts, showing the wrong media.
+    switch (m.type) {
+      case MessageType.voiceNote:
+        return VoiceNoteBubble(
+          key: ValueKey(m.id),
+          messageId: m.id,
+          conversationId: widget.conversationId,
+          durationSec: m.voiceDurationSec ?? 0,
+          transcript: m.transcript,
+          caption: m.caption,
+          waveform: m.waveform,
+          isMine: isMine,
+          timestamp: m.createdAt.toLocal(),
+          read: m.read,
+          delivered: m.delivered,
+          resolve: () => _voiceSource(m),
+        );
+      case MessageType.image:
+        return ImageBubble(
+          key: ValueKey(m.id),
+          messageId: m.id,
+          conversationId: widget.conversationId,
+          getFileUrl: () => _fileUrl(m),
+          isMine: isMine,
+          timestamp: m.createdAt.toLocal(),
+          read: m.read,
+          delivered: m.delivered,
+          caption: m.caption,
+          width: m.mediaWidth,
+          height: m.mediaHeight,
+          autoDownload: _autoFor(MediaDownloadKind.photos),
+          onOpen: (_) => _openViewer(m),
+        );
+      case MessageType.video:
+        return VideoBubble(
+          key: ValueKey(m.id),
+          messageId: m.id,
+          conversationId: widget.conversationId,
+          getFileUrl: () => _fileUrl(m),
+          getThumbUrl: () => _thumbUrl(m),
+          durationSec: m.voiceDurationSec ?? 0,
+          isMine: isMine,
+          timestamp: m.createdAt.toLocal(),
+          read: m.read,
+          delivered: m.delivered,
+          caption: m.caption,
+          width: m.mediaWidth,
+          height: m.mediaHeight,
+          autoDownload: _autoFor(MediaDownloadKind.video),
+          onOpen: () => _openViewer(m),
+        );
+      case MessageType.poll:
+        return PollBubble(
+          key: ValueKey(m.id),
+          message: m,
+          poll: m.poll ?? const PollData(question: '', options: [], multiple: false),
+          isMine: isMine,
+          me: ref.read(authProvider).user?.id,
+          onVote: (ids) => _vote(m, ids),
+          onViewVotes: () => _showPollVoters(m),
+        );
+      default:
+        return FileBubble(
+          key: ValueKey(m.id),
+          messageId: m.id,
+          conversationId: widget.conversationId,
+          getFileUrl: () => _fileUrl(m),
+          fileName: m.fileName ?? 'File',
+          fileSizeBytes: m.fileSizeBytes,
+          isMine: isMine,
+          timestamp: m.createdAt.toLocal(),
+          read: m.read,
+          delivered: m.delivered,
+          caption: m.caption,
+          prefetch: _autoFor(MediaDownloadKind.documents),
+        );
     }
-    if (m.type == MessageType.image) {
-      return ImageBubble(
-        key: ValueKey(m.id),
-        messageId: m.id,
-        getFileUrl: () => ref.read(chatRepositoryProvider).fileUrl(m.id),
-        isMine: isMine,
-        timestamp: m.createdAt.toLocal(),
-        read: m.read,
-        delivered: m.delivered,
-      );
-    }
-    return FileBubble(
-      key: ValueKey(m.id),
-      messageId: m.id,
-      getFileUrl: () => ref.read(chatRepositoryProvider).fileUrl(m.id),
-      fileName: m.fileName ?? 'File',
-      fileSizeBytes: m.fileSizeBytes,
+  }
+
+  /// Album row (batch 5 B): the newest photo stands for the row (keys,
+  /// selection, timestamp); the sender label follows the oldest like any
+  /// other bubble.
+  Widget _buildAlbum(ThreadRow r, bool isMine, List<Message> msgs, int iOld) {
+    final m = r.first;
+    final grouped = _isGrouped(msgs, iOld);
+    final sender = isMine || grouped ? null : _members[m.senderId];
+    final bubble = AlbumBubble(
+      key: ValueKey('album-${r.id}'),
+      messages: r.messages,
+      conversationId: widget.conversationId,
       isMine: isMine,
-      timestamp: m.createdAt.toLocal(),
-      read: m.read,
-      delivered: m.delivered,
+      resolveUrl: _fileUrl,
+      autoDownload: _autoFor(MediaDownloadKind.photos),
+      onOpen: (i) => _openViewer(r.messages.reversed.elementAt(i)),
+    );
+    final decorated = Stack(
+      children: [
+        bubble,
+        if (r.messages.any((x) => x.starred))
+          Positioned(
+            right: isMine ? AppSpacing.lg + 4 : null,
+            left: isMine ? null : AppSpacing.lg + 4,
+            top: AppSpacing.sm,
+            child: const Icon(Icons.star_rounded, key: ValueKey('bubble-star'), size: 14, color: AppColors.amber),
+          ),
+      ],
+    );
+    if (sender == null) return decorated;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: AppSpacing.screenHorizontal + AppSpacing.xs, bottom: 2),
+          child: Text(
+            sender.fullName,
+            style: AppText.timestamp.copyWith(color: AppColors.avatarColorFor(sender.avatarIndex), fontWeight: FontWeight.w600),
+          ),
+        ),
+        decorated,
+      ],
     );
   }
 
@@ -2172,6 +2616,26 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                   final notifier = ref.read(
                     messagesProvider(widget.conversationId).notifier,
                   );
+                  // Batch 5 B/D: consecutive photos fold into album rows;
+                  // the voice player learns how to find and fetch the next
+                  // note in this thread.
+                  final rows = groupIntoAlbums(msgs);
+                  final indexOf = <String, int>{
+                    for (var k = 0; k < msgs.length; k++) msgs[k].id: k,
+                  };
+                  final playback = ref.read(voicePlaybackProvider);
+                  playback.resolverFor = _voiceSource;
+                  playback.nextAfter = (endedId) {
+                    final at = indexOf[endedId];
+                    if (at == null) return null;
+                    for (var k = at - 1; k >= 0; k--) {
+                      final x = msgs[k];
+                      if (x.type == MessageType.voiceNote && !x.isDeleted && x.status == MessageStatus.sent && x.conversationId == widget.conversationId) {
+                        return x;
+                      }
+                    }
+                    return null;
+                  };
                   return Stack(
                     children: [
                       ListView.builder(
@@ -2182,9 +2646,9 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                         ),
                         // +1 row at the top (list end) for the older-page spinner.
                         itemCount:
-                            msgs.length + (notifier.loadingOlder ? 1 : 0),
-                        itemBuilder: (_, i) {
-                          if (i >= msgs.length) {
+                            rows.length + (notifier.loadingOlder ? 1 : 0),
+                        itemBuilder: (_, ri) {
+                          if (ri >= rows.length) {
                             return const Padding(
                               padding: EdgeInsets.all(AppSpacing.md),
                               child: Center(
@@ -2198,11 +2662,17 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                               ),
                             );
                           }
-                          final m = msgs[i];
+                          final r = rows[ri];
+                          final m = r.first;
+                          // Grouping and day pills look at the message
+                          // above, i.e. the one before the row's oldest.
+                          final i = indexOf[r.last.id] ?? 0;
                           final isMine = me?.id == m.senderId;
                           Widget row = _selectable(
                             m,
-                            _buildBubble(m, isMine, msgs, i),
+                            r.isAlbum
+                                ? _buildAlbum(r, isMine, msgs, i)
+                                : _buildBubble(m, isMine, msgs, i),
                           );
                           // NEW messages only: sent slide from right, received
                           // from left. Keyed by id so history/pagination and
@@ -2219,7 +2689,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                           final showDay =
                               i == msgs.length - 1 ||
                               !_sameDay(
-                                m.createdAt.toLocal(),
+                                r.last.createdAt.toLocal(),
                                 msgs[i + 1].createdAt.toLocal(),
                               );
                           if (showDay) {
@@ -2254,13 +2724,22 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
             // direct chats only between colleagues or connections.
             postingClosed
                 ? _postingClosedNotice()
-                : _showRecorder
-                    ? VoiceRecorderPanel(
-                        conversationId: widget.conversationId,
-                        onSent: () => setState(() => _showRecorder = false),
-                        onCancel: () => setState(() => _showRecorder = false),
-                      )
-                    : _composer(),
+                : Listener(
+                    behavior: HitTestBehavior.translucent,
+                    onPointerDown: _onComposerPointerDown,
+                    onPointerMove: _onComposerPointerMove,
+                    onPointerUp: _onComposerPointerUp,
+                    onPointerCancel: _onComposerPointerUp,
+                    child: _showRecorder
+                        ? VoiceRecorderPanel(
+                            key: _recorderKey,
+                            conversationId: widget.conversationId,
+                            held: _recorderHeld,
+                            onSent: _closeRecorder,
+                            onCancel: _closeRecorder,
+                          )
+                        : _composer(),
+                  ),
           ],
         ),
       ),
@@ -2411,18 +2890,28 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               IconButton(
+                                key: const ValueKey('composer-attach'),
                                 onPressed: _pickAttachment,
                                 icon: const Icon(
                                   Icons.attach_file,
                                   color: AppColors.medBlue,
                                 ),
                               ),
-                              IconButton(
-                                onPressed: () =>
-                                    setState(() => _showRecorder = true),
-                                icon: const Icon(
-                                  Icons.mic,
-                                  color: AppColors.medBlue,
+                              // Tap → review panel; hold → record while
+                              // held (pointer handled by the Listener above
+                              // the composer, see _onComposerPointerDown).
+                              Semantics(
+                                button: true,
+                                label: 'Record voice note',
+                                child: SizedBox(
+                                  key: _micKey,
+                                  width: 48,
+                                  height: 48,
+                                  child: const Icon(
+                                    Icons.mic,
+                                    key: ValueKey('composer-mic'),
+                                    color: AppColors.medBlue,
+                                  ),
                                 ),
                               ),
                             ],

@@ -21,8 +21,20 @@ class ChatDocumentStore {
   ChatDocumentStore({
     Future<Directory> Function()? root,
     FileDownloader? download,
+    MediaIndex? index,
+    this.onDownloaded,
   }) : _rootResolver = root ?? _defaultRoot,
-       _download = download ?? _httpDownload;
+       _download = download ?? _httpDownload,
+       _index = index;
+
+  final MediaIndex? _index;
+
+  /// Bytes that came over the network (network usage counters).
+  final void Function(int bytes)? onDownloaded;
+
+  /// Index key: documents and photos share one index, so a document's entry
+  /// is namespaced.
+  static String indexId(String messageId) => 'doc:$messageId';
 
   static const folder = 'doqto_chat_docs';
   static const staleAfter = Duration(days: 30);
@@ -86,19 +98,30 @@ class ChatDocumentStore {
   Future<File> open(
     String messageId,
     String fileName,
-    Future<String> Function() resolveUrl,
-  ) {
+    Future<String> Function() resolveUrl, {
+    String? conversationId,
+  }) {
     // Block body on purpose: see ChatMediaCache.image.
-    return _inFlight[messageId] ??= _load(messageId, fileName, resolveUrl)
+    return _inFlight[messageId] ??= _load(messageId, fileName, resolveUrl, conversationId)
         .whenComplete(() {
           _inFlight.remove(messageId);
         });
+  }
+
+  /// Already on the phone? Does not download.
+  Future<File?> cached(String messageId) async {
+    try {
+      return await _cached(await _messageDir(messageId));
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<File> _load(
     String messageId,
     String fileName,
     Future<String> Function() resolveUrl,
+    String? conversationId,
   ) async {
     if (!_swept) {
       _swept = true;
@@ -123,17 +146,25 @@ class ChatDocumentStore {
       rethrow;
     }
     await FileProtection.complete(target.path);
+    try {
+      final bytes = target.existsSync() ? target.lengthSync() : 0;
+      onDownloaded?.call(bytes);
+      if (conversationId != null) await _index?.put(indexId(messageId), conversationId, bytes);
+    } catch (_) {}
     return target;
   }
 
   /// The sender already holds the bytes: file them under the server id so
   /// their own bubble opens without a download.
-  Future<void> seed(String messageId, String fileName, File source) async {
+  Future<void> seed(String messageId, String fileName, File source, {String? conversationId}) async {
     try {
       final dir = await _messageDir(messageId);
       await dir.create(recursive: true);
       final target = await source.copy(p.join(dir.path, safeName(fileName)));
       await FileProtection.complete(target.path);
+      if (conversationId != null) {
+        await _index?.put(indexId(messageId), conversationId, target.existsSync() ? target.lengthSync() : 0);
+      }
     } catch (_) {
       // Best effort: a miss just means one download later.
     }
@@ -143,6 +174,29 @@ class ChatDocumentStore {
     try {
       await _deleteQuietly(await _messageDir(messageId));
     } catch (_) {}
+    try {
+      await _index?.remove(indexId(messageId));
+    } catch (_) {}
+  }
+
+  /// Stored bytes per conversation (Manage storage).
+  Map<String, int> sizesByConversation() {
+    final out = <String, int>{};
+    for (final e in (_index?.all() ?? const <String, (String, int)>{}).entries) {
+      if (!e.key.startsWith('doc:')) continue;
+      out[e.value.$1] = (out[e.value.$1] ?? 0) + e.value.$2;
+    }
+    return out;
+  }
+
+  Future<void> clearConversation(String conversationId) async {
+    final ids = [
+      for (final e in (_index?.all() ?? const <String, (String, int)>{}).entries)
+        if (e.key.startsWith('doc:') && e.value.$1 == conversationId) e.key.substring(4),
+    ];
+    for (final id in ids) {
+      await evict(id);
+    }
   }
 
   Future<void> clear() async {

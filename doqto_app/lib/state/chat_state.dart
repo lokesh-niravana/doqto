@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -11,12 +13,14 @@ import '../data/api/api_client.dart';
 import '../data/api/websocket_client.dart';
 import '../data/models/conversation.dart';
 import '../data/models/conversation_prefs.dart';
+import '../data/models/media.dart';
 import '../data/models/message.dart';
 import '../data/repositories/chat_repository.dart';
 import '../data/services/chat_document_store.dart';
 import '../data/services/chat_media_cache.dart';
 import '../data/services/outbox.dart';
 import 'auth_state.dart';
+import 'media_settings_state.dart';
 import 'realtime_state.dart';
 
 /// Conversation list that live-updates: re-fetches in place (no loading flash)
@@ -366,8 +370,13 @@ final conversationsProvider =
 
 /// Send an outbox entry over the wire per its kind. Shared by the per-thread
 /// notifier and the global drainer; the server dedups by client_id, so
-/// overlapping calls are harmless.
-Future<Message> deliverOutboxEntry(ChatRepository repo, OutboxEntry e) async {
+/// overlapping calls are harmless. [onProgress] (0–1) reports upload
+/// progress for media going through the presigned flow.
+Future<Message> deliverOutboxEntry(
+  ChatRepository repo,
+  OutboxEntry e, {
+  void Function(double fraction)? onProgress,
+}) async {
   switch (e.kind) {
     case OutboxKind.text:
       return repo.sendText(
@@ -377,14 +386,25 @@ Future<Message> deliverOutboxEntry(ChatRepository repo, OutboxEntry e) async {
         replyToId: e.replyToId,
       );
     case OutboxKind.media:
-      final bytes = await File(e.filePath!).readAsBytes();
+      final file = File(e.filePath!);
+      // Big documents go straight to S3 (the inline route reads the body
+      // into memory); photos and small files keep the one-call route.
+      if (await file.length() > MediaLimits.inlineMaxBytes) {
+        return deliverPresigned(repo, e, onProgress: onProgress);
+      }
+      final bytes = await file.readAsBytes();
       return repo.uploadFile(
         conversationId: e.conversationId,
         bytes: bytes,
         filename: e.fileName ?? e.filePath!.split('/').last,
         contentType: e.mimeType,
         clientId: e.clientId,
+        caption: e.caption,
+        width: e.width,
+        height: e.height,
       );
+    case OutboxKind.video:
+      return deliverPresigned(repo, e, onProgress: onProgress);
     case OutboxKind.voice:
       final bytes = await File(e.filePath!).readAsBytes();
       return repo.uploadVoiceNote(
@@ -394,19 +414,111 @@ Future<Message> deliverOutboxEntry(ChatRepository repo, OutboxEntry e) async {
         durationSec: e.durationSec ?? 0,
         transcript: e.transcript,
         clientId: e.clientId,
+        waveform: e.waveform == null ? null : base64Decode(e.waveform!),
+        caption: e.caption,
       );
   }
 }
 
-/// The sender's own photo is already on disk: file it under the server id
-/// before the outbox copy is deleted, so the sent bubble never downloads it.
+/// Presigned flow (batch 5): intent → PUT the object (one request or
+/// 8 MB parts) and, for a video, its poster → complete. A `client_id` the
+/// server has already completed short-circuits to the existing row, so a
+/// retry after a crash never uploads twice.
+Future<Message> deliverPresigned(
+  ChatRepository repo,
+  OutboxEntry e, {
+  void Function(double fraction)? onProgress,
+}) async {
+  final file = File(e.filePath!);
+  final size = await file.length();
+  final contentType = e.mimeType ?? 'application/octet-stream';
+  final isVideo = e.kind == OutboxKind.video;
+  final thumbFile = e.thumbPath == null ? null : File(e.thumbPath!);
+  final hasThumb = isVideo && thumbFile != null && await thumbFile.exists();
+  final intent = await repo.uploadIntent(
+    e.conversationId,
+    fileName: e.fileName ?? file.path.split('/').last,
+    contentType: contentType,
+    sizeBytes: size,
+    clientId: e.clientId,
+    withThumb: hasThumb,
+  );
+  if (intent.message != null) return intent.message!;
+
+  final parts = <(int, String)>[];
+  var sentSoFar = 0;
+  void report(int sent) => onProgress?.call(size == 0 ? 1 : (sentSoFar + sent) / size);
+  if (intent.isMultipart) {
+    final raf = await file.open();
+    try {
+      for (final part in intent.partUrls) {
+        final start = (part.partNumber - 1) * intent.partSize;
+        final len = (size - start).clamp(0, intent.partSize);
+        await raf.setPosition(start);
+        final chunk = await raf.read(len);
+        final etag = await repo.putPresigned(
+          part.url,
+          chunk,
+          contentType: contentType,
+          onProgress: (sent, _) => report(sent),
+        );
+        parts.add((part.partNumber, etag));
+        sentSoFar += len;
+        report(0);
+      }
+    } finally {
+      await raf.close();
+    }
+  } else {
+    final bytes = await file.readAsBytes();
+    await repo.putPresigned(
+      intent.putUrl!,
+      bytes,
+      contentType: contentType,
+      onProgress: (sent, _) => report(sent),
+    );
+  }
+  var thumbUploaded = false;
+  if (hasThumb && intent.thumbPutUrl != null) {
+    await repo.putPresigned(
+      intent.thumbPutUrl!,
+      await thumbFile.readAsBytes(),
+      contentType: 'image/jpeg',
+    );
+    thumbUploaded = true;
+  }
+  onProgress?.call(1);
+  return repo.uploadComplete(
+    e.conversationId,
+    intentId: intent.intentId,
+    parts: parts,
+    caption: e.caption,
+    durationSec: isVideo ? e.durationSec : null,
+    width: e.width,
+    height: e.height,
+    hasThumb: thumbUploaded,
+  );
+}
+
+/// The sender's own photo (or clip and poster) is already on disk: file it
+/// under the server id before the outbox copy is deleted, so the sent bubble
+/// never downloads it.
 Future<void> seedSentImage(
   ChatMediaCache cache,
   OutboxEntry e,
   Message msg,
 ) async {
-  if (msg.type != MessageType.image || e.filePath == null) return;
-  await cache.seed(msg.id, File(e.filePath!));
+  if (e.filePath == null) return;
+  if (msg.type == MessageType.image || msg.type == MessageType.video) {
+    await cache.seed(msg.id, File(e.filePath!), conversationId: msg.conversationId);
+  }
+  if (msg.type == MessageType.video && e.thumbPath != null) {
+    await cache.seed(
+      ChatMediaCache.thumbId(msg.id),
+      File(e.thumbPath!),
+      conversationId: msg.conversationId,
+    );
+  }
 }
 
 /// Same for a sent document: its own bubble opens without a download.
@@ -420,6 +532,7 @@ Future<void> seedSentDocument(
     msg.id,
     msg.fileName ?? e.fileName ?? 'document',
     File(e.filePath!),
+    conversationId: msg.conversationId,
   );
 }
 
@@ -492,6 +605,7 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
               (e.mimeType ?? '').startsWith('image/')
                   ? MessageType.image
                   : MessageType.file,
+            OutboxKind.video => MessageType.video,
             OutboxKind.voice => MessageType.voiceNote,
           },
           fileName: e.fileName,
@@ -499,6 +613,11 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
           transcript: e.transcript,
           localPath: e.filePath,
           replyTo: e.replyToId == null ? null : _replyPreviewFor(e.replyToId!),
+          caption: e.caption,
+          localThumbPath: e.thumbPath,
+          mediaWidth: e.width,
+          mediaHeight: e.height,
+          waveform: e.waveform == null ? null : base64Decode(e.waveform!),
         ),
     ];
   }
@@ -571,6 +690,10 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
         case WsEventServer.messageReacted:
           if (event.data['conversation_id'] != conversationId) break;
           _onReacted(event.data);
+          break;
+        case WsEventServer.pollUpdated:
+          if (event.data['conversation_id'] != conversationId) break;
+          _onPollUpdated(event.data);
           break;
         case WsEventServer.messageStarred:
           // My other device starred / unstarred (private: only my devices
@@ -775,10 +898,12 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
       _setStatus(entry.clientId, MessageStatus.failed);
       return;
     }
+    final progress = ref.read(uploadProgressProvider.notifier);
     try {
       final msg = await deliverOutboxEntry(
         ref.read(chatRepositoryProvider),
         entry,
+        onProgress: (f) => progress.set(entry.clientId, f),
       );
       await seedSentImage(ref.read(chatMediaCacheProvider), entry, msg);
       await seedSentDocument(ref.read(chatDocumentStoreProvider), entry, msg);
@@ -786,6 +911,8 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
       _insert(msg);
     } catch (_) {
       _setStatus(entry.clientId, MessageStatus.failed);
+    } finally {
+      progress.clear(entry.clientId);
     }
   }
 
@@ -823,6 +950,9 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
     required List<int> bytes,
     required String filename,
     String? contentType,
+    String? caption,
+    int? width,
+    int? height,
   }) async {
     final me = ref.read(authProvider).user?.id;
     if (me == null) return;
@@ -838,6 +968,9 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
       filePath: path,
       fileName: filename,
       mimeType: contentType,
+      caption: caption,
+      width: width,
+      height: height,
     );
     await ref.read(outboxProvider).add(entry);
     _insert(
@@ -850,17 +983,126 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
             : MessageType.file,
         fileName: filename,
         localPath: path,
+        caption: caption,
+        mediaWidth: width,
+        mediaHeight: height,
       ),
     );
     unawaited(_deliver(entry));
   }
 
+  /// Outbox-first send of a file already on disk (documents up to 100 MB,
+  /// scanned PDFs): the bytes never pass through Dart memory — the outbox
+  /// copies the file and the presigned flow streams it in 8 MB parts.
+  Future<void> sendFilePath({
+    required String sourcePath,
+    required String fileName,
+    String? contentType,
+    String? caption,
+  }) async {
+    final me = ref.read(authProvider).user?.id;
+    if (me == null) return;
+    final clientId = uuidV4();
+    final path = await ref
+        .read(outboxMediaStoreProvider)
+        .persistFile(clientId: clientId, sourcePath: sourcePath);
+    final entry = OutboxEntry(
+      clientId: clientId,
+      conversationId: arg,
+      kind: OutboxKind.media,
+      createdAt: DateTime.now().toUtc(),
+      filePath: path,
+      fileName: fileName,
+      mimeType: contentType,
+      caption: caption,
+    );
+    await ref.read(outboxProvider).add(entry);
+    _insert(
+      Message.pending(
+        clientId: clientId,
+        conversationId: arg,
+        senderId: me,
+        type: (contentType ?? '').startsWith('image/') ? MessageType.image : MessageType.file,
+        fileName: fileName,
+        localPath: path,
+        caption: caption,
+      ),
+    );
+    unawaited(_deliver(entry));
+  }
+
+  /// Outbox-first video send (batch 5). The poster frame is generated on the
+  /// phone (no ffmpeg on the server), both files move into durable outbox
+  /// storage, and the clip goes up through the presigned flow with progress
+  /// in the bubble. Returns false when the clip is over the limits.
+  Future<bool> sendVideo({
+    required String sourcePath,
+    required String fileName,
+    String contentType = 'video/mp4',
+    String? caption,
+  }) async {
+    final me = ref.read(authProvider).user?.id;
+    if (me == null) return false;
+    final source = File(sourcePath);
+    if (await source.length() > MediaLimits.videoMaxBytes) return false;
+    final poster = await ref.read(mediaNativeProvider).videoPoster(sourcePath);
+    if (poster != null && poster.durationSec > MediaLimits.videoMaxDuration.inSeconds) {
+      return false;
+    }
+    final clientId = uuidV4();
+    final store = ref.read(outboxMediaStoreProvider);
+    final path = await store.persistFile(clientId: clientId, sourcePath: sourcePath);
+    String? thumbPath;
+    if (poster != null && poster.jpeg.length <= MediaLimits.thumbMaxBytes) {
+      thumbPath = await store.persistBytes(
+        clientId: '$clientId-poster',
+        fileName: 'poster.jpg',
+        bytes: poster.jpeg,
+      );
+    }
+    final entry = OutboxEntry(
+      clientId: clientId,
+      conversationId: arg,
+      kind: OutboxKind.video,
+      createdAt: DateTime.now().toUtc(),
+      filePath: path,
+      fileName: fileName,
+      mimeType: contentType,
+      durationSec: poster?.durationSec,
+      caption: caption,
+      thumbPath: thumbPath,
+      width: poster?.width,
+      height: poster?.height,
+    );
+    await ref.read(outboxProvider).add(entry);
+    _insert(
+      Message.pending(
+        clientId: clientId,
+        conversationId: arg,
+        senderId: me,
+        type: MessageType.video,
+        fileName: fileName,
+        localPath: path,
+        voiceDurationSec: poster?.durationSec,
+        caption: caption,
+        localThumbPath: thumbPath,
+        mediaWidth: poster?.width,
+        mediaHeight: poster?.height,
+      ),
+    );
+    unawaited(_deliver(entry));
+    return true;
+  }
+
   /// Outbox-first voice-note send. Copies the recording out of the OS temp
   /// dir first, so the panel can dismiss (and the temp file die) immediately.
+  /// [waveform] is the ≤ 64 amplitude bytes captured while recording.
   Future<void> sendVoice({
     required String sourcePath,
     required int durationSec,
     String? transcript,
+    Uint8List? waveform,
+    String? caption,
   }) async {
     final me = ref.read(authProvider).user?.id;
     if (me == null) return;
@@ -877,6 +1119,8 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
       fileName: sourcePath.split('/').last,
       durationSec: durationSec,
       transcript: transcript,
+      waveform: waveform == null ? null : base64Encode(waveform),
+      caption: caption,
     );
     await ref.read(outboxProvider).add(entry);
     _insert(
@@ -887,9 +1131,102 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
         type: MessageType.voiceNote,
         voiceDurationSec: durationSec,
         transcript: transcript,
+        waveform: waveform,
+        caption: caption,
       ),
     );
     unawaited(_deliver(entry));
+  }
+
+  // ---- Batch 5: polls ------------------------------------------------------
+
+  /// Votes: one request in flight per poll, latest wanted selection wins.
+  final _voteInFlight = <String>{};
+  final _voteWanted = <String, List<String>>{};
+
+  /// Create a poll. Sent directly (not through the outbox): a poll is
+  /// composed in a sheet, so a failure simply surfaces there.
+  Future<Message> sendPoll({
+    required String question,
+    required List<String> options,
+    bool multiple = false,
+    ReplyPreview? replyTo,
+  }) async {
+    final msg = await ref.read(chatRepositoryProvider).sendPoll(
+          arg,
+          question: question,
+          options: options,
+          multiple: multiple,
+          clientId: uuidV4(),
+          replyToId: replyTo?.id,
+        );
+    _insert(msg);
+    return msg;
+  }
+
+  /// Replace my selection on a poll ([optionIds] empty = withdraw).
+  /// Optimistic with rollback; fast taps coalesce into one request at a time.
+  Future<void> vote(String messageId, List<String> optionIds) async {
+    final me = ref.read(authProvider).user?.id;
+    final msg = messageById(messageId);
+    final poll = msg?.poll;
+    if (me == null || msg == null || poll == null || msg.isDeleted) return;
+    final wanted = poll.multiple ? optionIds : optionIds.take(1).toList();
+    _patchPoll(messageId, poll.withVotes(me, wanted));
+    _voteWanted[messageId] = wanted;
+    if (!_voteInFlight.add(messageId)) return;
+    final repo = ref.read(chatRepositoryProvider);
+    var confirmed = poll;
+    DateTime? confirmedAt = msg.changedAt;
+    try {
+      while (_voteWanted.containsKey(messageId)) {
+        final want = _voteWanted.remove(messageId)!;
+        final out = await repo.vote(messageId, want);
+        confirmed = out.poll ?? confirmed;
+        confirmedAt = out.changedAt ?? confirmedAt;
+      }
+      _patchPoll(messageId, confirmed, changedAt: confirmedAt, onlyIfNewer: true);
+    } catch (_) {
+      _voteWanted.remove(messageId);
+      _patchPoll(messageId, confirmed, changedAt: confirmedAt);
+      rethrow;
+    } finally {
+      _voteInFlight.remove(messageId);
+      _recache(arg);
+    }
+  }
+
+  /// WS `poll_updated`: replace the tallies, drop stale events by changed_at.
+  /// While my own vote is in flight, my echo is ignored and someone else's
+  /// change is applied with my pending selection laid back on top.
+  void _onPollUpdated(Map<String, dynamic> data) {
+    final id = data['message_id'] as String?;
+    final raw = data['poll'];
+    final changedAt = data['changed_at'] != null ? DateTime.tryParse(data['changed_at'] as String) : null;
+    if (id == null || raw is! Map) return;
+    var poll = PollData.fromJson(raw.cast<String, dynamic>());
+    final me = ref.read(authProvider).user?.id;
+    if (_voteInFlight.contains(id) && me != null) {
+      if (data['actor_id'] == me) return;
+      final pending = _voteWanted[id] ?? messageById(id)?.poll?.myOptionIds(me) ?? const [];
+      poll = poll.withVotes(me, pending);
+    }
+    _patchPoll(id, poll, changedAt: changedAt, onlyIfNewer: true);
+    _recache(arg);
+  }
+
+  void _patchPoll(String messageId, PollData poll, {DateTime? changedAt, bool onlyIfNewer = false}) {
+    state = AsyncData([
+      for (final m in state.value ?? const <Message>[])
+        if (m.id == messageId &&
+            (!onlyIfNewer ||
+                changedAt == null ||
+                m.changedAt == null ||
+                !changedAt.isBefore(m.changedAt!)))
+          m.copyWith(poll: poll, changedAt: changedAt)
+        else
+          m,
+    ]);
   }
 
   /// Load the next older page (cursor = oldest fetched message).
@@ -1246,6 +1583,16 @@ final outboxDrainerProvider = Provider<void>((ref) {
   });
   ref.onDispose(sub.cancel);
   drain(); // app start
+});
+
+/// The chat a message belongs to has `media_export_allowed` (batch 5):
+/// Save to Photos / share are hidden otherwise.
+final mediaExportAllowedProvider = Provider.family<bool, String>((ref, conversationId) {
+  final convs = ref.watch(conversationsProvider).asData?.value ?? const <Conversation>[];
+  for (final c in convs) {
+    if (c.id == conversationId) return c.mediaExportAllowed;
+  }
+  return false;
 });
 
 /// True when the *other* participant is currently typing in this conversation.

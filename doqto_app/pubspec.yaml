@@ -69,6 +69,13 @@ dependencies:
   google_sign_in: ^7.2.0
   flutter_facebook_auth: ^7.1.5
   share_plus: ^12.0.2
+  # Batch 5 media. Flutter-team plugin (flutter/packages): the iOS half
+  # (video_player_avfoundation) is a plain source podspec linking the system
+  # AVFoundation framework — no embedded binary framework, so it cannot
+  # reintroduce the ITMS-90111 rejection. Full-screen video playback only;
+  # posters come from a MethodChannel (AVAssetImageGenerator), never from a
+  # thumbnail plugin.
+  video_player: 2.10.1
 
 dev_dependencies:
   flutter_test:

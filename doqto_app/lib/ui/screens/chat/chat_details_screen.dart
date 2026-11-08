@@ -99,15 +99,29 @@ class ChatDetailsScreen extends ConsumerWidget {
             1,
             _Section(
               title: 'Messages',
-              child: AppPressable(
-                key: const ValueKey('details-starred'),
-                onTap: () => context.push(AppRoutes.starredIn(conv.id)),
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.star_outline_rounded, color: AppColors.medBlue),
-                  title: Text(Strings.chatStarredMessages, style: AppText.bodyPrimary),
-                  trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
-                ),
+              child: Column(
+                children: [
+                  AppPressable(
+                    key: const ValueKey('details-media'),
+                    onTap: () => context.push(AppRoutes.mediaGallery(conv.id)),
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.perm_media_outlined, color: AppColors.medBlue),
+                      title: Text(Strings.mediaGalleryTitle, style: AppText.bodyPrimary),
+                      trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+                    ),
+                  ),
+                  AppPressable(
+                    key: const ValueKey('details-starred'),
+                    onTap: () => context.push(AppRoutes.starredIn(conv.id)),
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.star_outline_rounded, color: AppColors.medBlue),
+                      title: Text(Strings.chatStarredMessages, style: AppText.bodyPrimary),
+                      trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

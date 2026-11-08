@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../models/conversation.dart';
+import '../models/media_settings.dart';
 import '../models/message.dart';
+import 'network_usage.dart';
 
 /// Read-through cache so a cold start with no network still shows history.
 /// Write-through on every successful fetch; latest page only.
@@ -97,5 +99,91 @@ class ChatCache {
 
   Future<void> setKeepArchived(bool value) => _box.put(_keepArchivedKey, value);
 
+  // --- Storage and data (batch 5): upload quality + auto-download rules.
+  static const _mediaSettingsKey = 'media_settings';
+
+  MediaSettings mediaSettings() {
+    final raw = _box.get(_mediaSettingsKey);
+    if (raw is! String) return MediaSettings.defaults;
+    try {
+      return MediaSettings.fromJson((jsonDecode(raw) as Map).cast<String, dynamic>());
+    } catch (_) {
+      return MediaSettings.defaults;
+    }
+  }
+
+  Future<void> putMediaSettings(MediaSettings s) =>
+      _box.put(_mediaSettingsKey, jsonEncode(s.toJson()));
+
+  // --- Network usage counters (batch 5).
+  static const _usageKey = 'network_usage';
+
+  (int, int, DateTime?)? networkUsage() {
+    final raw = _box.get(_usageKey);
+    if (raw is! Map) return null;
+    final since = raw['since'];
+    return (
+      (raw['sent'] as num?)?.toInt() ?? 0,
+      (raw['received'] as num?)?.toInt() ?? 0,
+      since is String ? DateTime.tryParse(since) : null,
+    );
+  }
+
+  Future<void> putNetworkUsage(int sent, int received, DateTime? since) =>
+      _box.put(_usageKey, {'sent': sent, 'received': received, 'since': since?.toIso8601String()});
+
+  // --- Media index (batch 5, Manage storage): which chat a cached file
+  // belongs to and how big it is, so storage can be shown and cleared per
+  // chat. Key: `media_index:<messageId>`.
+  static const _mediaIndexPrefix = 'media_index:';
+
+  Future<void> putMediaIndex(String messageId, String conversationId, int bytes) =>
+      _box.put('$_mediaIndexPrefix$messageId', {'c': conversationId, 'b': bytes});
+
+  Future<void> removeMediaIndex(String messageId) => _box.delete('$_mediaIndexPrefix$messageId');
+
+  /// Every indexed file: message id → (conversation id, bytes).
+  Map<String, (String, int)> mediaIndex() {
+    final out = <String, (String, int)>{};
+    for (final k in _box.keys) {
+      if (k is String && k.startsWith(_mediaIndexPrefix)) {
+        final v = _box.get(k);
+        if (v is Map) {
+          out[k.substring(_mediaIndexPrefix.length)] =
+              ((v['c'] ?? '').toString(), (v['b'] as num?)?.toInt() ?? 0);
+        }
+      }
+    }
+    return out;
+  }
+
+  Future<void> clearMediaIndex() async {
+    for (final k in _box.keys.whereType<String>().where((k) => k.startsWith(_mediaIndexPrefix)).toList()) {
+      await _box.delete(k);
+    }
+  }
+
   Future<void> clear() => _box.clear();
+}
+
+/// [NetworkUsageStore] over the encrypted chat cache box.
+class ChatCacheUsageStore implements NetworkUsageStore {
+  final ChatCache cache;
+  ChatCacheUsageStore(this.cache);
+
+  @override
+  (int, int, DateTime?)? load() {
+    try {
+      return cache.networkUsage();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  void save(int sent, int received, DateTime? since) {
+    try {
+      cache.putNetworkUsage(sent, received, since);
+    } catch (_) {}
+  }
 }

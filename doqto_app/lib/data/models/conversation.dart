@@ -50,6 +50,11 @@ class Conversation {
   final String? pinnedMessageId;
   final DateTime? pinnedUntil;
 
+  /// Save to Photos / share allowed here (batch 5): the org policy
+  /// `allow_media_export`, or true for a doctor with no org. Server-computed;
+  /// the viewer hides the buttons when false.
+  final bool mediaExportAllowed;
+
   const Conversation({
     required this.id,
     required this.orgId,
@@ -74,6 +79,7 @@ class Conversation {
     this.prefs = ConversationPrefs.defaults,
     this.pinnedMessageId,
     this.pinnedUntil,
+    this.mediaExportAllowed = false,
   });
 
   /// The pin the thread banner shows — none once it has lapsed.
@@ -118,6 +124,7 @@ class Conversation {
         pinnedUntil: j['pinned_until'] != null
             ? DateTime.parse(j['pinned_until'] as String)
             : null,
+        mediaExportAllowed: (j['media_export_allowed'] as bool?) ?? false,
       );
 
   Conversation copyWith({
@@ -155,6 +162,7 @@ class Conversation {
         pinnedMessageId:
             pinnedMessageId != null ? pinnedMessageId() : this.pinnedMessageId,
         pinnedUntil: pinnedUntil != null ? pinnedUntil() : this.pinnedUntil,
+        mediaExportAllowed: mediaExportAllowed,
       );
 
   /// Round-trips through [Conversation.fromJson] — used by the offline cache.
@@ -182,5 +190,6 @@ class Conversation {
         'prefs': prefs.toJson(),
         'pinned_message_id': pinnedMessageId,
         'pinned_until': pinnedUntil?.toIso8601String(),
+        'media_export_allowed': mediaExportAllowed,
       };
 }

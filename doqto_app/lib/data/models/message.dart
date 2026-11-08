@@ -1,4 +1,96 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import '../../core/enums/app_enums.dart';
+
+/// One answer of a poll (batch 5) with its tally. [voterIds] is visible to
+/// every member — polls are never anonymous.
+class PollOption {
+  final String id;
+  final int position;
+  final String text;
+  final List<String> voterIds;
+
+  const PollOption({
+    required this.id,
+    required this.position,
+    required this.text,
+    required this.voterIds,
+  });
+
+  int get voteCount => voterIds.length;
+
+  factory PollOption.fromJson(Map<String, dynamic> j) => PollOption(
+        id: j['id'] as String,
+        position: (j['position'] as num?)?.toInt() ?? 0,
+        text: (j['text'] ?? '') as String,
+        voterIds: [for (final u in (j['voter_ids'] as List? ?? const [])) u.toString()],
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'position': position,
+        'text': text,
+        'vote_count': voteCount,
+        'voter_ids': voterIds,
+      };
+
+  PollOption copyWith({List<String>? voterIds}) =>
+      PollOption(id: id, position: position, text: text, voterIds: voterIds ?? this.voterIds);
+}
+
+/// `MessageOut.poll` (batch 5): the question, its options and who voted.
+class PollData {
+  final String question;
+  final bool multiple;
+  final List<PollOption> options;
+
+  const PollData({required this.question, required this.multiple, required this.options});
+
+  /// Server limits (POLL_OPTIONS_MIN / MAX, POLL_QUESTION_MAX_LEN, POLL_OPTION_MAX_LEN).
+  static const minOptions = 2;
+  static const maxOptions = 12;
+  static const questionMaxLen = 300;
+  static const optionMaxLen = 100;
+
+  int get voterCount => {for (final o in options) ...o.voterIds}.length;
+
+  List<String> myOptionIds(String me) =>
+      [for (final o in options) if (o.voterIds.contains(me)) o.id];
+
+  bool hasVoted(String me) => options.any((o) => o.voterIds.contains(me));
+
+  /// The poll after [me] selects [optionIds] (empty = withdraw): the same
+  /// shape the server returns, so the optimistic tally matches the confirmed
+  /// one.
+  PollData withVotes(String me, List<String> optionIds) => PollData(
+        question: question,
+        multiple: multiple,
+        options: [
+          for (final o in options)
+            o.copyWith(voterIds: [
+              for (final u in o.voterIds) if (u != me) u,
+              if (optionIds.contains(o.id)) me,
+            ]),
+        ],
+      );
+
+  factory PollData.fromJson(Map<String, dynamic> j) => PollData(
+        question: (j['question'] ?? '') as String,
+        multiple: (j['multiple'] as bool?) ?? false,
+        options: [
+          for (final o in (j['options'] as List? ?? const []))
+            PollOption.fromJson((o as Map).cast<String, dynamic>()),
+        ]..sort((a, b) => a.position.compareTo(b.position)),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'question': question,
+        'multiple': multiple,
+        'voter_count': voterCount,
+        'options': [for (final o in options) o.toJson()],
+      };
+}
 
 /// Client-side send lifecycle (not a wire enum — the server only ever returns
 /// persisted messages, which are always [sent]).
@@ -128,10 +220,16 @@ class ReplyPreview {
   /// What the quote strip shows for a target of this [type].
   static String previewFor(Message m) {
     if (m.isDeleted) return 'Message deleted';
+    final caption = m.caption;
+    if (caption != null && caption.isNotEmpty && m.hasMedia) {
+      return caption.length > 140 ? caption.substring(0, 140) : caption;
+    }
     return switch (m.type) {
       MessageType.image => 'Photo',
+      MessageType.video => 'Video',
       MessageType.voiceNote => 'Voice note',
       MessageType.file => m.fileName ?? 'File',
+      MessageType.poll => m.poll?.question ?? m.content ?? 'Poll',
       _ => (m.content ?? '').length > 140
           ? (m.content ?? '').substring(0, 140)
           : (m.content ?? ''),
@@ -234,6 +332,17 @@ class Message {
   final int forwardDepth;
   final List<String> mentions; // user ids named with `@[uuid]` in the body
   final bool starred; // by me — the only per-viewer field
+  // Batch 5 (media). [caption] rides under a photo / video / file / voice
+  // note; [thumbKey] is the video poster object; [waveform] the ≤64 raw
+  // amplitude bytes of a voice note; [poll] the tallies of a poll message.
+  final String? caption;
+  final String? thumbKey;
+  final Uint8List? waveform;
+  final int? mediaWidth;
+  final int? mediaHeight;
+  final PollData? poll;
+  // Outbox poster of a video still uploading (never serialized).
+  final String? localThumbPath;
 
   const Message({
     required this.id,
@@ -265,7 +374,24 @@ class Message {
     this.forwardDepth = 0,
     this.mentions = const [],
     this.starred = false,
+    this.caption,
+    this.thumbKey,
+    this.waveform,
+    this.mediaWidth,
+    this.mediaHeight,
+    this.poll,
+    this.localThumbPath,
   });
+
+  /// Server caption limit (CAPTION_MAX_LEN).
+  static const captionMaxLen = 1024;
+
+  /// Photo, video, document or voice note: something stored in S3.
+  bool get hasMedia =>
+      type == MessageType.image ||
+      type == MessageType.video ||
+      type == MessageType.file ||
+      type == MessageType.voiceNote;
 
   /// Sender may edit a text message this long after sending (server-enforced).
   static const editWindow = Duration(minutes: 15);
@@ -281,6 +407,7 @@ class Message {
   bool get forwardedManyTimes => forwarded && forwardDepth >= forwardMaxDepth;
   bool get canForward =>
       type != MessageType.system &&
+      type != MessageType.poll &&
       !isDeleted &&
       status == MessageStatus.sent &&
       seq != null &&
@@ -343,6 +470,12 @@ class Message {
     MessageStatus status = MessageStatus.sending,
     String? localPath,
     ReplyPreview? replyTo,
+    String? caption,
+    String? localThumbPath,
+    int? mediaWidth,
+    int? mediaHeight,
+    Uint8List? waveform,
+    PollData? poll,
   }) =>
       Message(
         id: clientId,
@@ -363,7 +496,23 @@ class Message {
         localPath: localPath,
         replyToId: replyTo?.id,
         replyTo: replyTo,
+        caption: caption,
+        localThumbPath: localThumbPath,
+        mediaWidth: mediaWidth,
+        mediaHeight: mediaHeight,
+        waveform: waveform,
+        poll: poll,
       );
+
+  static Uint8List? _waveformFromJson(Object? raw) {
+    if (raw is! String || raw.isEmpty) return null;
+    try {
+      final bytes = base64Decode(base64.normalize(raw));
+      return bytes.isEmpty ? null : bytes;
+    } catch (_) {
+      return null;
+    }
+  }
 
   factory Message.fromJson(Map<String, dynamic> j) => Message(
         id: j['id'] as String,
@@ -396,6 +545,12 @@ class Message {
         forwardDepth: (j['forward_depth'] as num?)?.toInt() ?? 0,
         mentions: [for (final u in (j['mentions'] as List? ?? const [])) u.toString()],
         starred: (j['starred'] as bool?) ?? false,
+        caption: j['caption'] as String?,
+        thumbKey: j['thumb_key'] as String?,
+        waveform: _waveformFromJson(j['waveform']),
+        mediaWidth: (j['media_width'] as num?)?.toInt(),
+        mediaHeight: (j['media_height'] as num?)?.toInt(),
+        poll: j['poll'] is Map ? PollData.fromJson((j['poll'] as Map).cast<String, dynamic>()) : null,
       );
 
   Map<String, dynamic> toJson() => {
@@ -426,6 +581,12 @@ class Message {
         'forward_depth': forwardDepth,
         'mentions': mentions,
         'starred': starred,
+        'caption': caption,
+        'thumb_key': thumbKey,
+        'waveform': waveform == null ? null : base64Encode(waveform!),
+        'media_width': mediaWidth,
+        'media_height': mediaHeight,
+        'poll': poll?.toJson(),
       };
 
   Message copyWith({
@@ -438,6 +599,7 @@ class Message {
     DateTime? changedAt,
     bool? starred,
     ReplyPreview? replyTo,
+    PollData? poll,
   }) =>
       Message(
         id: id,
@@ -469,5 +631,12 @@ class Message {
         forwardDepth: forwardDepth,
         mentions: mentions,
         starred: starred ?? this.starred,
+        caption: caption,
+        thumbKey: thumbKey,
+        waveform: waveform,
+        mediaWidth: mediaWidth,
+        mediaHeight: mediaHeight,
+        poll: poll ?? this.poll,
+        localThumbPath: localThumbPath,
       );
 }

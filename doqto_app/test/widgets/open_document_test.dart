@@ -53,8 +53,9 @@ class _Store extends ChatDocumentStore {
   Future<File> open(
     String messageId,
     String fileName,
-    Future<String> Function() resolveUrl,
-  ) async {
+    Future<String> Function() resolveUrl, {
+    String? conversationId,
+  }) async {
     if (fail) throw const HttpException('no');
     if (seen.add(messageId)) await resolveUrl();
     return File('/phone/$messageId/$fileName');

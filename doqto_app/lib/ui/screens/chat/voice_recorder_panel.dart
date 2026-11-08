@@ -10,45 +10,107 @@ import 'package:record/record.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import '../../../state/chat_state.dart';
+import '../../../core/constants/strings.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/motion.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
+import '../../../core/utils/waveform.dart';
+import '../../../data/models/media.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
 
 enum _RecorderState { recording, recorded, sending }
 
+/// Voice note recorder. Two ways in (batch 5 D):
+///
+/// * a tap on the mic opens it "locked": record → stop → review → send;
+/// * holding the mic opens it [held]: the thread forwards the finger — slide
+///   left past the threshold → [cancelHold], slide up → [lock] (hands off to
+///   the locked flow), let go → [releaseHold] sends straight away.
+///
+/// Notes shorter than [MediaLimits.voiceMinDuration] are dropped, recording
+/// stops itself at [MediaLimits.voiceMaxDuration]. Every amplitude sample
+/// is kept so the sent note carries a 64-byte waveform.
 class VoiceRecorderPanel extends ConsumerStatefulWidget {
   final String conversationId;
   final VoidCallback onSent;
   final VoidCallback onCancel;
+  final bool held;
 
   const VoiceRecorderPanel({
     super.key,
     required this.conversationId,
     required this.onSent,
     required this.onCancel,
+    this.held = false,
   });
 
+  /// How far the finger must slide left to cancel / up to lock.
+  static const cancelDx = -90.0;
+  static const lockDy = -70.0;
+
   @override
-  ConsumerState<VoiceRecorderPanel> createState() => _VoiceRecorderPanelState();
+  ConsumerState<VoiceRecorderPanel> createState() => VoiceRecorderPanelState();
 }
 
-class _VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
+class VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
   final _recorder = AudioRecorder();
   final _player = AudioPlayer();
   final _stt = SpeechToText();
 
   _RecorderState _state = _RecorderState.recording;
   final List<double> _amplitudes = [];
+
+  /// Every sample, for the waveform that ships with the note.
+  final List<double> _levels = [];
   String _transcript = '';
   String? _filePath;
   int _durationSec = 0;
   Timer? _timer;
   Timer? _ampTimer;
   bool _isPlaying = false;
+  Stopwatch? _stopwatch;
+  late bool _held = widget.held;
+  bool _locked = false;
+  double _slide = 0;
+  bool _stopping = false;
+
+  /// `_recorder.start` has returned; only then is there anything to stop.
+  bool _started = false;
+
+  bool get isHeld => _held && !_locked;
+  int get durationSec => _durationSec;
+
+  /// Finger slid up far enough: keep recording hands-free.
+  void lock() {
+    if (!isHeld) return;
+    setState(() {
+      _locked = true;
+      _held = false;
+      _slide = 0;
+    });
+  }
+
+  /// Finger lifted while holding: send what we have (or drop a too-short one).
+  Future<void> releaseHold() async {
+    if (!isHeld) return;
+    if (await _stopRecording()) await _send();
+  }
+
+  /// Finger slid left past the threshold.
+  Future<void> cancelHold() async {
+    if (!isHeld) return;
+    await _stopRecording(silent: true);
+    _discard();
+  }
+
+  /// Horizontal finger offset while holding (≤ 0), drives the hint.
+  void setSlide(double dx) {
+    if (!isHeld) return;
+    setState(() => _slide = dx.clamp(VoiceRecorderPanel.cancelDx * 1.2, 0.0));
+  }
 
   @override
   void initState() {
@@ -96,10 +158,21 @@ class _VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
       return;
     }
 
-    await _stt.initialize();
+    // The permission prompts above and the speech engine below can take a
+    // while; a slide-to-cancel (or the panel going away) in the meantime
+    // must not leave a recorder running with nobody to stop it.
+    if (!mounted || _stopping) return;
+    try {
+      await _stt.initialize();
+    } catch (_) {
+      // Transcription is best-effort; the note still records.
+    }
+    if (!mounted || _stopping) return;
 
     final dir = await getTemporaryDirectory();
-    final path = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.wav';
+    if (!mounted || _stopping) return;
+    final path =
+        '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.wav';
 
     await _recorder.start(
       RecordConfig(
@@ -109,42 +182,71 @@ class _VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
       ),
       path: path,
     );
+    _started = true;
+    if (!mounted || _stopping) {
+      await _recorder.stop();
+      File(path).delete().catchError((_) => File(path));
+      return;
+    }
 
     _stt.listen(
       onResult: (result) {
         if (mounted) setState(() => _transcript = result.recognizedWords);
       },
-      listenOptions: SpeechListenOptions(
-        listenMode: ListenMode.dictation,
-      ),
+      listenOptions: SpeechListenOptions(listenMode: ListenMode.dictation),
     );
 
     final stopwatch = Stopwatch()..start();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() => _durationSec = stopwatch.elapsed.inSeconds);
+    _stopwatch = stopwatch;
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) async {
+      if (!mounted) return;
+      setState(() => _durationSec = stopwatch.elapsed.inSeconds);
+      if (stopwatch.elapsed >= MediaLimits.voiceMaxDuration &&
+          _state == _RecorderState.recording) {
+        // Hard cap: stop, and in hold mode send what we have.
+        final wasHeld = isHeld;
+        if (await _stopRecording() && wasHeld) await _send();
+      }
     });
 
     _ampTimer = Timer.periodic(const Duration(milliseconds: 100), (_) async {
       final amp = await _recorder.getAmplitude();
       if (!mounted) return;
-      final normalized = ((amp.current + 60) / 60).clamp(0.05, 1.0);
+      final normalized = Waveform.fromDb(amp.current);
       setState(() {
+        _levels.add(normalized);
         _amplitudes.add(normalized);
         if (_amplitudes.length > 40) _amplitudes.removeAt(0);
       });
     });
   }
 
-  Future<void> _stopRecording() async {
+  /// Stops the recorder. False when the note was too short to keep (the
+  /// temp file is removed and the panel closes) or already stopping.
+  Future<bool> _stopRecording({bool silent = false}) async {
+    if (_stopping) return false;
+    _stopping = true;
     _timer?.cancel();
     _ampTimer?.cancel();
-    _stt.stop();
-    final path = await _recorder.stop();
-    if (!mounted) return;
-    setState(() {
-      _filePath = path;
-      _state = _RecorderState.recorded;
-    });
+    try {
+      _stt.stop();
+    } catch (_) {}
+    final elapsed = _stopwatch?.elapsed ?? Duration.zero;
+    final path = _started ? await _recorder.stop() : null;
+    if (!mounted) return false;
+    _filePath = path;
+    _durationSec = elapsed.inSeconds;
+    if (elapsed < MediaLimits.voiceMinDuration) {
+      if (!silent) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text(Strings.voiceTooShort)));
+      }
+      _discard();
+      return false;
+    }
+    setState(() => _state = _RecorderState.recorded);
+    return true;
   }
 
   Future<void> _togglePlay() async {
@@ -173,10 +275,13 @@ class _VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
     if (_filePath == null) return;
     setState(() => _state = _RecorderState.sending);
     try {
-      await ref.read(messagesProvider(widget.conversationId).notifier).sendVoice(
+      await ref
+          .read(messagesProvider(widget.conversationId).notifier)
+          .sendVoice(
             sourcePath: _filePath!,
-            durationSec: _durationSec,
+            durationSec: _durationSec < 1 ? 1 : _durationSec,
             transcript: _transcript.isNotEmpty ? _transcript : null,
+            waveform: Waveform.encode(_levels),
           );
       // M8: the outbox persisted its own durable copy — drop the temp .wav.
       try {
@@ -187,10 +292,12 @@ class _VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
     } catch (e) {
       // Only local persistence can throw (e.g. disk full).
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(ErrorMessages.forApi(e)),
-        backgroundColor: AppColors.red,
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(ErrorMessages.forApi(e)),
+          backgroundColor: AppColors.red,
+        ),
+      );
       setState(() => _state = _RecorderState.recorded);
     }
   }
@@ -229,7 +336,69 @@ class _VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
     );
   }
 
+  /// Hold mode: duration on the left, "slide to cancel" that follows the
+  /// finger, lock hint on the right. No buttons — the finger is on the mic.
+  Widget _buildHeld() {
+    final fade = (1 + _slide / VoiceRecorderPanel.cancelDx.abs()).clamp(
+      0.0,
+      1.0,
+    );
+    return SizedBox(
+      key: const ValueKey('recorder-held'),
+      height: 56,
+      child: Row(
+        children: [
+          const _RecPulseDot(),
+          const SizedBox(width: AppSpacing.sm - 2),
+          Text(
+            _formatDuration(_durationSec),
+            key: const ValueKey('recorder-duration'),
+            style: AppText.subheading,
+          ),
+          Expanded(
+            child: Transform.translate(
+              offset: Offset(_slide, 0),
+              child: Opacity(
+                opacity: fade,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.chevron_left_rounded,
+                      color: AppColors.textMuted,
+                    ),
+                    Text(
+                      Strings.voiceSlideToCancel,
+                      style: AppText.body.copyWith(color: AppColors.textMuted),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.lock_open_rounded,
+                color: AppColors.textMuted,
+                size: 20,
+              ),
+              Icon(
+                Icons.keyboard_arrow_up_rounded,
+                color: AppColors.textMuted,
+                size: 18,
+              ),
+            ],
+          ),
+          const SizedBox(width: AppSpacing.xxl),
+        ],
+      ),
+    );
+  }
+
   Widget _buildRecording() {
+    if (isHeld) return _buildHeld();
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -292,15 +461,24 @@ class _VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
                   width: 56,
                   height: 56,
                   alignment: Alignment.center,
-                  child: const Icon(Icons.stop, color: AppColors.white, size: 28),
+                  child: const Icon(
+                    Icons.stop,
+                    color: AppColors.white,
+                    size: 28,
+                  ),
                 ),
               ),
             ),
             TextButton(
-              onPressed: () {
-                _stopRecording().then((_) => _discard());
+              onPressed: () async {
+                // Cancel is never "too short": stop quietly and drop the
+                // file (a too-short stop already discards on its own).
+                if (await _stopRecording(silent: true)) _discard();
               },
-              child: Text('Cancel', style: AppText.body.copyWith(color: AppColors.red)),
+              child: Text(
+                'Cancel',
+                style: AppText.body.copyWith(color: AppColors.red),
+              ),
             ),
           ],
         ),
@@ -318,7 +496,9 @@ class _VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
             IconButton(
               onPressed: isSending ? null : _togglePlay,
               icon: Icon(
-                _isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                _isPlaying
+                    ? Icons.pause_circle_filled
+                    : Icons.play_circle_filled,
                 color: AppColors.medBlue,
                 size: 36,
               ),
@@ -402,9 +582,13 @@ class _RecPulseDot extends StatefulWidget {
 class _RecPulseDotState extends State<_RecPulseDot>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 900));
-  late final Animation<double> _opacity = Tween<double>(begin: 1.0, end: 0.35)
-      .animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
+  late final Animation<double> _opacity = Tween<double>(
+    begin: 1.0,
+    end: 0.35,
+  ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
 
   @override
   void didChangeDependencies() {

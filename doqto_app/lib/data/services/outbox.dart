@@ -20,11 +20,14 @@ String uuidV4() {
 enum OutboxKind {
   text,
   media,
-  voice;
+  voice,
+  // Batch 5: a clip with its poster, sent through the presigned flow.
+  video;
 
   static OutboxKind fromName(String? s) => switch (s) {
         'media' => OutboxKind.media,
         'voice' => OutboxKind.voice,
+        'video' => OutboxKind.video,
         _ => OutboxKind.text,
       };
 }
@@ -47,6 +50,14 @@ class OutboxEntry {
   // Text only: the message this one quotes (batch 4).
   final String? replyToId;
 
+  // Batch 5. [caption] under media / voice; [thumbPath] the video poster on
+  // disk; [width] / [height] pixel size; [waveform] base64 amplitude bytes.
+  final String? caption;
+  final String? thumbPath;
+  final int? width;
+  final int? height;
+  final String? waveform;
+
   const OutboxEntry({
     required this.clientId,
     required this.conversationId,
@@ -59,6 +70,11 @@ class OutboxEntry {
     this.durationSec,
     this.transcript,
     this.replyToId,
+    this.caption,
+    this.thumbPath,
+    this.width,
+    this.height,
+    this.waveform,
   });
 
   Map<String, dynamic> toMap() => {
@@ -73,6 +89,11 @@ class OutboxEntry {
         'duration_sec': durationSec,
         'transcript': transcript,
         'reply_to_id': replyToId,
+        'caption': caption,
+        'thumb_path': thumbPath,
+        'width': width,
+        'height': height,
+        'waveform': waveform,
       };
 
   factory OutboxEntry.fromMap(Map<dynamic, dynamic> m) => OutboxEntry(
@@ -87,6 +108,11 @@ class OutboxEntry {
         durationSec: m['duration_sec'] as int?,
         transcript: m['transcript'] as String?,
         replyToId: m['reply_to_id'] as String?,
+        caption: m['caption'] as String?,
+        thumbPath: m['thumb_path'] as String?,
+        width: (m['width'] as num?)?.toInt(),
+        height: (m['height'] as num?)?.toInt(),
+        waveform: m['waveform'] as String?,
       );
 }
 
@@ -157,11 +183,13 @@ class Outbox {
   Future<void> remove(String clientId) async {
     final raw = _box.get(clientId);
     if (raw is Map) {
-      final path = raw['file_path'] as String?;
-      if (path != null) {
-        try {
-          await File(path).delete();
-        } catch (_) {} // already gone — fine
+      for (final k in ['file_path', 'thumb_path']) {
+        final path = raw[k] as String?;
+        if (path != null) {
+          try {
+            await File(path).delete();
+          } catch (_) {} // already gone — fine
+        }
       }
     }
     await _box.delete(clientId);

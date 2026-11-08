@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 
 import '../../core/constants/api_routes.dart';
 import '../../core/constants/app_constants.dart';
+import '../services/network_usage.dart';
 import 'token_storage.dart';
 
 class ApiException implements Exception {
@@ -48,7 +49,10 @@ class ApiClient {
 
   SessionEndedCallback? onSessionEnded;
 
-  ApiClient({TokenStorage? tokens})
+  /// Bytes up / down for Storage and data (batch 5). Null = not counted.
+  final NetworkUsage? usage;
+
+  ApiClient({TokenStorage? tokens, this.usage})
       : _tokens = tokens ?? TokenStorage(),
         _dio = Dio(BaseOptions(
           baseUrl: AppConstants.apiBaseUrl,
@@ -57,6 +61,10 @@ class ApiClient {
           contentType: 'application/json',
         )) {
     _dio.interceptors.add(InterceptorsWrapper(
+      onResponse: (resp, handler) {
+        _count(resp.requestOptions, resp);
+        handler.next(resp);
+      },
       onRequest: (opts, handler) async {
         // Never attach a token to auth endpoints — they either don't need one
         // (otp, refresh) or receive it via a dedicated Header param (logout).
@@ -98,6 +106,27 @@ class ApiClient {
         }
       },
     ));
+  }
+
+  /// Network usage: the request body as sent and the response body as
+  /// received. Multipart bodies report their length; streamed bodies are
+  /// counted by the caller.
+  void _count(RequestOptions req, Response<dynamic>? resp) {
+    final u = usage;
+    if (u == null) return;
+    u.addSent(_sizeOf(req.data));
+    final header = resp?.headers.value(Headers.contentLengthHeader);
+    final parsed = header == null ? null : int.tryParse(header);
+    u.addReceived(parsed ?? _sizeOf(resp?.data));
+  }
+
+  static int _sizeOf(Object? data) {
+    if (data == null) return 0;
+    if (data is List<int>) return data.length;
+    if (data is String) return utf8.encode(data).length;
+    if (data is FormData) return data.length;
+    if (data is Map || data is List) return utf8.encode(jsonEncode(data)).length;
+    return 0;
   }
 
   /// Access token that will still be valid in a minute, refreshing first if
@@ -217,6 +246,7 @@ class ApiClient {
     required String filename,
     String? contentType,
     Map<String, dynamic>? fields,
+    Map<String, ({List<int> bytes, String filename, String contentType})>? extraFiles,
   }) async {
     final form = FormData.fromMap({
       fileField: MultipartFile.fromBytes(
@@ -224,10 +254,53 @@ class ApiClient {
         filename: filename,
         contentType: contentType != null ? DioMediaType.parse(contentType) : null,
       ),
+      if (extraFiles != null)
+        for (final e in extraFiles.entries)
+          e.key: MultipartFile.fromBytes(
+            e.value.bytes,
+            filename: e.value.filename,
+            contentType: DioMediaType.parse(e.value.contentType),
+          ),
       if (fields != null) ...fields,
     });
     final r = await _call(() => _dio.post(path, data: form));
     return (r.data as Map).cast<String, dynamic>();
+  }
+
+  /// Direct PUT of [bytes] to a presigned S3 URL (batch 5 upload flow). No
+  /// Authorization header — the signature in the URL is the credential, and
+  /// the declared Content-Type must match what the intent was signed for.
+  /// Returns the `ETag` S3 answers with (needed to complete a multipart
+  /// upload). [onProgress] reports bytes sent so far.
+  Future<String> putToUrl(
+    String url,
+    List<int> bytes, {
+    required String contentType,
+    void Function(int sent, int total)? onProgress,
+  }) async {
+    final bare = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 20),
+      sendTimeout: const Duration(minutes: 10),
+      receiveTimeout: const Duration(minutes: 2),
+    ));
+    try {
+      final r = await bare.put<dynamic>(
+        url,
+        data: Stream.fromIterable([bytes]),
+        options: Options(
+          headers: {
+            Headers.contentTypeHeader: contentType,
+            Headers.contentLengthHeader: bytes.length,
+          },
+        ),
+        onSendProgress: onProgress,
+      );
+      usage?.addSent(bytes.length);
+      final etag = r.headers.value('etag') ?? r.headers.value('ETag') ?? '';
+      return etag.replaceAll('"', '');
+    } on DioException catch (e) {
+      throw ApiException('upload_put_failed', status: e.response?.statusCode);
+    }
   }
 
   Future<Response<dynamic>> _call(Future<Response<dynamic>> Function() fn) async {

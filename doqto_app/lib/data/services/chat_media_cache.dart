@@ -26,6 +26,15 @@ abstract class MediaCacheBackend {
   Future<void> clear();
 }
 
+/// Which chat a cached file belongs to and how big it is (batch 5, Manage
+/// storage). Backed by the encrypted chat cache box in production.
+abstract class MediaIndex {
+  Future<void> put(String messageId, String conversationId, int bytes);
+  Future<void> remove(String messageId);
+  Map<String, (String, int)> all();
+  Future<void> clear();
+}
+
 /// Chat images, downloaded once and then served from the phone.
 ///
 /// Why this exists: the server hands out a fresh presigned URL (5 min TTL)
@@ -41,13 +50,17 @@ abstract class MediaCacheBackend {
 ///   * [clear] on sign-out, session end and account deletion;
 ///   * [evict] when a message is deleted or hidden.
 class ChatMediaCache {
-  ChatMediaCache(this._backend);
+  ChatMediaCache(this._backend, {MediaIndex? index, this.onDownloaded}) : _index = index;
 
   static const cacheKey = 'doqto_chat_media';
   static const stalePeriod = Duration(days: 30);
   static const maxObjects = 500;
 
   final MediaCacheBackend _backend;
+  final MediaIndex? _index;
+
+  /// Bytes that came over the network (network usage counters).
+  final void Function(int bytes)? onDownloaded;
 
   /// One download per message, however many bubbles ask at once (the thread
   /// bubble and the full-screen viewer, or a rebuild mid-download).
@@ -60,6 +73,9 @@ class ChatMediaCache {
 
   static String _key(String messageId) => 'msg:$messageId';
 
+  /// A video's poster lives beside the clip under its own key.
+  static String thumbId(String messageId) => '$messageId#thumb';
+
   /// Synchronous hit from this run, or null.
   File? peek(String messageId) {
     final f = _resolved[messageId];
@@ -71,53 +87,179 @@ class ChatMediaCache {
     return f;
   }
 
+  /// Already on the phone (this run or a previous one)? Does not download.
+  Future<File?> cached(String messageId) async {
+    final hit = peek(messageId);
+    if (hit != null) return hit;
+    try {
+      final f = await _backend.get(_key(messageId));
+      if (f != null) _resolved[messageId] = f;
+      return f;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// The image for [messageId]: from the phone when cached, otherwise one
-  /// download via a freshly resolved URL.
-  Future<File> image(String messageId, Future<String> Function() resolveUrl) {
+  /// download via a freshly resolved URL. [conversationId] files it under
+  /// its chat for Manage storage.
+  Future<File> image(
+    String messageId,
+    Future<String> Function() resolveUrl, {
+    String? conversationId,
+  }) {
     final hit = peek(messageId);
     if (hit != null) return Future.value(hit);
     // Block body on purpose: `=> _inFlight.remove(id)` would return this very
     // future to whenComplete, which then waits on itself forever.
     return _inFlight[messageId] ??=
-        _load(messageId, resolveUrl).whenComplete(() {
+        _load(messageId, resolveUrl, conversationId).whenComplete(() {
       _inFlight.remove(messageId);
     });
   }
 
+  /// Same store, any media object (video clip, voice note): the file keeps
+  /// the extension the server names so players can open it.
+  Future<File> media(
+    String messageId,
+    Future<String> Function() resolveUrl, {
+    String? conversationId,
+  }) =>
+      image(messageId, resolveUrl, conversationId: conversationId);
+
+  /// A video's poster frame.
+  Future<File> thumbnail(
+    String messageId,
+    Future<String> Function() resolveUrl, {
+    String? conversationId,
+  }) =>
+      image(thumbId(messageId), resolveUrl, conversationId: conversationId);
+
   Future<File> _load(
-      String messageId, Future<String> Function() resolveUrl) async {
+    String messageId,
+    Future<String> Function() resolveUrl,
+    String? conversationId,
+  ) async {
     final key = _key(messageId);
     final cached = await _backend.get(key);
     if (cached != null) return _resolved[messageId] = cached;
     final url = await resolveUrl();
-    return _resolved[messageId] = await _backend.download(url, key);
+    final f = _resolved[messageId] = await _backend.download(url, key);
+    await _record(messageId, conversationId, f);
+    return f;
+  }
+
+  Future<void> _record(String messageId, String? conversationId, File f, {bool network = true}) async {
+    try {
+      // Sync on purpose: real file IO never completes under a widget
+      // test's fake clock, and the file was just written anyway.
+      final bytes = f.existsSync() ? f.lengthSync() : 0;
+      if (network) onDownloaded?.call(bytes);
+      if (conversationId != null) await _index?.put(messageId, conversationId, bytes);
+    } catch (_) {}
   }
 
   /// The sender already has the bytes: store them under the server id so the
   /// bubble never downloads its own upload.
-  Future<void> seed(String messageId, File source) async {
+  Future<void> seed(String messageId, File source, {String? conversationId}) async {
     try {
       final bytes = await source.readAsBytes();
       final ext = p.extension(source.path).replaceFirst('.', '');
-      _resolved[messageId] = await _backend.put(
+      final f = _resolved[messageId] = await _backend.put(
           _key(messageId), bytes, ext.isEmpty ? 'img' : ext);
+      await _record(messageId, conversationId, f, network: false);
     } catch (_) {
       // Best effort: a miss just means one download later.
     }
   }
 
   Future<void> evict(String messageId) async {
-    _resolved.remove(messageId);
-    try {
-      await _backend.remove(_key(messageId));
-    } catch (_) {}
+    for (final id in [messageId, thumbId(messageId)]) {
+      _resolved.remove(id);
+      try {
+        await _backend.remove(_key(id));
+      } catch (_) {}
+      try {
+        await _index?.remove(id);
+      } catch (_) {}
+    }
+  }
+
+  /// Cached bytes per conversation (Manage storage).
+  Map<String, int> sizesByConversation() {
+    final out = <String, int>{};
+    for (final e in (_index?.all() ?? const {}).values) {
+      out[e.$1] = (out[e.$1] ?? 0) + e.$2;
+    }
+    return out;
+  }
+
+  /// Drop every cached file of one chat.
+  Future<void> clearConversation(String conversationId) async {
+    final ids = [
+      for (final e in (_index?.all() ?? const <String, (String, int)>{}).entries)
+        if (e.value.$1 == conversationId) e.key,
+    ];
+    for (final id in ids) {
+      _resolved.remove(id);
+      try {
+        await _backend.remove(_key(id));
+      } catch (_) {}
+      try {
+        await _index?.remove(id);
+      } catch (_) {}
+    }
   }
 
   Future<void> clear() async {
     _resolved.clear();
     _inFlight.clear();
     await _backend.clear();
+    try {
+      await _index?.clear();
+    } catch (_) {}
   }
+}
+
+/// [MediaIndex] over the encrypted chat cache box.
+class ChatCacheMediaIndex implements MediaIndex {
+  final Map<String, (String, int)> Function() _all;
+  final Future<void> Function(String, String, int) _put;
+  final Future<void> Function(String) _remove;
+  final Future<void> Function() _clear;
+
+  ChatCacheMediaIndex({
+    required Map<String, (String, int)> Function() all,
+    required Future<void> Function(String messageId, String conversationId, int bytes) put,
+    required Future<void> Function(String messageId) remove,
+    required Future<void> Function() clear,
+  })  : _all = all,
+        _put = put,
+        _remove = remove,
+        _clear = clear;
+
+  @override
+  Map<String, (String, int)> all() => _all();
+  @override
+  Future<void> put(String messageId, String conversationId, int bytes) => _put(messageId, conversationId, bytes);
+  @override
+  Future<void> remove(String messageId) => _remove(messageId);
+  @override
+  Future<void> clear() => _clear();
+}
+
+/// In-memory [MediaIndex] for tests.
+class MemoryMediaIndex implements MediaIndex {
+  final Map<String, (String, int)> entries = {};
+  @override
+  Map<String, (String, int)> all() => Map.of(entries);
+  @override
+  Future<void> put(String messageId, String conversationId, int bytes) async =>
+      entries[messageId] = (conversationId, bytes);
+  @override
+  Future<void> remove(String messageId) async => entries.remove(messageId);
+  @override
+  Future<void> clear() async => entries.clear();
 }
 
 /// Production backend: flutter_cache_manager under the OS cache dir, with iOS

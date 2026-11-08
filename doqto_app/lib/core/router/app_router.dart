@@ -38,6 +38,9 @@ import '../../ui/screens/settings/privacy_screen.dart';
 import '../../ui/screens/settings/settings_screen.dart';
 import '../../ui/screens/voice_broadcast/voice_broadcast_screen.dart';
 import '../../ui/screens/splash/splash_screen.dart';
+import '../../ui/screens/media/media_gallery_screen.dart';
+import '../../ui/screens/storage/manage_storage_screen.dart';
+import '../../ui/screens/storage/storage_screen.dart';
 
 class AppRoutes {
   AppRoutes._();
@@ -61,6 +64,9 @@ class AppRoutes {
   static String chatDetails(String convId) => '/chat/$convId/details';
   // My starred messages, optionally one chat's (batch 4).
   static const starred = '/starred';
+  static String mediaGallery(String convId) => '/chat/$convId/media';
+  static const storage = '/storage';
+  static const storageManage = '/storage/manage';
   static String starredIn(String convId) =>
       Uri(path: starred, queryParameters: {'c': convId}).toString();
   static const myOrg = '/my-org';
@@ -274,6 +280,22 @@ final routerProvider = Provider<GoRouter>((ref) {
         parentNavigatorKey: rootNavigatorKey,
         builder: (_, state) =>
             ChatDetailsScreen(conversationId: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/chat/:id/media',
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, state) =>
+            MediaGalleryScreen(conversationId: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: AppRoutes.storageManage,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const ManageStorageScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.storage,
+        parentNavigatorKey: rootNavigatorKey,
+        builder: (_, s) => const StorageScreen(),
       ),
       GoRoute(
         path: '/chat/:id',

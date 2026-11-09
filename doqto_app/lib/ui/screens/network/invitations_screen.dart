@@ -18,6 +18,7 @@ import '../../widgets/fade_slide_in.dart';
 import '../../widgets/invitation_card.dart';
 import '../../widgets/member_row.dart';
 import '../../widgets/primary_button.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 /// Full invitations inbox: Received (accept/ignore, optimistic) + Sent (pending
 /// with withdraw). Reachable from the Network tab's "See all" entry.
@@ -223,7 +224,7 @@ class _SentRowState extends ConsumerState<_SentRow> {
       avatar: DoctorAvatar(
         initials: party?.initials ?? '?',
         colorIndex: party?.avatarIndex ?? 0,
-        imageUrl: party?.avatarPresignedUrl,
+        imageUrl: userAvatarUrl(party?.id, party?.avatarUrl),
         size: AvatarSize.lg,
       ),
       title: party?.fullName ?? '',

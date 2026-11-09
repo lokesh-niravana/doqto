@@ -195,6 +195,8 @@ RATE_LIMIT_DEFAULT_PER_MINUTE = 60
 RATE_LIMIT_SIGNIN_PER_HOUR = 20
 # Read endpoints (message history, file URLs, member list) — generous.
 RATE_LIMIT_READS_PER_MINUTE = 120
+# Avatar bytes: a chat list paints dozens at once, the client caches them.
+RATE_LIMIT_AVATAR_READS_PER_MINUTE = 600
 # Admin login lockout: attempts per email per window.
 ADMIN_LOGIN_MAX_ATTEMPTS = 5
 ADMIN_LOGIN_WINDOW_SECONDS = 15 * 60

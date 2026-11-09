@@ -20,6 +20,7 @@ import '../../widgets/fade_slide_in.dart';
 import '../../widgets/invite_code_card.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/section_card.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 class MyOrgScreen extends ConsumerWidget {
   const MyOrgScreen({super.key});
@@ -335,7 +336,7 @@ class _MemberRowState extends ConsumerState<_MemberRow> {
         leading: DoctorAvatar(
           initials: m.initials,
           colorIndex: widget.colorIndex,
-          imageUrl: m.avatarPresignedUrl,
+          imageUrl: userAvatarUrl(m.id, m.avatarUrl),
           heroTag: widget.isSelf ? null : 'member-avatar-${m.id}',
         ),
         title: Text(m.fullName),

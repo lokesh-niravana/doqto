@@ -18,6 +18,7 @@ import '../../widgets/doctor_avatar.dart';
 import '../../widgets/member_row.dart';
 import '../../widgets/search_bar.dart';
 import '../../widgets/step_flow.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 /// 2-step group creation: Identity → Invite. Chrome is the shared [StepFlow].
 /// Creates a real Group entity (POST /groups), then sends invites, then opens
@@ -260,7 +261,7 @@ class _InviteRow extends StatelessWidget {
       avatar: DoctorAvatar(
         initials: person.initials,
         colorIndex: person.avatarIndex,
-        imageUrl: person.avatarPresignedUrl,
+        imageUrl: userAvatarUrl(person.id, person.avatarUrl),
         isSelected: selected,
       ),
       title: person.fullName,

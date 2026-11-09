@@ -158,6 +158,7 @@ class MessageReceipt {
   final String userId;
   final String fullName;
   final String? avatarColor;
+  final String? avatarUrl;
   final String? avatarPresignedUrl;
   final bool delivered;
   final bool read;
@@ -168,6 +169,7 @@ class MessageReceipt {
     required this.userId,
     required this.fullName,
     required this.avatarColor,
+    this.avatarUrl,
     required this.avatarPresignedUrl,
     required this.delivered,
     required this.read,
@@ -179,6 +181,7 @@ class MessageReceipt {
         userId: (j['user_id'] ?? '') as String,
         fullName: (j['full_name'] ?? '') as String,
         avatarColor: j['avatar_color'] as String?,
+        avatarUrl: j['avatar_url'] as String?,
         avatarPresignedUrl: j['avatar_presigned_url'] as String?,
         delivered: (j['delivered'] as bool?) ?? false,
         read: (j['read'] as bool?) ?? false,

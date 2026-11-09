@@ -86,6 +86,9 @@ dependencies:
   # Version/build on Help, and the min-version check. Dart + a tiny platform
   # call; no embedded frameworks.
   package_info_plus: ^9.0.1
+  crop_your_image: ^2.0.1
+  # JPEG re-encode of crops (crop_your_image already depends on it)
+  image: ^4.3.0
 
 dev_dependencies:
   flutter_test:

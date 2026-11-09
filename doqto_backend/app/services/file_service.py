@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import mimetypes
 import uuid
+
+from fastapi import HTTPException, Request, Response, status
 
 from app.core.constants import PRESIGNED_URL_TTL_SECONDS, UPLOAD_URL_TTL_SEC
 from app.services.s3_client import RealS3Client
@@ -122,3 +126,21 @@ class FileService:
     @staticmethod
     async def get_object(*, key: str) -> bytes:
         return await _s3_instance.get_object(key=key)
+
+
+async def avatar_response(request: Request, *, key: str | None) -> Response:
+    """Serve a stored picture by key with a day of private caching and an
+    ETag, so the app's image cache stays valid across presign rotations.
+    No key, or no object behind it, is a 404 the app turns into initials."""
+    if not key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="avatar_not_found")
+    etag = '"' + hashlib.sha1(key.encode()).hexdigest()[:20] + '"'
+    headers = {"Cache-Control": "private, max-age=86400", "ETag": etag}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    try:
+        data = await FileService.get_object(key=key)
+    except Exception as e:  # noqa: BLE001 — S3 miss or outage reads as "no picture"
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="avatar_not_found") from e
+    media_type = mimetypes.guess_type(key)[0] or "image/jpeg"
+    return Response(content=data, media_type=media_type, headers=headers)

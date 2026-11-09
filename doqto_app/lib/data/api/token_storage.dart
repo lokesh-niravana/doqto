@@ -15,15 +15,26 @@ const kSecureStorageOptions = FlutterSecureStorage(
 class TokenStorage {
   static const _storage = kSecureStorageOptions;
 
-  Future<String?> get accessToken => _storage.read(key: AppConstants.kAccessToken);
+  /// In-memory mirror of the access token for code that cannot await
+  /// secure storage (image loaders building request headers). Kept in step
+  /// by every read, save and clear below.
+  static String? cachedAccessToken;
+
+  Future<String?> get accessToken async {
+    final t = await _storage.read(key: AppConstants.kAccessToken);
+    cachedAccessToken = t;
+    return t;
+  }
   Future<String?> get refreshToken => _storage.read(key: AppConstants.kRefreshToken);
 
   Future<void> saveTokens({required String access, required String refresh}) async {
+    cachedAccessToken = access;
     await _storage.write(key: AppConstants.kAccessToken, value: access);
     await _storage.write(key: AppConstants.kRefreshToken, value: refresh);
   }
 
   Future<void> clear() async {
+    cachedAccessToken = null;
     await _storage.delete(key: AppConstants.kAccessToken);
     await _storage.delete(key: AppConstants.kRefreshToken);
   }

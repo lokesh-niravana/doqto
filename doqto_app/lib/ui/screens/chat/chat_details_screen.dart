@@ -19,6 +19,7 @@ import '../../widgets/app_pressable.dart';
 import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '_conversation_display.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 /// Timer options — mirror of DISAPPEAR_OPTIONS_SEC on the backend.
 const Map<int?, String> kDisappearOptions = {
@@ -77,7 +78,7 @@ class ChatDetailsScreen extends ConsumerWidget {
                   DoctorAvatar(
                     initials: display.initials,
                     size: AvatarSize.xxl,
-                    imageUrl: display.otherUser?.avatarPresignedUrl,
+                    imageUrl: userAvatarUrl(display.otherUser?.id, display.otherUser?.avatarUrl),
                   ),
                   const SizedBox(height: AppSpacing.md),
                   Text(

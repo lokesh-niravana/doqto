@@ -12,6 +12,7 @@ import '../../data/models/message.dart';
 import '../../data/models/network_profile.dart';
 import 'doctor_avatar.dart';
 import 'member_row.dart';
+import '../../core/utils/avatar_urls.dart';
 
 /// "Message info" for one of my own messages: who has read it, who has only
 /// received it, who has neither — names, avatars, times. Fetched on open;
@@ -128,7 +129,7 @@ class _ReceiptsSheet extends ConsumerWidget {
             avatar: DoctorAvatar(
               initials: initialsOf(r.fullName),
               colorIndex: avatarIndexFrom(r.avatarColor, r.userId),
-              imageUrl: r.avatarPresignedUrl,
+              imageUrl: userAvatarUrl(r.userId, r.avatarUrl),
               size: AvatarSize.sm,
             ),
             title: r.fullName,

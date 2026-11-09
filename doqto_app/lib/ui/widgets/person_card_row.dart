@@ -4,6 +4,7 @@ import '../../data/models/network_profile.dart';
 import 'app_pill.dart';
 import 'doctor_avatar.dart';
 import 'member_row.dart';
+import '../../core/utils/avatar_urls.dart';
 
 /// A [MemberRow] bound to a [PersonCard] — avatar (hero-paired on
 /// `member-avatar-<id>`), name, headline/specialty subtitle, and a trailing
@@ -42,7 +43,7 @@ class PersonCardRow extends StatelessWidget {
       avatar: DoctorAvatar(
         initials: person.initials,
         colorIndex: person.avatarIndex,
-        imageUrl: person.avatarPresignedUrl,
+        imageUrl: userAvatarUrl(person.id, person.avatarUrl),
         size: AvatarSize.lg,
         presence: presence,
         heroTag: 'member-avatar-${person.id}',

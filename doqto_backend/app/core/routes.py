@@ -69,6 +69,9 @@ class ApiRoutes:
     USERS_PRIVACY = "/me/privacy"
     USERS_PRESENCE = "/presence"  # ?ids=a,b,c (max 50) — privacy-filtered
     USERS_PROFILE = "/{user_id}/profile"  # public profile (M2) — no PHI
+    # Stable, authenticated picture bytes (presigned URLs expire in 5 min and
+    # the app paints avatars from cached state far older than that).
+    USERS_AVATAR = "/{user_id}/avatar"
 
     # People search (M2) — cross-org directory surface
     PEOPLE_SEARCH = "/search"

@@ -352,7 +352,7 @@ void main() {
 
   group('CaptionSheet', () {
     testWidgets('returns the trimmed caption on send, null on close; tap outside dismisses the keypad', (tester) async {
-      String? out = 'unset';
+      CaptionResult? out = const CaptionResult(caption: 'unset', previews: []);
       Future<void> open(WidgetTester tester) async {
         await tester.pumpWidget(MaterialApp(
           home: Scaffold(
@@ -381,12 +381,46 @@ void main() {
       await tester.enterText(find.byKey(const ValueKey('caption-input')), '  Results  ');
       await tester.tap(find.byKey(const ValueKey('caption-send')));
       await tester.pumpAndSettle();
-      expect(out, 'Results');
+      expect(out?.caption, 'Results');
+      expect(out?.previews.length, 2, reason: 'previews come back as they stand');
+      expect(find.byKey(const ValueKey('caption-crop-0')), findsNothing, reason: 'documents have no crop');
 
       await open(tester);
       await tester.tap(find.byKey(const ValueKey('caption-close')));
       await tester.pumpAndSettle();
       expect(out, isNull);
+    });
+
+    testWidgets('photo previews carry a crop button; untouched photos send as picked', (tester) async {
+      // Sync IO only: an awaited real Future never completes under fake async.
+      final tmp = Directory.systemTemp.createTempSync('doqto-caption-');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final a = File('${tmp.path}/a.jpg')..writeAsBytesSync(const [0xFF, 0xD8, 0xFF, 0xD9]);
+      CaptionResult? out;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ElevatedButton(
+              key: const ValueKey('open'),
+              onPressed: () async => out = await showCaptionSheet(ctx, previews: [CaptionPreview(imagePath: a.path, label: 'Photo')]),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.byKey(const ValueKey('open')));
+      // Image.file reads real IO, which never completes under fake async, so
+      // pump by hand instead of pumpAndSettle (it would wait the full timeout).
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.byKey(const ValueKey('caption-crop-0')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('caption-send')));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(out?.previews.single.imagePath, a.path);
+      expect(out?.previews.single.cropped, isFalse);
     });
   });
 

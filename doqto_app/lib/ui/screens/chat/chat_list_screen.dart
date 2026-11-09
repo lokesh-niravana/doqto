@@ -33,6 +33,7 @@ import '../../widgets/settings_rows.dart';
 import '../../widgets/swipe_action_row.dart';
 import '../../widgets/typing_indicator.dart';
 import '_conversation_display.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 class ChatListScreen extends ConsumerStatefulWidget {
   const ChatListScreen({super.key});
@@ -245,7 +246,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                       icon: DoctorAvatar(
                         initials: user.initials,
                         size: AvatarSize.sm,
-                        imageUrl: user.avatarPresignedUrl,
+                        imageUrl: userAvatarUrl(user.id, user.avatarUrl),
                       ),
                     ),
                   ),
@@ -953,7 +954,7 @@ class _SearchResultsState extends ConsumerState<_SearchResults> {
                 leading: DoctorAvatar(
                   initials: m.initials,
                   colorIndex: widget.orgMembers.indexOf(m),
-                  imageUrl: m.avatarPresignedUrl,
+                  imageUrl: userAvatarUrl(m.id, m.avatarUrl),
                 ),
                 title: Text(
                   m.fullName,
@@ -1146,7 +1147,7 @@ class _ChatRow extends ConsumerWidget {
         leading: DoctorAvatar(
           initials: display.initials,
           colorIndex: display.colorIndex,
-          imageUrl: display.otherUser?.avatarPresignedUrl,
+          imageUrl: userAvatarUrl(display.otherUser?.id, display.otherUser?.avatarUrl),
           isSelected: isSelected,
           presence: peer == null
               ? null

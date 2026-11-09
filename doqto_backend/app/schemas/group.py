@@ -83,6 +83,10 @@ class GroupInviteOut(ORMModel):
     group_id: uuid.UUID
     inviter_id: uuid.UUID
     invitee_id: uuid.UUID | None
+    # Direct invites carry who was invited, so Group info can list them.
+    invitee_name: str | None = None
+    invitee_avatar_color: str | None = None
+    invitee_avatar_url: str | None = None
     token: str | None
     max_uses: int | None
     use_count: int

@@ -80,6 +80,7 @@ import 'caption_sheet.dart';
 import 'forward_picker_sheet.dart';
 import 'poll_create_sheet.dart';
 import 'voice_recorder_panel.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 /// Pin durations — mirror of PIN_DURATIONS_SEC on the backend.
 const List<(int, String)> kPinDurations = [
@@ -1469,12 +1470,24 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       _showError(Strings.mediaTooManyPhotos);
       picked = picked.sublist(0, MediaLimits.multiPhotoMax);
     }
-    final caption = await showCaptionSheet(
+    final result = await showCaptionSheet(
       context,
       previews: [for (final x in picked) CaptionPreview(imagePath: x.path, label: Strings.mediaPhoto)],
     );
-    if (caption == null || !mounted) return;
-    await sendPhotoFiles([for (final x in picked) (path: x.path, name: x.name, mime: x.mimeType)], caption: caption);
+    if (result == null || !mounted) return;
+    // A photo cropped in the sheet is a new JPEG; the rest go as picked.
+    final files = <({String path, String name, String? mime})>[];
+    for (final (i, x) in picked.indexed) {
+      final p = i < result.previews.length ? result.previews[i] : null;
+      if (p != null && p.cropped && p.imagePath != null) {
+        final dot = x.name.lastIndexOf('.');
+        final stem = dot > 0 ? x.name.substring(0, dot) : x.name;
+        files.add((path: p.imagePath!, name: '$stem.jpg', mime: 'image/jpeg'));
+      } else {
+        files.add((path: x.path, name: x.name, mime: x.mimeType));
+      }
+    }
+    await sendPhotoFiles(files, caption: result.caption);
   }
 
   /// Shared by the picker and the integration test hook: strip EXIF, send
@@ -1528,10 +1541,11 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     }
     if (!mounted) return;
     if (askCaption) {
-      caption = await showCaptionSheet(
+      caption = (await showCaptionSheet(
         context,
         previews: [CaptionPreview(icon: Icons.videocam_outlined, label: Strings.mediaVideo)],
-      );
+      ))
+          ?.caption;
       if (caption == null || !mounted) return;
     }
     try {
@@ -1557,10 +1571,11 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       _showError(Strings.mediaFileTooLarge);
       return;
     }
-    final caption = await showCaptionSheet(
+    final caption = (await showCaptionSheet(
       context,
       previews: [CaptionPreview(label: file.name)],
-    );
+    ))
+        ?.caption;
     if (caption == null || !mounted) return;
     try {
       await ref.read(messagesProvider(widget.conversationId).notifier).sendFilePath(
@@ -1587,7 +1602,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     }
     if (!ok) return; // user backed out
     final name = 'Scan ${DateFormat('yyyy-MM-dd HH.mm').format(DateTime.now())}.pdf';
-    final caption = await showCaptionSheet(context, previews: [CaptionPreview(icon: Icons.document_scanner_outlined, label: name)]);
+    final caption = (await showCaptionSheet(context, previews: [CaptionPreview(icon: Icons.document_scanner_outlined, label: name)]))?.caption;
     if (caption == null || !mounted) return;
     try {
       await ref.read(messagesProvider(widget.conversationId).notifier).sendFilePath(
@@ -2578,7 +2593,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                             DoctorAvatar(
                               initials: display.initials,
                               size: AvatarSize.sm,
-                              imageUrl: display.otherUser?.avatarPresignedUrl,
+                              imageUrl: userAvatarUrl(display.otherUser?.id, display.otherUser?.avatarUrl),
                             ),
                             const SizedBox(width: AppSpacing.sm),
                             Expanded(

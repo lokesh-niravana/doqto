@@ -10,22 +10,43 @@ import '../../../core/tokens/typography.dart';
 import '../../../data/models/message.dart';
 import '../../widgets/app_pressable.dart';
 import '../../widgets/app_text_field.dart';
+import '../media/image_crop_screen.dart';
 
 /// Something the user is about to send, shown above the caption field.
 class CaptionPreview {
   final String? imagePath;
   final IconData icon;
   final String label;
-  const CaptionPreview({this.imagePath, this.icon = Icons.insert_drive_file_outlined, required this.label});
+
+  /// Set when the user cropped this photo in the sheet: the path then points
+  /// at the cropped JPEG, not the picked file.
+  final bool cropped;
+  const CaptionPreview({
+    this.imagePath,
+    this.icon = Icons.insert_drive_file_outlined,
+    required this.label,
+    this.cropped = false,
+  });
+
+  CaptionPreview withImagePath(String path) =>
+      CaptionPreview(imagePath: path, icon: icon, label: label, cropped: true);
 }
 
-/// Caption step after picking media (batch 5 A). Returns the caption
-/// (possibly empty) on Send, null when the user backs out.
-Future<String?> showCaptionSheet(
+/// What the caption sheet hands back on Send: the trimmed caption and the
+/// previews as they stand (a photo the user cropped carries its new path).
+class CaptionResult {
+  final String caption;
+  final List<CaptionPreview> previews;
+  const CaptionResult({required this.caption, required this.previews});
+}
+
+/// Caption step after picking media (batch 5 A). Returns the caption and
+/// the (possibly cropped) previews on Send, null when the user backs out.
+Future<CaptionResult?> showCaptionSheet(
   BuildContext context, {
   required List<CaptionPreview> previews,
 }) {
-  return showModalBottomSheet<String>(
+  return showModalBottomSheet<CaptionResult>(
     context: context,
     useRootNavigator: true,
     isScrollControlled: true,
@@ -44,6 +65,8 @@ class CaptionSheet extends StatefulWidget {
 
 class _CaptionSheetState extends State<CaptionSheet> {
   final _controller = TextEditingController();
+  late final List<CaptionPreview> _previews = List.of(widget.previews);
+  bool _cropping = false;
 
   @override
   void dispose() {
@@ -53,13 +76,32 @@ class _CaptionSheetState extends State<CaptionSheet> {
 
   void _send() {
     FocusScope.of(context).unfocus();
-    Navigator.of(context).pop(_controller.text.trim());
+    Navigator.of(context).pop(
+      CaptionResult(caption: _controller.text.trim(), previews: _previews),
+    );
+  }
+
+  /// Crop one photo in place; the preview and the file that gets sent both
+  /// move to the cropped JPEG. Cancel leaves it as it was.
+  Future<void> _crop(int i) async {
+    final path = _previews[i].imagePath;
+    if (path == null || _cropping) return;
+    setState(() => _cropping = true);
+    FocusScope.of(context).unfocus();
+    try {
+      final out = await showImageCrop(context, File(path));
+      if (out != null && mounted) {
+        setState(() => _previews[i] = _previews[i].withImagePath(out.path));
+      }
+    } finally {
+      if (mounted) setState(() => _cropping = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.viewInsetsOf(context).bottom;
-    final previews = widget.previews;
+    final previews = _previews;
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.only(bottom: bottom),
@@ -101,8 +143,33 @@ class _CaptionSheetState extends State<CaptionSheet> {
                       width: 120,
                       color: AppColors.gray100,
                       child: p.imagePath != null
-                          ? Image.file(File(p.imagePath!), fit: BoxFit.cover,
-                              errorBuilder: (_, _, _) => Icon(p.icon, color: AppColors.gray400, size: 40))
+                          ? Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                Image.file(File(p.imagePath!), key: ValueKey('caption-image-$i-${p.imagePath}'), fit: BoxFit.cover,
+                                    errorBuilder: (_, _, _) => Icon(p.icon, color: AppColors.gray400, size: 40)),
+                                Positioned(
+                                  right: 4,
+                                  bottom: 4,
+                                  child: Material(
+                                    color: AppColors.gray900.withValues(alpha: 0.65),
+                                    shape: const CircleBorder(),
+                                    child: InkWell(
+                                      key: ValueKey('caption-crop-$i'),
+                                      customBorder: const CircleBorder(),
+                                      onTap: _cropping ? null : () => _crop(i),
+                                      child: Tooltip(
+                                        message: Strings.captionCrop,
+                                        child: const Padding(
+                                          padding: EdgeInsets.all(6),
+                                          child: Icon(Icons.crop_rounded, size: 18, color: AppColors.white),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            )
                           : Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [

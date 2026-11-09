@@ -351,6 +351,11 @@ class Strings {
   static const String groupLinkRevoked = 'Invite link revoked';
   static const String groupLinkNone = 'No active invite links';
   static const String groupPendingInvitesLabel = 'Pending invites';
+  static const String groupInviteCancel = 'Cancel invite';
+  static const String groupPhotoAdjustTitle = 'Adjust group photo';
+  static const String groupInviteCancelled = 'Invite cancelled';
+  static const String groupInviteAwaiting = 'Waiting for them to accept';
+  static String groupInvitedAgo(String when) => 'Invited $when';
   static const String groupJoinedViaLink = 'You joined the group';
   static const String groupJoiningViaLink = 'Joining group…';
   static const String groupMessageInfo = 'Message info';
@@ -736,4 +741,13 @@ class Strings {
 
   static const String deviceModifiedBanner =
       'This device appears modified; your organisation may block access';
+
+  // Image crop (before a photo is saved or sent)
+  static const String cropTitle = 'Adjust photo';
+  static const String cropDone = 'Done';
+  static const String cropCancel = 'Cancel';
+  static const String cropReset = 'Reset';
+  static const String cropAspectFree = 'Free';
+  static const String cropFailed = "Couldn't crop that photo";
+  static const String captionCrop = 'Crop';
 }

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +13,7 @@ from app.core.constants import (
     AVATAR_MAX_BYTES,
     GROUPS_PAGE_SIZE,
     RATE_LIMIT_READS_PER_MINUTE,
+    RATE_LIMIT_AVATAR_READS_PER_MINUTE,
 )
 from app.core.dependencies import get_current_user
 from app.core.enums import GroupInviteState, GroupMemberState, GroupRole
@@ -39,7 +40,7 @@ from app.schemas.group import (
     TransferOwnershipIn,
 )
 from app.schemas.network import CursorPage
-from app.services.file_service import FileService
+from app.services.file_service import FileService, avatar_response
 from app.services.group_service import GroupError, GroupService
 
 router = APIRouter()
@@ -282,6 +283,23 @@ async def upload_group_avatar(
     return await _detail_out(group, membership)
 
 
+@router.get(ApiRoutes.GROUPS_AVATAR, response_class=Response)
+async def get_group_avatar(
+    group_id: uuid.UUID,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """The group picture itself, for members and pending invitees. A stable
+    URL the app can cache (presigned links last five minutes)."""
+    await enforce_rate_limit(user.id, "avatar_read", RATE_LIMIT_AVATAR_READS_PER_MINUTE)
+    group = await _load_group(group_id, db)
+    membership = await _my_membership(group, user.id, db)
+    if not _is_active(membership) and await _pending_invite_id(group, user.id, db) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="group_not_found")
+    return await avatar_response(request, key=group.avatar_url)
+
+
 @router.delete(ApiRoutes.GROUPS_AVATAR, response_model=GroupOut)
 async def delete_group_avatar(
     group_id: uuid.UUID,
@@ -340,7 +358,21 @@ async def create_invite(
             )
     except GroupError as e:
         _raise(e)
-    return GroupInviteOut.model_validate(invite)
+    invitee = await db.get(User, invite.invitee_id) if invite.invitee_id else None
+    return _invite_out(invite, invitee)
+
+
+def _invite_out(invite: GroupInvite, invitee: User | None) -> GroupInviteOut:
+    out = GroupInviteOut.model_validate(invite)
+    if invitee is not None:
+        out = out.model_copy(
+            update={
+                "invitee_name": invitee.full_name,
+                "invitee_avatar_color": invitee.avatar_color,
+                "invitee_avatar_url": invitee.avatar_url,
+            }
+        )
+    return out
 
 
 @router.get(ApiRoutes.GROUPS_INVITES, response_model=list[GroupInviteOut])
@@ -353,15 +385,16 @@ async def list_invites(
     await enforce_rate_limit(user.id, "list_group_invites", RATE_LIMIT_READS_PER_MINUTE)
     group = await _load_group(group_id, db)
     await _require_admin(group, user.id, db)
-    rows = await db.scalars(
-        select(GroupInvite)
+    rows = await db.execute(
+        select(GroupInvite, User)
+        .outerjoin(User, User.id == GroupInvite.invitee_id)
         .where(
             GroupInvite.group_id == group.id,
             GroupInvite.state == GroupInviteState.PENDING,
         )
         .order_by(GroupInvite.created_at.desc())
     )
-    return [GroupInviteOut.model_validate(i) for i in rows.all()]
+    return [_invite_out(i, u) for i, u in rows.all()]
 
 
 @router.post(ApiRoutes.GROUPS_INVITE_ACCEPT, response_model=OkResponse)

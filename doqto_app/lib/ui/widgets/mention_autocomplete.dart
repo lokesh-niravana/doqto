@@ -7,6 +7,7 @@ import '../../core/tokens/spacing.dart';
 import '../../core/tokens/typography.dart';
 import '../../data/models/group.dart';
 import 'doctor_avatar.dart';
+import '../../core/utils/avatar_urls.dart';
 
 /// The @mention suggestions above a group composer (batch 4): members whose
 /// name contains the typed query, me excluded. Keys: `mention-<userId>`.
@@ -62,7 +63,7 @@ class MentionAutocomplete extends StatelessWidget {
                 initials: m.initials,
                 colorIndex: m.avatarIndex,
                 size: AvatarSize.sm,
-                imageUrl: m.avatarPresignedUrl,
+                imageUrl: userAvatarUrl(m.userId, m.avatarUrl),
               ),
               title: Text(m.fullName, style: AppText.bodyPrimary),
               subtitle: m.specialty == null ? null : Text(m.specialty!, style: AppText.caption),

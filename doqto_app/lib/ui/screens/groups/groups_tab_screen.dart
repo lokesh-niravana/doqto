@@ -17,6 +17,7 @@ import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/member_row.dart';
 import '../../widgets/primary_button.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 /// The Groups tab: my groups only — groups are not discoverable by browsing.
 /// Create is a header action (the center FAB slot is owned by the mic).
@@ -135,7 +136,7 @@ class _GroupRow extends ConsumerWidget {
       avatar: DoctorAvatar(
         initials: group.initials,
         colorIndex: group.avatarIndex,
-        imageUrl: group.avatarPresignedUrl ?? group.avatarUrl,
+        imageUrl: groupAvatarUrl(group.id, group.avatarUrl),
         heroTag: 'group-avatar-${group.id}',
       ),
       title: group.name,

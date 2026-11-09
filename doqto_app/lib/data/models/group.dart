@@ -247,6 +247,11 @@ class GroupInvite {
   final String groupId;
   final String inviterId;
   final String? inviteeId;
+
+  /// Direct invites name the invitee (server joins the user row).
+  final String? inviteeName;
+  final String? inviteeAvatarColor;
+  final String? inviteeAvatarUrl;
   final String? token;
   final int? maxUses;
   final int useCount;
@@ -259,6 +264,9 @@ class GroupInvite {
     required this.groupId,
     required this.inviterId,
     required this.inviteeId,
+    this.inviteeName,
+    this.inviteeAvatarColor,
+    this.inviteeAvatarUrl,
     required this.token,
     required this.maxUses,
     required this.useCount,
@@ -268,6 +276,20 @@ class GroupInvite {
   });
 
   bool get isLink => token != null && token!.isNotEmpty;
+
+  /// A person-to-person invite (the kind Add members sends).
+  bool get isDirect => !isLink && inviteeId != null;
+
+  String get inviteeInitials {
+    final parts = (inviteeName ?? '').trim().split(RegExp(r'\s+'))
+      ..removeWhere((p) => p.isEmpty || p.endsWith('.'));
+    if (parts.isEmpty) return '?';
+    final first = parts.first[0];
+    final last = parts.length > 1 ? parts.last[0] : '';
+    return (first + last).toUpperCase();
+  }
+
+  int get inviteeAvatarIndex => avatarIndexFrom(inviteeAvatarColor, inviteeId ?? id);
 
   /// The app-scheme deep link that joins through this invite. Universal
   /// (https) links need an associated domain the iOS target does not have
@@ -279,6 +301,9 @@ class GroupInvite {
         groupId: (j['group_id'] ?? '') as String,
         inviterId: (j['inviter_id'] ?? '') as String,
         inviteeId: j['invitee_id'] as String?,
+        inviteeName: j['invitee_name'] as String?,
+        inviteeAvatarColor: j['invitee_avatar_color'] as String?,
+        inviteeAvatarUrl: j['invitee_avatar_url'] as String?,
         token: j['token'] as String?,
         maxUses: (j['max_uses'] as num?)?.toInt(),
         useCount: (j['use_count'] as num?)?.toInt() ?? 0,

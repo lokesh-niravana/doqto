@@ -25,6 +25,7 @@ import '../../widgets/app_skeleton.dart';
 import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 enum _Phase { pick, record, preview, sending }
 
@@ -387,7 +388,7 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
                       secondary: DoctorAvatar(
                         initials: m.initials,
                         colorIndex: m.avatarIndex,
-                        imageUrl: m.avatarPresignedUrl,
+                        imageUrl: userAvatarUrl(m.id, m.avatarUrl),
                       ),
                       activeColor: AppColors.medBlue,
                       controlAffinity: ListTileControlAffinity.trailing,

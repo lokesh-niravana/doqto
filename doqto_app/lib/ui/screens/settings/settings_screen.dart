@@ -15,6 +15,7 @@ import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/settings_rows.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 /// Settings home (batch 6): a profile card, then grouped entries into the
 /// Account, Privacy, Chats & appearance, Notifications, Storage, Language and
@@ -79,7 +80,7 @@ class SettingsScreen extends ConsumerWidget {
                 leading: DoctorAvatar(
                   initials: user?.initials ?? '?',
                   size: AvatarSize.lg,
-                  imageUrl: user?.avatarPresignedUrl,
+                  imageUrl: userAvatarUrl(user?.id, user?.avatarUrl),
                 ),
                 title: Text(user?.fullName ?? '—', style: AppText.heading),
                 subtitle: Text(

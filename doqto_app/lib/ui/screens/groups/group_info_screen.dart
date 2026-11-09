@@ -30,6 +30,8 @@ import '../../widgets/member_row.dart';
 import '../../widgets/primary_button.dart';
 import '../chat/chat_details_screen.dart' show kDisappearOptions;
 import 'group_add_members_sheet.dart';
+import '../../../core/utils/avatar_urls.dart';
+import '../media/image_crop_screen.dart';
 
 /// Group info, opened from the group chat's header (WhatsApp's "Group info"):
 /// who the group is, what it's for, who is in it, and the way out. A doctor
@@ -75,6 +77,7 @@ class GroupInfoScreen extends ConsumerWidget {
             ],
             const SizedBox(height: AppSpacing.sm),
             _Members(group: group),
+            if (group.canManage) _PendingInvites(group: group),
             if (group.isMember) ...[
               const SizedBox(height: AppSpacing.sm),
               _Section(
@@ -278,9 +281,18 @@ class _IdentityState extends ConsumerState<_Identity> {
         maxHeight: 1024,
         imageQuality: 85,
       );
-      if (xfile == null) return;
+      if (xfile == null || !mounted) return;
+      // Crop before saving (same step as the profile photo): square, shown
+      // as a circle everywhere.
+      final cropped = await showImageCrop(
+        context,
+        File(xfile.path),
+        circle: true,
+        title: Strings.groupPhotoAdjustTitle,
+      );
+      if (cropped == null || !mounted) return;
       setState(() => _uploading = true);
-      await _notifier.setAvatar(File(xfile.path));
+      await _notifier.setAvatar(cropped);
     } catch (e) {
       showApiError(messenger, e);
     } finally {
@@ -366,7 +378,7 @@ class _IdentityState extends ConsumerState<_Identity> {
                   child: DoctorAvatar(
                     initials: group.initials,
                     colorIndex: group.avatarIndex,
-                    imageUrl: group.avatarPresignedUrl ?? group.avatarUrl,
+                    imageUrl: groupAvatarUrl(group.id, group.avatarUrl),
                     size: AvatarSize.xxl,
                     heroTag: 'group-avatar-${group.id}',
                   ),
@@ -783,6 +795,83 @@ class _Pick<T> {
 }
 
 // ---------------------------------------------------------------------------
+// Pending direct invites (owner / admin)
+// ---------------------------------------------------------------------------
+
+/// People invited through Add members who have not answered yet. Hidden when
+/// there are none; an admin can cancel one here. Link invites live in
+/// [_InviteLinks].
+class _PendingInvites extends ConsumerWidget {
+  final Group group;
+  const _PendingInvites({required this.group});
+
+  static String _ago(DateTime? t) {
+    if (t == null) return '';
+    final d = DateTime.now().difference(t);
+    if (d.inMinutes < 1) return 'just now';
+    if (d.inHours < 1) return '${d.inMinutes}m ago';
+    if (d.inDays < 1) return '${d.inHours}h ago';
+    return '${d.inDays}d ago';
+  }
+
+  Future<void> _cancel(BuildContext context, WidgetRef ref, GroupInvite i) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(groupInvitesProvider(group.id).notifier).revoke(i.id);
+      messenger.showSnackBar(
+        const SnackBar(content: Text(Strings.groupInviteCancelled)),
+      );
+    } catch (e) {
+      showApiError(messenger, e);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final invites = [
+      for (final i in ref.watch(groupInvitesProvider(group.id)).valueOrNull ??
+          const <GroupInvite>[])
+        if (i.isDirect) i,
+    ];
+    if (invites.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpacing.sm),
+      child: _Section(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SectionLabel('${Strings.groupPendingInvitesLabel} (${invites.length})'),
+            for (final i in invites)
+              MemberRow(
+                key: ValueKey('invite-${i.id}'),
+                avatar: DoctorAvatar(
+                  initials: i.inviteeInitials,
+                  colorIndex: i.inviteeAvatarIndex,
+                  imageUrl: userAvatarUrl(i.inviteeId, i.inviteeAvatarUrl),
+                ),
+                title: i.inviteeName ?? Strings.groupInviteAwaiting,
+                subtitle: i.createdAt == null
+                    ? Strings.groupInviteAwaiting
+                    : Strings.groupInvitedAgo(_ago(i.createdAt)),
+                trailing: IconButton(
+                  key: ValueKey('invite-cancel-${i.id}'),
+                  tooltip: Strings.groupInviteCancel,
+                  icon: const Icon(Icons.close_rounded, size: 20, color: AppColors.red),
+                  onPressed: () => _cancel(context, ref, i),
+                ),
+                onTap: i.inviteeId == null
+                    ? null
+                    : () => context.push(AppRoutes.person(i.inviteeId!)),
+              ),
+            const SizedBox(height: AppSpacing.xs),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Invite links (owner / admin)
 // ---------------------------------------------------------------------------
 
@@ -1096,7 +1185,7 @@ class _Members extends ConsumerWidget {
                 avatar: DoctorAvatar(
                   initials: m.initials,
                   colorIndex: m.avatarIndex,
-                  imageUrl: m.avatarPresignedUrl ?? m.avatarUrl,
+                  imageUrl: userAvatarUrl(m.userId, m.avatarUrl),
                 ),
                 title: m.userId == meId ? Strings.groupYou : m.fullName,
                 subtitle: m.specialty ?? m.headline,
@@ -1150,7 +1239,7 @@ Future<void> showMemberActionsSheet(
             avatar: DoctorAvatar(
               initials: member.initials,
               colorIndex: member.avatarIndex,
-              imageUrl: member.avatarPresignedUrl ?? member.avatarUrl,
+              imageUrl: userAvatarUrl(member.userId, member.avatarUrl),
             ),
             title: member.fullName,
             subtitle: member.specialty ?? member.headline,

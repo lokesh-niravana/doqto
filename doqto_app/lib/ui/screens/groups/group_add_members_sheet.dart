@@ -16,6 +16,7 @@ import '../../widgets/doctor_avatar.dart';
 import '../../widgets/member_row.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/search_bar.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 /// Who an owner/admin can add: my connections, then org colleagues (the same
 /// pool as New message), minus people already in the group. Multi-select,
@@ -93,7 +94,9 @@ class _AddMembersSheetState extends ConsumerState<_AddMembersSheet> {
     final org = ref.watch(orgProvider).current;
     final connectionsAsync = ref.watch(connectionsProvider);
     final membersAsync = org == null ? null : ref.watch(orgMembersProvider(org.id));
-    final skip = {...widget.existing, ?meId};
+    // Members, me, and anyone with a pending invite (Group info lists those).
+    final pending = ref.watch(groupInvitesProvider(widget.group.id)).valueOrNull ?? const <GroupInvite>[];
+    final skip = {...widget.existing, ?meId, for (final i in pending) ?i.inviteeId};
 
     final people = <_Person>[
       for (final c in connectionsAsync.value ?? const [])
@@ -104,7 +107,7 @@ class _AddMembersSheetState extends ConsumerState<_AddMembersSheet> {
             sub: c.specialty ?? '',
             initials: c.initials,
             color: c.avatarIndex,
-            image: c.avatarPresignedUrl,
+            image: userAvatarUrl(c.id, c.avatarUrl),
           ),
     ];
     final seen = {for (final p in people) p.id};
@@ -116,7 +119,7 @@ class _AddMembersSheetState extends ConsumerState<_AddMembersSheet> {
         sub: m.specialty ?? '',
         initials: m.initials,
         color: m.avatarIndex,
-        image: m.avatarPresignedUrl,
+        image: userAvatarUrl(m.id, m.avatarUrl),
       ));
     }
     final shown = people.where(_match).toList();

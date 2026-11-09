@@ -16,6 +16,7 @@ import '../../widgets/app_skeleton.dart';
 import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   /// When null, the screen shows the signed-in user in editable mode.
@@ -246,7 +247,7 @@ class _MemberProfileView extends StatelessWidget {
               DoctorAvatar(
                 initials: member.initials,
                 size: AvatarSize.xxl,
-                imageUrl: member.avatarPresignedUrl,
+                imageUrl: userAvatarUrl(member.id, member.avatarUrl),
                 heroTag: 'member-avatar-${member.id}',
               ),
               const SizedBox(height: AppSpacing.md),
@@ -328,7 +329,7 @@ class _Header extends StatelessWidget {
         DoctorAvatar(
           initials: user.initials,
           size: AvatarSize.xxl,
-          imageUrl: user.avatarPresignedUrl,
+          imageUrl: userAvatarUrl(user.id, user.avatarUrl),
         ),
         const SizedBox(height: AppSpacing.md),
         Text(user.fullName, style: AppText.display, textAlign: TextAlign.center),

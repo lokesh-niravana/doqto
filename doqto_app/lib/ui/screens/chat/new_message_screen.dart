@@ -16,6 +16,7 @@ import '../../widgets/app_skeleton.dart';
 import '../../widgets/doctor_avatar.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/search_bar.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 /// "Start a conversation": pick a person, land in your chat with them. Like
 /// WhatsApp's new chat — connections first, then colleagues, one row per
@@ -75,7 +76,7 @@ class _NewMessageScreenState extends ConsumerState<NewMessageScreen> {
           name: c.fullName,
           sub: [c.specialty, c.locationLabel].whereType<String>().join(' · '),
           initials: c.initials,
-          image: c.avatarPresignedUrl,
+          image: userAvatarUrl(c.id, c.avatarUrl),
         ),
     ];
     final connected = {for (final c in connections) c.id};
@@ -88,7 +89,7 @@ class _NewMessageScreenState extends ConsumerState<NewMessageScreen> {
             name: m.fullName,
             sub: m.specialty ?? '',
             initials: m.initials,
-            image: m.avatarPresignedUrl,
+            image: userAvatarUrl(m.id, m.avatarUrl),
           ),
     ];
     final shownConnections = connections.where(_match).toList();

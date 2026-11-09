@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../core/enums/app_enums.dart';
+import '../../core/utils/avatar_urls.dart';
+import '../../data/api/token_storage.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/motion.dart';
 
@@ -64,10 +66,17 @@ class DoctorAvatar extends StatelessWidget {
     );
 
     final hasImage = imageUrl != null && imageUrl!.isNotEmpty;
+    // Pictures served by our API (see avatar_urls.dart) need the bearer
+    // token; S3 presigned links carry their own credential in the query.
+    final token = TokenStorage.cachedAccessToken;
+    final headers = hasImage && isApiImageUrl(imageUrl!) && token != null
+        ? {'Authorization': 'Bearer $token'}
+        : null;
     final picture = hasImage
         ? ClipOval(
             child: CachedNetworkImage(
               imageUrl: imageUrl!,
+              httpHeaders: headers,
               width: dim,
               height: dim,
               fit: BoxFit.cover,

@@ -11,6 +11,7 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     UploadFile,
     status,
 )
@@ -27,6 +28,7 @@ from app.core.constants import (
     RATE_LIMIT_PHONE_CHANGES_PER_HOUR,
     RATE_LIMIT_PIN_WRITES_PER_MINUTE,
     RATE_LIMIT_PRIVACY_WRITES_PER_MINUTE,
+    RATE_LIMIT_AVATAR_READS_PER_MINUTE,
     RATE_LIMIT_READS_PER_MINUTE,
     RATE_LIMIT_SESSION_WRITES_PER_MINUTE,
     RATE_LIMIT_STATUS_WRITES_PER_MINUTE,
@@ -66,7 +68,7 @@ from app.schemas.user import UserOut, UserPatch, build_user_out, pin_clears_at
 from app.services.account_deletion_service import AccountDeletionService
 from app.services.auth_service import AuthError, AuthService, PhoneTaken, WrongAccount
 from app.services.audit_service import AuditService
-from app.services.file_service import FileService
+from app.services.file_service import FileService, avatar_response
 from app.services.notification_settings_service import NotificationSettingsService
 from app.services.presence_service import PresenceService
 from app.services.push_service import PushService
@@ -357,6 +359,30 @@ async def get_public_profile(
         is_colleague=bool(ctx.shared_org_ids),
         **StatusService.to_out(target).model_dump(),
     )
+
+
+@router.get(ApiRoutes.USERS_AVATAR, response_class=Response)
+async def get_user_avatar(
+    user_id: uuid.UUID,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """A doctor's profile picture as bytes, under the same audience rule as
+    the public profile (profile_photo_visibility, blocks, silence rule). The
+    URL is stable, so the app caches it instead of chasing presigned links."""
+    await enforce_rate_limit(user.id, "avatar_read", RATE_LIMIT_AVATAR_READS_PER_MINUTE)
+    if user_id == user.id:
+        return await avatar_response(request, key=user.avatar_url)
+    target = await db.get(User, user_id)
+    if target is None or target.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="user_unavailable")
+    ctx = await RelationshipService.load_context(user.id, user_id, db)
+    if ctx.is_blocked_either_way or not can_view_profile(ctx).allowed:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="user_unavailable")
+    if not can_see_profile_photo(ctx):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="avatar_not_found")
+    return await avatar_response(request, key=target.avatar_url)
 
 
 @router.post("/me/avatar", response_model=UserOut)

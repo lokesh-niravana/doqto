@@ -7,6 +7,7 @@ import '../../data/models/network_profile.dart';
 import 'doctor_avatar.dart';
 import 'primary_button.dart';
 import 'section_card.dart';
+import '../../core/utils/avatar_urls.dart';
 
 /// A received connection invitation: avatar + name + headline, an optional
 /// mutuals line, and a paired Accept / Ignore action row. Composed on
@@ -41,7 +42,7 @@ class InvitationCard extends StatelessWidget {
               DoctorAvatar(
                 initials: party?.initials ?? '?',
                 colorIndex: party?.avatarIndex ?? 0,
-                imageUrl: party?.avatarPresignedUrl,
+                imageUrl: userAvatarUrl(party?.id, party?.avatarUrl),
                 size: AvatarSize.lg,
                 heroTag: party != null ? 'member-avatar-${party.id}' : null,
               ),

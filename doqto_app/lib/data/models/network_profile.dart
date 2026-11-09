@@ -223,6 +223,7 @@ class InvitationParty {
   final String? headline;
   final String? specialty;
   final String? avatarColor;
+  final String? avatarUrl;
   final String? avatarPresignedUrl;
 
   const InvitationParty({
@@ -231,6 +232,7 @@ class InvitationParty {
     this.headline,
     this.specialty,
     this.avatarColor,
+    this.avatarUrl,
     this.avatarPresignedUrl,
   });
 
@@ -240,6 +242,7 @@ class InvitationParty {
         headline: j['headline'] as String?,
         specialty: j['specialty'] as String?,
         avatarColor: j['avatar_color'] as String?,
+        avatarUrl: j['avatar_url'] as String?,
         avatarPresignedUrl: j['avatar_presigned_url'] as String?,
       );
 

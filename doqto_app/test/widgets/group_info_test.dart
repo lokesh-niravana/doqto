@@ -74,6 +74,15 @@ class _FakeInvites extends GroupInvitesNotifier {
           'max_uses': 5,
           'state': 'pending',
         }),
+        GroupInvite.fromJson({
+          'id': 'i2',
+          'group_id': 'g1',
+          'inviter_id': 'me',
+          'invitee_id': 'u-pending',
+          'invitee_name': 'Dr. Pending Person',
+          'state': 'pending',
+          'created_at': DateTime.now().subtract(const Duration(hours: 2)).toIso8601String(),
+        }),
       ];
 }
 
@@ -123,6 +132,7 @@ void main() {
     await tall(tester);
     await tester.pumpWidget(_app(_group()));
     await tester.pumpAndSettle();
+    expect(find.textContaining(Strings.groupPendingInvitesLabel), findsNothing);
 
     expect(find.text(Strings.groupInfoTitle), findsOneWidget);
     expect(find.text('Bonita Cardiology Team'), findsOneWidget);
@@ -153,6 +163,13 @@ void main() {
     expect(find.text(Strings.groupInviteLinksLabel), findsOneWidget);
     expect(find.text('doqto:///g/tok123'), findsOneWidget);
     expect(find.byKey(const ValueKey('members-add')), findsOneWidget);
+    // Direct invites sent from Add members are listed until answered.
+    expect(find.text('${Strings.groupPendingInvitesLabel} (1)'), findsOneWidget);
+    expect(find.text('Dr. Pending Person'), findsOneWidget);
+    expect(find.text(Strings.groupInvitedAgo('2h ago')), findsOneWidget);
+    expect(find.byKey(const ValueKey('invite-cancel-i2')), findsOneWidget);
+    // The link invite stays under Invite links, not here.
+    expect(find.byKey(const ValueKey('invite-i1')), findsNothing);
     expect(find.byKey(const ValueKey('group-description-edit')), findsOneWidget);
 
     // Tapping another member opens the actions sheet with owner powers.

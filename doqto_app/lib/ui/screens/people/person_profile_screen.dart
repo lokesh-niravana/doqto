@@ -20,6 +20,7 @@ import '../../widgets/primary_button.dart';
 import '../../widgets/inline_banner.dart';
 import '../../widgets/section_card.dart';
 import '../settings/blocked_list_screen.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 /// Self-loading person profile addressed by user id. Reachable via
 /// `/people/:userId` and the `doqto:///people/<id>` deep link. Sections render
@@ -260,7 +261,7 @@ class _ProfileBody extends ConsumerWidget {
               initials: profile.initials,
               colorIndex: profile.avatarIndex,
               size: AvatarSize.xxl,
-              imageUrl: profile.avatarPresignedUrl,
+              imageUrl: userAvatarUrl(profile.id, profile.avatarUrl),
               heroTag: 'member-avatar-${profile.id}',
             ),
             const SizedBox(height: AppSpacing.md),

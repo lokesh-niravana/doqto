@@ -14,6 +14,7 @@ import '../../../state/network_state.dart';
 import '../../widgets/doctor_avatar.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/search_bar.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 /// Where a forward goes: an existing chat, or a connection without one yet
 /// (the caller opens the direct chat first — the server hands back an
@@ -144,7 +145,7 @@ class _ForwardPickerSheetState extends ConsumerState<ForwardPickerSheet> {
                       initials: p.initials,
                       subtitle: p.specialty,
                       colorSeed: p.id,
-                      image: p.avatarPresignedUrl,
+                      image: userAvatarUrl(p.id, p.avatarUrl),
                     ),
                   if (shownRecent.isEmpty && shownOthers.isEmpty)
                     Padding(

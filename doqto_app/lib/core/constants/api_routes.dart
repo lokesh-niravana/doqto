@@ -16,6 +16,8 @@ class ApiRoutes {
   // Users
   static const String usersMe = '$apiV1/users/me';
   static const String usersMeAvatar = '$apiV1/users/me/avatar';
+  /// Stable picture bytes for any doctor (visibility enforced server-side).
+  static String userAvatar(String id) => '$apiV1/users/$id/avatar';
   static const String usersMePushTokens = '$apiV1/users/me/push-tokens';
   // Attach a phone to the signed-in account (POST, sign-up) or change the
   // number (PATCH, batch 6) — both take a Firebase ID token for the number.

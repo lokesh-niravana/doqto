@@ -301,8 +301,11 @@ class GroupDetailNotifier extends FamilyAsyncNotifier<Group, String> {
 
   // ---- Owner / admin: members ---------------------------------------------
 
-  Future<void> invite(String userId) =>
-      ref.read(groupsRepositoryProvider).inviteUser(arg, userId);
+  Future<void> invite(String userId) async {
+    final invite = await ref.read(groupsRepositoryProvider).inviteUser(arg, userId);
+    // Group info lists pending invites; show this one at once.
+    ref.read(groupInvitesProvider(arg).notifier).add(invite);
+  }
 
   Future<void> changeRole(String userId, GroupRole role) async {
     final members = ref.read(groupMembersProvider(arg).notifier);
@@ -431,7 +434,10 @@ class GroupInvitesNotifier
       ref,
       refresh: refresh,
       onEvent: (event, refresh) {
-        if (event.type == WsEventServer.groupUpdated &&
+        // An accepted invite becomes a membership (member_joined); a
+        // declined or revoked one shows up as group_updated.
+        if ((event.type == WsEventServer.groupUpdated ||
+                event.type == WsEventServer.groupMemberJoined) &&
             event.data['group_id'] == groupId) {
           refresh();
         }
@@ -444,6 +450,13 @@ class GroupInvitesNotifier
     try {
       state = AsyncData(await ref.read(groupsRepositoryProvider).listInvites(arg));
     } catch (_) {}
+  }
+
+  /// A direct invite just sent from the Add members sheet.
+  void add(GroupInvite invite) {
+    final before = state.valueOrNull ?? const <GroupInvite>[];
+    if (before.any((i) => i.id == invite.id)) return;
+    state = AsyncData([invite, ...before]);
   }
 
   Future<GroupInvite> createLink({int? maxUses, DateTime? expiresAt}) async {

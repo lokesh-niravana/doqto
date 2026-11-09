@@ -110,10 +110,6 @@ class _DoqtoAppState extends ConsumerState<DoqtoApp>
     super.dispose();
   }
 
-  /// Theme = System follows the OS; the OS does not rebuild us on its own.
-  @override
-  void didChangePlatformBrightness() => setState(() {});
-
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
@@ -143,23 +139,14 @@ class _DoqtoAppState extends ConsumerState<DoqtoApp>
     // Batch 6 root listeners (screenshot audit, channels, FLAG_SECURE…).
     ref.watch(settingsServicesProvider);
 
-    // Appearance (batch 6): swap the static token palette FIRST so every
-    // AppColors.x read during this build agrees with the ThemeData below.
+    // Settings drive locale and text scale. Light theme only (design.md).
     final settings = ref.watch(appSettingsProvider);
-    final platformBrightness =
-        WidgetsBinding.instance.platformDispatcher.platformBrightness;
-    applyPalette(settings, platformBrightness);
-    final light = AppTheme.light();
-    final dark = AppTheme.dark();
-    // Building both ThemeDatas restores the previous palette; set ours again.
-    applyPalette(settings, platformBrightness);
 
     return MaterialApp.router(
       title: Strings.appName,
       debugShowCheckedModeBanner: false,
-      theme: light,
-      darkTheme: dark,
-      themeMode: settings.themeMode,
+      theme: AppTheme.light(),
+      themeMode: ThemeMode.light,
       locale: settings.locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,

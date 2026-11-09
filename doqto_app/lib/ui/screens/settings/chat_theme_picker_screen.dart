@@ -45,7 +45,6 @@ class ChatThemePickerScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final l = context.l10n;
-    final dark = AppColors.isDark;
     final settings = ref.watch(appSettingsProvider);
     final convId = conversationId;
     final String? current = convId == null
@@ -77,7 +76,6 @@ class ChatThemePickerScreen extends ConsumerWidget {
           _ThemeTile(
             key: const ValueKey('chat-theme-default'),
             theme: fallback,
-            dark: dark,
             name: l.chatThemeDefault,
             subtitle: convId == null ? fallback.name : l.chatThemeDefaultHint,
             selected: current == null,
@@ -87,7 +85,6 @@ class ChatThemePickerScreen extends ConsumerWidget {
             _ThemeTile(
               key: ValueKey('chat-theme-${t.id}'),
               theme: t,
-              dark: dark,
               name: t.name,
               selected: current == t.id,
               onTap: () => _pick(context, ref, t.id),
@@ -98,10 +95,9 @@ class ChatThemePickerScreen extends ConsumerWidget {
   }
 }
 
-/// A card with a two-bubble preview of the theme in the current brightness.
+/// A card with a two-bubble preview of the theme.
 class _ThemeTile extends StatelessWidget {
   final ChatTheme theme;
-  final bool dark;
   final String name;
   final String? subtitle;
   final bool selected;
@@ -109,7 +105,6 @@ class _ThemeTile extends StatelessWidget {
   const _ThemeTile({
     super.key,
     required this.theme,
-    required this.dark,
     required this.name,
     required this.selected,
     required this.onTap,
@@ -153,7 +148,7 @@ class _ThemeTile extends StatelessWidget {
                         alignment: Alignment.centerLeft,
                         child: _MiniBubble(
                           text: l.chatThemeReceived,
-                          bg: theme.received(dark),
+                          bg: theme.received,
                           fg: AppColors.textPrimary,
                           radius: AppRadii.bubbleReceived,
                         ),
@@ -163,8 +158,8 @@ class _ThemeTile extends StatelessWidget {
                         alignment: Alignment.centerRight,
                         child: _MiniBubble(
                           text: l.chatThemeSent,
-                          bg: theme.sent(dark),
-                          fg: theme.onSent(dark),
+                          bg: theme.sent,
+                          fg: theme.onSent,
                           radius: AppRadii.bubbleSent,
                         ),
                       ),

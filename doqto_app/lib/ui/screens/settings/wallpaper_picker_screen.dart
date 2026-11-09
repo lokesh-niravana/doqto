@@ -18,7 +18,7 @@ import '../../../state/settings_state.dart';
 
 /// Wallpaper picker (batch 6): 8 painted patterns, solid colours, an own
 /// photo (kept on this device only — the server stores the marker `local`)
-/// or none, with a live preview on top and a dim slider in dark mode. No
+/// or none, with a live preview on top. No
 /// [conversationId] = device default; otherwise `prefs.wallpaper` per chat.
 class WallpaperPickerScreen extends ConsumerStatefulWidget {
   final String? conversationId;
@@ -29,12 +29,9 @@ class WallpaperPickerScreen extends ConsumerStatefulWidget {
 }
 
 class _WallpaperPickerScreenState extends ConsumerState<WallpaperPickerScreen> {
-  final _dimDebounce = SettingDebouncer();
-  double? _dimDragging;
 
   @override
   void dispose() {
-    _dimDebounce.dispose();
     super.dispose();
   }
 
@@ -80,19 +77,16 @@ class _WallpaperPickerScreenState extends ConsumerState<WallpaperPickerScreen> {
   Widget build(BuildContext context) {
     final l = context.l10n;
     final settings = ref.watch(appSettingsProvider);
-    final dark = AppColors.isDark;
     final convId = widget.conversationId;
     final conv = convId == null
         ? null
         : ref.watch(conversationsProvider).asData?.value.where((c) => c.id == convId).firstOrNull;
     final String? currentId = convId == null ? settings.wallpaper : conv?.prefs.wallpaper;
     final preview = ChatThemeResolver.resolve(
-      dark: dark,
       chatTheme: conv?.prefs.theme,
       wallpaper: currentId,
       defaultTheme: settings.chatTheme,
       defaultWallpaper: convId == null ? null : settings.wallpaper,
-      dim: _dimDragging ?? settings.wallpaperDim,
       localPhoto: ref.watch(wallpaperPhotoProvider(_photoKey)),
     );
     final ink = preview.patternInk;
@@ -146,32 +140,6 @@ class _WallpaperPickerScreenState extends ConsumerState<WallpaperPickerScreen> {
               ),
             ),
           ),
-          if (dark)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.screenHorizontal),
-              child: Row(
-                children: [
-                  Icon(Icons.brightness_6_outlined, size: 18, color: AppColors.textMuted),
-                  const SizedBox(width: AppSpacing.sm),
-                  Expanded(child: Text(l.wallpaperDim, style: AppText.caption)),
-                  SizedBox(
-                    width: 160,
-                    child: Slider(
-                      key: const ValueKey('wallpaper-dim'),
-                      value: _dimDragging ?? settings.wallpaperDim,
-                      activeColor: AppColors.medBlue,
-                      onChanged: (v) {
-                        setState(() => _dimDragging = v);
-                        _dimDebounce(() {
-                          ref.read(appSettingsProvider.notifier).setWallpaperDim(v);
-                          if (mounted) setState(() => _dimDragging = null);
-                        });
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
           _Header(l.wallpaperPatterns),
           _Grid(
             children: [

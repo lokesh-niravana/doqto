@@ -206,24 +206,20 @@ void main() {
             body: {'content': 'Yes, I have it. Send the chart when you can.'})).$1,
         anyOf(200, 201));
 
-    // ---- 1. Appearance → Dark; the thread in the dark palette.
+    // ---- 1. Settings → Chats & appearance (light only: no theme row), then the thread.
     router.push(AppRoutes.settings);
     await _until(tester, 'settings', () => _has(find.byKey(const ValueKey('settings-list'))));
     await _settle(tester, 800);
     await _shot(tester, '01_settings');
     await _tapIn(tester, 'settings-list', 'settings-appearance');
     await _until(tester, 'appearance', () => _has(find.byKey(const ValueKey('appearance-list'))));
-    await _tapIn(tester, 'appearance-list', 'appearance-row-theme');
-    await _until(tester, 'theme sheet',
-        () => _has(find.byKey(const ValueKey('appearance-opt-theme-dark'))));
-    await tester.tap(find.byKey(const ValueKey('appearance-opt-theme-dark')));
-    await _until(tester, 'dark applied', () => container.read(isDarkProvider));
+    expect(find.byKey(const ValueKey('appearance-row-theme')), findsNothing);
     await _settle(tester, 800);
-    await _shot(tester, '02_appearance_dark');
+    await _shot(tester, '02_appearance');
     router.push(AppRoutes.chat(_conv));
     await _until(tester, 'thread', () => _has(find.byKey(const ValueKey('thread-subtitle'))));
     await _settle(tester, 1500);
-    await _shot(tester, '03_thread_dark');
+    await _shot(tester, '03_thread');
 
     // ---- 2. Chat info → colour (ocean) and wallpaper (waves) for this chat.
     final chats = container.read(conversationsProvider.notifier);

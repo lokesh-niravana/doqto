@@ -1,11 +1,9 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/di/providers.dart';
-import '../core/tokens/colors.dart';
 import '../data/services/settings_store.dart';
 
 /// Font size choice (batch 6). The factor multiplies the platform's Dynamic
@@ -40,7 +38,6 @@ enum AppLockTimeout {
 
 @immutable
 class AppSettings {
-  final ThemeMode themeMode;
   final AppFontSize fontSize;
 
   /// Default chat colour theme id (see core/chat_theme.dart); null = brand.
@@ -49,8 +46,6 @@ class AppSettings {
   /// Default wallpaper id; null = plain thread background.
   final String? wallpaper;
 
-  /// How much a wallpaper is darkened in dark mode, 0..1.
-  final double wallpaperDim;
   final bool enterIsSend;
   final bool voiceTranscript;
 
@@ -60,11 +55,9 @@ class AppSettings {
   final AppLockTimeout appLockTimeout;
 
   const AppSettings({
-    this.themeMode = ThemeMode.system,
     this.fontSize = AppFontSize.medium,
     this.chatTheme,
     this.wallpaper,
-    this.wallpaperDim = 0.0,
     this.enterIsSend = true,
     this.voiceTranscript = true,
     this.locale,
@@ -75,11 +68,9 @@ class AppSettings {
   static const defaults = AppSettings();
 
   AppSettings copyWith({
-    ThemeMode? themeMode,
     AppFontSize? fontSize,
     String? Function()? chatTheme,
     String? Function()? wallpaper,
-    double? wallpaperDim,
     bool? enterIsSend,
     bool? voiceTranscript,
     Locale? Function()? locale,
@@ -87,11 +78,9 @@ class AppSettings {
     AppLockTimeout? appLockTimeout,
   }) =>
       AppSettings(
-        themeMode: themeMode ?? this.themeMode,
         fontSize: fontSize ?? this.fontSize,
         chatTheme: chatTheme == null ? this.chatTheme : chatTheme(),
         wallpaper: wallpaper == null ? this.wallpaper : wallpaper(),
-        wallpaperDim: wallpaperDim ?? this.wallpaperDim,
         enterIsSend: enterIsSend ?? this.enterIsSend,
         voiceTranscript: voiceTranscript ?? this.voiceTranscript,
         locale: locale == null ? this.locale : locale(),
@@ -99,45 +88,23 @@ class AppSettings {
         appLockTimeout: appLockTimeout ?? this.appLockTimeout,
       );
 
-  static ThemeMode _mode(String? s) => switch (s) {
-        'light' => ThemeMode.light,
-        'dark' => ThemeMode.dark,
-        _ => ThemeMode.system,
-      };
-
-  static String modeWire(ThemeMode m) => switch (m) {
-        ThemeMode.light => 'light',
-        ThemeMode.dark => 'dark',
-        ThemeMode.system => 'system',
-      };
-
   factory AppSettings.fromStore(SettingsStore s) => AppSettings(
-        themeMode: _mode(s.themeMode),
         fontSize: AppFontSize.fromWire(s.fontSize),
         chatTheme: s.chatTheme,
         wallpaper: s.wallpaper,
-        wallpaperDim: (s.wallpaperDim ?? 0.0).clamp(0.0, 1.0),
         enterIsSend: s.enterIsSend ?? true,
         voiceTranscript: s.voiceTranscript ?? true,
         locale: (s.locale == null || s.locale!.isEmpty) ? null : Locale(s.locale!),
         appLock: s.appLock ?? false,
         appLockTimeout: AppLockTimeout.fromSeconds(s.appLockTimeoutSec),
       );
-
-  /// Whether the dark palette applies under [platformBrightness].
-  bool isDark(Brightness platformBrightness) => switch (themeMode) {
-        ThemeMode.dark => true,
-        ThemeMode.light => false,
-        ThemeMode.system => platformBrightness == Brightness.dark,
-      };
 }
 
 final settingsStoreProvider = Provider<SettingsStore>((ref) => SettingsStore());
 
 /// Device-local settings. Reads synchronously from the encrypted box on
 /// first access; every setter writes through. The root widget watches this
-/// to pick ThemeData, locale and text scale, and swaps the [AppColors]
-/// palette so static token reads agree with the theme in the tree.
+/// for locale and text scale.
 class AppSettingsNotifier extends Notifier<AppSettings> {
   @override
   AppSettings build() {
@@ -156,11 +123,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     } catch (_) {}
   }
 
-  Future<void> setThemeMode(ThemeMode m) {
-    state = state.copyWith(themeMode: m);
-    return _persist((s) => s.setThemeMode(AppSettings.modeWire(m)));
-  }
-
   Future<void> setFontSize(AppFontSize f) {
     state = state.copyWith(fontSize: f);
     return _persist((s) => s.setFontSize(f.wire));
@@ -174,12 +136,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   Future<void> setWallpaper(String? id) {
     state = state.copyWith(wallpaper: () => id);
     return _persist((s) => s.setWallpaper(id));
-  }
-
-  Future<void> setWallpaperDim(double v) {
-    final c = v.clamp(0.0, 1.0);
-    state = state.copyWith(wallpaperDim: c);
-    return _persist((s) => s.setWallpaperDim(c));
   }
 
   Future<void> setEnterIsSend(bool v) {
@@ -210,21 +166,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
 
 final appSettingsProvider =
     NotifierProvider<AppSettingsNotifier, AppSettings>(AppSettingsNotifier.new);
-
-/// Keeps [AppColors.current] in step with the resolved theme. Called by the
-/// root widget on every build (cheap: no-op when unchanged) and by tests.
-void applyPalette(AppSettings settings, Brightness platformBrightness) {
-  AppColors.setPalette(
-    settings.isDark(platformBrightness) ? DoqtoPalette.dark : DoqtoPalette.light,
-  );
-}
-
-/// Convenience for screens: the current palette brightness as a watchable.
-final isDarkProvider = Provider<bool>((ref) {
-  final s = ref.watch(appSettingsProvider);
-  final platform = PlatformDispatcher.instance.platformBrightness;
-  return s.isDark(platform);
-});
 
 /// Chat-prefs surfaces (thread, details) read this to know the default
 /// theme / wallpaper without depending on the whole settings object.

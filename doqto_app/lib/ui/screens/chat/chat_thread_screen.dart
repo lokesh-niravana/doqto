@@ -2513,12 +2513,10 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     // device defaults, resolved once per build for the bubbles below.
     final appSettings = ref.watch(appSettingsProvider);
     final chatTheme = ChatThemeResolver.resolve(
-      dark: AppColors.isDark,
       chatTheme: conv?.prefs.theme,
       wallpaper: conv?.prefs.wallpaper,
       defaultTheme: appSettings.chatTheme,
       defaultWallpaper: appSettings.wallpaper,
-      dim: appSettings.wallpaperDim,
       localPhoto: ref.watch(wallpaperPhotoProvider(widget.conversationId)),
     );
 

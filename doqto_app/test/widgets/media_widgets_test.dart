@@ -607,10 +607,10 @@ void main() {
     expect(b.waveform, w);
   });
 
-  group('chat theme on media bubbles (batch 6 dark palette)', () {
-    // Received voice/document bubbles used to be hard-coded white, which left
-    // their dark-palette text unreadable. They follow ChatThemeScope now.
-    const dark = ChatThemeData(theme: ChatTheme.teal, dark: true);
+  group('chat theme on media bubbles', () {
+    // Received voice/document bubbles used to be hard-coded white regardless
+    // of the chat colour theme. They follow ChatThemeScope now.
+    final dark = ChatThemeData(theme: ChatTheme.byId('ocean')!);
 
     Color? bubbleBg(WidgetTester t, Type root) {
       for (final c in t.widgetList<Container>(find.descendant(of: find.byType(root), matching: find.byType(Container)))) {

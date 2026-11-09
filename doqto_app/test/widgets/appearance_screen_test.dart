@@ -87,7 +87,6 @@ void main() {
   testWidgets('renders every row with the defaults', (tester) async {
     await _open(tester);
     expect(find.byKey(const ValueKey('appearance-list')), findsOneWidget);
-    expect(find.byKey(const ValueKey('appearance-row-theme')), findsOneWidget);
     expect(find.byKey(const ValueKey('appearance-row-font_size')), findsOneWidget);
     expect(find.byKey(const ValueKey('appearance-preview')), findsOneWidget);
     expect(find.byKey(const ValueKey('appearance-row-chat_theme')), findsOneWidget);
@@ -96,27 +95,9 @@ void main() {
     expect(find.byKey(const ValueKey('appearance-switch-voice_transcript')), findsOneWidget);
     expect(find.byKey(const ValueKey('settings-switch-keep_archived')), findsOneWidget);
     expect(
-      (tester.widget<Text>(find.byKey(const ValueKey('appearance-value-theme')))).data,
-      'System',
-    );
-    expect(
       (tester.widget<Text>(find.byKey(const ValueKey('appearance-value-font_size')))).data,
       'Medium',
     );
-  });
-
-  testWidgets('theme sheet: Dark persists to the store and the row updates', (tester) async {
-    await _open(tester);
-    await _pick(tester, 'appearance-row-theme', 'appearance-opt-theme-dark');
-    expect(
-      (tester.widget<Text>(find.byKey(const ValueKey('appearance-value-theme')))).data,
-      'Dark',
-    );
-    expect(_hive.store.themeMode, 'dark');
-    await _pick(tester, 'appearance-row-theme', 'appearance-opt-theme-light');
-    expect(_hive.store.themeMode, 'light');
-    await _pick(tester, 'appearance-row-theme', 'appearance-opt-theme-system');
-    expect(_hive.store.themeMode, 'system');
   });
 
   testWidgets('font size sheet scales the preview and persists', (tester) async {
@@ -159,17 +140,12 @@ void main() {
     expect(_cache.keep, isFalse);
   });
 
-  testWidgets('stored theme shows on open; chat colour row names the default', (tester) async {
+  testWidgets('chat colour row names the stored default', (tester) async {
     // Real IO inside a fake-async test: run it outside the test zone.
     await tester.runAsync(() async {
-      await _hive.store.setThemeMode('dark');
       await _hive.store.setChatTheme('ocean');
     });
     await _open(tester);
-    expect(
-      (tester.widget<Text>(find.byKey(const ValueKey('appearance-value-theme')))).data,
-      'Dark',
-    );
     final chatValue =
         tester.widget<Text>(find.byKey(const ValueKey('appearance-value-chat_theme'))).data;
     expect(chatValue, isNotNull);

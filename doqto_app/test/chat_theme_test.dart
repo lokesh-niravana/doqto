@@ -60,15 +60,15 @@ void main() {
     final a = ChatTheme.all[3];
     final b = ChatTheme.all[5];
     expect(
-      ChatThemeResolver.resolve(dark: false, chatTheme: a.id, defaultTheme: b.id).theme,
+      ChatThemeResolver.resolve(chatTheme: a.id, defaultTheme: b.id).theme,
       same(a),
     );
     expect(
-      ChatThemeResolver.resolve(dark: false, chatTheme: null, defaultTheme: b.id).theme,
+      ChatThemeResolver.resolve(chatTheme: null, defaultTheme: b.id).theme,
       same(b),
     );
     expect(
-      ChatThemeResolver.resolve(dark: false, chatTheme: 'bogus', defaultTheme: 'bogus').theme,
+      ChatThemeResolver.resolve(chatTheme: 'bogus', defaultTheme: 'bogus').theme,
       same(ChatTheme.teal),
     );
   });
@@ -77,40 +77,30 @@ void main() {
     final dots = WallpaperPattern.dots.id;
     final grid = WallpaperPattern.grid.id;
     expect(
-      ChatThemeResolver.resolve(dark: false, wallpaper: dots, defaultWallpaper: grid)
+      ChatThemeResolver.resolve(wallpaper: dots, defaultWallpaper: grid)
           .wallpaper
           .pattern,
       WallpaperPattern.dots,
     );
     expect(
-      ChatThemeResolver.resolve(dark: false, wallpaper: '', defaultWallpaper: grid)
+      ChatThemeResolver.resolve(wallpaper: '', defaultWallpaper: grid)
           .wallpaper
           .pattern,
       WallpaperPattern.grid,
     );
     expect(
-      ChatThemeResolver.resolve(dark: false, wallpaper: null, defaultWallpaper: null)
+      ChatThemeResolver.resolve(wallpaper: null, defaultWallpaper: null)
           .wallpaper
           .isNone,
       isTrue,
     );
   });
 
-  test('resolver: dim applies only in dark and is clamped', () {
-    expect(ChatThemeResolver.resolve(dark: false, dim: 0.7).dim, 0);
-    expect(ChatThemeResolver.resolve(dark: true, dim: 0.7).dim, 0.7);
-    expect(ChatThemeResolver.resolve(dark: true, dim: 3).dim, 1);
-    expect(ChatThemeResolver.resolve(dark: true, dim: -1).dim, 0);
-  });
-
-  test('themes swap sent/received colours with brightness', () {
+  test('every theme has distinct, opaque sent/received colours', () {
     for (final t in ChatTheme.all) {
-      expect(t.sent(false), t.sentLight);
-      expect(t.sent(true), t.sentDark);
-      expect(t.received(false), t.receivedLight);
-      expect(t.received(true), t.receivedDark);
-      expect(t.onSent(false), t.onSentLight);
-      expect(t.onSent(true), t.onSentDark);
+      expect(t.sent, isNot(t.received), reason: t.id);
+      expect(t.sent.a, 1.0, reason: t.id);
+      expect(t.received.a, 1.0, reason: t.id);
     }
   });
 }

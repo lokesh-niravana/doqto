@@ -25,8 +25,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsAppearance => 'Chats & appearance';
 
   @override
-  String get settingsAppearanceSubtitle =>
-      'Theme, chat colour, wallpaper, font size';
+  String get settingsAppearanceSubtitle => 'Chat colour, wallpaper, font size';
 
   @override
   String get settingsNotifications => 'Notifications';
@@ -165,18 +164,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appearanceDisplay => 'Display';
 
   @override
-  String get appearanceTheme => 'Theme';
-
-  @override
-  String get appearanceThemeLight => 'Light';
-
-  @override
-  String get appearanceThemeDark => 'Dark';
-
-  @override
-  String get appearanceThemeSystem => 'System';
-
-  @override
   String get appearanceFontSize => 'Font size';
 
   @override
@@ -263,9 +250,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get wallpaperNone => 'None';
-
-  @override
-  String get wallpaperDim => 'Dim wallpaper in dark mode';
 
   @override
   String get wallpaperSaveFailed =>

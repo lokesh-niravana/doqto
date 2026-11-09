@@ -7,39 +7,12 @@ import 'tokens/radii.dart';
 import 'tokens/spacing.dart';
 import 'tokens/typography.dart';
 
-/// Composes tokens into ThemeData. Light and dark since batch 6: both are
-/// built from a [DoqtoPalette]; the caller (the root widget) swaps
-/// [AppColors] to the same palette first so static token reads agree with
-/// the ThemeData in the tree. See colors.dart for the approach.
+/// Composes tokens into ThemeData. Light only: Doqto has one palette
+/// ([DoqtoPalette.light]; docs/design.md says "No dark mode").
 class AppTheme {
   AppTheme._();
 
-  static ThemeData light() => fromPalette(DoqtoPalette.light);
-
-  static ThemeData dark() => fromPalette(DoqtoPalette.dark);
-
-  /// The theme that goes with [mode] under the platform [brightness].
-  static ThemeData resolve(ThemeMode mode, Brightness platformBrightness) {
-    final dark = switch (mode) {
-      ThemeMode.dark => true,
-      ThemeMode.light => false,
-      ThemeMode.system => platformBrightness == Brightness.dark,
-    };
-    return dark ? AppTheme.dark() : AppTheme.light();
-  }
-
-  static ThemeData fromPalette(DoqtoPalette p) {
-    final previous = AppColors.current;
-    // Token getters must read [p] while this ThemeData is composed.
-    AppColors.setPalette(p);
-    try {
-      return _compose(p);
-    } finally {
-      // The root widget sets the palette it wants; building a ThemeData for
-      // the other brightness (tests, previews) must not leak it.
-      AppColors.setPalette(previous);
-    }
-  }
+  static ThemeData light() => _compose(DoqtoPalette.light);
 
   static ThemeData _compose(DoqtoPalette p) {
     final scheme = ColorScheme.fromSeed(
@@ -69,7 +42,7 @@ class AppTheme {
         iconColor: AppColors.textSecondary,
       ),
       textTheme: GoogleFonts.dmSansTextTheme(
-        p.isDark ? ThemeData.dark().textTheme : ThemeData.light().textTheme,
+        ThemeData.light().textTheme,
       ).apply(
         bodyColor: AppColors.textPrimary,
         displayColor: AppColors.textDisplay,
@@ -82,8 +55,7 @@ class AppTheme {
         scrolledUnderElevation: 0,
         centerTitle: false,
         titleTextStyle: AppText.navTitle,
-        systemOverlayStyle:
-            p.isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+        systemOverlayStyle: SystemUiOverlayStyle.dark,
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,

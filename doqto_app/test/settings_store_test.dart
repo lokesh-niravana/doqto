@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:ui';
 
-import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
@@ -34,11 +33,9 @@ void main() {
 
   test('empty box → AppSettings.defaults', () {
     final s = AppSettings.fromStore(store);
-    expect(s.themeMode, ThemeMode.system);
     expect(s.fontSize, AppFontSize.medium);
     expect(s.chatTheme, isNull);
     expect(s.wallpaper, isNull);
-    expect(s.wallpaperDim, 0);
     expect(s.enterIsSend, isTrue);
     expect(s.voiceTranscript, isTrue);
     expect(s.locale, isNull);
@@ -47,11 +44,9 @@ void main() {
   });
 
   test('setters write through and fromStore reads them back', () async {
-    await store.setThemeMode('dark');
     await store.setFontSize('large');
     await store.setChatTheme('ocean');
     await store.setWallpaper('pattern:dots');
-    await store.setWallpaperDim(0.4);
     await store.setEnterIsSend(false);
     await store.setVoiceTranscript(false);
     await store.setLocale('es');
@@ -60,16 +55,14 @@ void main() {
     await store.setSessionId('sess-1');
     await store.setDeviceName('iPhone');
 
-    expect(store.themeMode, 'dark');
+    expect(store.fontSize, 'large');
     expect(store.sessionId, 'sess-1');
     expect(store.deviceName, 'iPhone');
 
     final s = AppSettings.fromStore(store);
-    expect(s.themeMode, ThemeMode.dark);
     expect(s.fontSize, AppFontSize.large);
     expect(s.chatTheme, 'ocean');
     expect(s.wallpaper, 'pattern:dots');
-    expect(s.wallpaperDim, closeTo(0.4, 1e-9));
     expect(s.enterIsSend, isFalse);
     expect(s.voiceTranscript, isFalse);
     expect(s.locale, const Locale('es'));
@@ -93,12 +86,9 @@ void main() {
   test('unknown or mistyped values fall back instead of throwing', () async {
     await store.put('theme_mode', 'sepia');
     await store.put('font_size', 42);
-    await store.put('wallpaper_dim', 7.5);
     await store.put('enter_is_send', 'yes');
     final s = AppSettings.fromStore(store);
-    expect(s.themeMode, ThemeMode.system);
     expect(s.fontSize, AppFontSize.medium);
-    expect(s.wallpaperDim, 1.0, reason: 'clamped to 0..1');
     expect(s.enterIsSend, isTrue, reason: 'non-bool ignored');
   });
 
@@ -114,16 +104,9 @@ void main() {
   });
 
   test('clear() empties the box', () async {
-    await store.setThemeMode('light');
+    await store.setFontSize('large');
     await store.clear();
-    expect(store.themeMode, isNull);
+    expect(store.fontSize, isNull);
     expect(box.isEmpty, isTrue);
-  });
-
-  test('modeWire round-trips with fromStore', () async {
-    for (final m in ThemeMode.values) {
-      await store.setThemeMode(AppSettings.modeWire(m));
-      expect(AppSettings.fromStore(store).themeMode, m);
-    }
   });
 }

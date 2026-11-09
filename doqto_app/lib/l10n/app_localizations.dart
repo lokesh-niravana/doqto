@@ -131,7 +131,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsAppearanceSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Theme, chat colour, wallpaper, font size'**
+  /// **'Chat colour, wallpaper, font size'**
   String get settingsAppearanceSubtitle;
 
   /// No description provided for @settingsNotifications.
@@ -398,30 +398,6 @@ abstract class AppLocalizations {
   /// **'Display'**
   String get appearanceDisplay;
 
-  /// No description provided for @appearanceTheme.
-  ///
-  /// In en, this message translates to:
-  /// **'Theme'**
-  String get appearanceTheme;
-
-  /// No description provided for @appearanceThemeLight.
-  ///
-  /// In en, this message translates to:
-  /// **'Light'**
-  String get appearanceThemeLight;
-
-  /// No description provided for @appearanceThemeDark.
-  ///
-  /// In en, this message translates to:
-  /// **'Dark'**
-  String get appearanceThemeDark;
-
-  /// No description provided for @appearanceThemeSystem.
-  ///
-  /// In en, this message translates to:
-  /// **'System'**
-  String get appearanceThemeSystem;
-
   /// No description provided for @appearanceFontSize.
   ///
   /// In en, this message translates to:
@@ -589,12 +565,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'None'**
   String get wallpaperNone;
-
-  /// No description provided for @wallpaperDim.
-  ///
-  /// In en, this message translates to:
-  /// **'Dim wallpaper in dark mode'**
-  String get wallpaperDim;
 
   /// No description provided for @wallpaperSaveFailed.
   ///

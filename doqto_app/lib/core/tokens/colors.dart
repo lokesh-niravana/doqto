@@ -2,20 +2,10 @@ import 'package:flutter/material.dart';
 
 /// All colors from docs/design.md. Never inline a Color(...) outside this file.
 ///
-/// Theme-aware since batch 6. Two token sets exist — [DoqtoPalette.light] and
-/// [DoqtoPalette.dark] — and every role / neutral / tint colour on [AppColors]
-/// is a static getter that reads the process-wide [AppColors.current]
-/// palette. The theme controller (`appSettingsProvider` → `AppTheme`) swaps
-/// the palette with [AppColors.setPalette] *before* MaterialApp rebuilds with
-/// the matching ThemeData, so the hundreds of `AppColors.x` call sites keep
-/// compiling and simply read the right value on their next build. Widgets
-/// that need to rebuild on a palette swap without a MaterialApp rebuild can
-/// listen to [AppColors.palette]; code that has a BuildContext can also use
-/// [DoqtoColors.of] (a ThemeExtension holding the same palette).
-///
-/// Brand colours that do not change between themes (teal, red, amber, green,
-/// purple, pure white, presence dots, the avatar cycle) stay `const` so they
-/// remain usable in const constructors.
+/// One palette, light only ([DoqtoPalette.light]; docs/design.md: "No dark
+/// mode"). Role / neutral / tint colours on [AppColors] are static getters
+/// that read it; brand constants (teal, red, amber, green, purple, white,
+/// presence dots, the avatar cycle) stay `const` for const constructors.
 @immutable
 class DoqtoPalette {
   final Brightness brightness;
@@ -74,8 +64,6 @@ class DoqtoPalette {
     required this.threadBg,
   });
 
-  bool get isDark => brightness == Brightness.dark;
-
   static const DoqtoPalette light = DoqtoPalette(
     brightness: Brightness.light,
     medBlueDark: Color(0xFF1E2A5A), // brand navy: headings, pressed states
@@ -101,35 +89,8 @@ class DoqtoPalette {
     threadBg: Color(0xFFF8FAFD),
   );
 
-  /// Dark token set (batch 6): the neutral scale inverts, tints become deep
-  /// washes and on-tint text lightens so the semantic pairs keep contrast.
-  static const DoqtoPalette dark = DoqtoPalette(
-    brightness: Brightness.dark,
-    medBlueDark: Color(0xFFB9C6F0),
-    medBlueMid: Color(0xFF5FA5AB),
-    medBlueLight: Color(0xFF15353A),
-    medTealLight: Color(0xFF0F3A36),
-    gray50: Color(0xFF0B1220), // app background
-    gray100: Color(0xFF1B2740), // dividers
-    gray200: Color(0xFF26345A), // borders
-    gray400: Color(0xFF7B8BB0), // muted text
-    gray600: Color(0xFFA9B6D6), // secondary text
-    gray800: Color(0xFFE3E9F7), // primary text
-    gray900: Color(0xFFF3F6FC), // display text
-    greenLight: Color(0xFF0F3A24),
-    greenDark: Color(0xFF4ADE80),
-    amberText: Color(0xFFFCD34D),
-    amberLight: Color(0xFF3A2A0B),
-    redLight: Color(0xFF3A1515),
-    purpleText: Color(0xFFC4B5FD),
-    purpleLight: Color(0xFF2A1A47),
-    tealBadgeText: Color(0xFF5EEAD4),
-    receivedBubble: Color(0xFF1A2540),
-    threadBg: Color(0xFF0B1220),
-  );
-
-  /// The surface colour: white in light, a raised navy in dark.
-  Color get surface => isDark ? const Color(0xFF121B2E) : const Color(0xFFFFFFFF);
+  /// The surface colour.
+  Color get surface => const Color(0xFFFFFFFF);
 
   @override
   bool operator ==(Object other) =>
@@ -162,22 +123,10 @@ class DoqtoColors extends ThemeExtension<DoqtoColors> {
 class AppColors {
   AppColors._();
 
-  static DoqtoPalette _current = DoqtoPalette.light;
+  static const DoqtoPalette _current = DoqtoPalette.light;
 
-  /// The palette every getter below reads. Swapped by [setPalette].
+  /// The palette every getter below reads.
   static DoqtoPalette get current => _current;
-
-  /// Fires on every palette swap (the MaterialApp rebuilds on it too).
-  static final ValueNotifier<DoqtoPalette> palette =
-      ValueNotifier<DoqtoPalette>(DoqtoPalette.light);
-
-  static void setPalette(DoqtoPalette p) {
-    if (identical(p, _current)) return;
-    _current = p;
-    palette.value = p;
-  }
-
-  static bool get isDark => _current.isDark;
 
   // --- Primary palette (brand teal — matches logo + landing --color-primary) ---
   static const Color medBlue = Color(0xFF35878F); // brand teal: primary actions, nav bar, sent bubbles

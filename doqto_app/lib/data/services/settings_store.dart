@@ -17,11 +17,9 @@ class SettingsStore {
   final Box<dynamic>? _box;
   Box<dynamic> get box => _box ?? Hive.box(boxName);
 
-  static const _kThemeMode = 'theme_mode'; // 'system' | 'light' | 'dark'
   static const _kFontSize = 'font_size'; // 'small' | 'medium' | 'large'
   static const _kChatTheme = 'chat_theme'; // chat theme id
   static const _kWallpaper = 'wallpaper'; // wallpaper id
-  static const _kWallpaperDim = 'wallpaper_dim'; // 0..1 (dark only)
   static const _kEnterIsSend = 'enter_is_send';
   static const _kVoiceTranscript = 'voice_transcript';
   static const _kLocale = 'locale'; // '' | 'en' | 'es'
@@ -53,9 +51,6 @@ class SettingsStore {
   Future<void> put(String key, Object? value) =>
       value == null ? box.delete(key) : box.put(key, value);
 
-  String? get themeMode => getString(_kThemeMode);
-  Future<void> setThemeMode(String v) => put(_kThemeMode, v);
-
   String? get fontSize => getString(_kFontSize);
   Future<void> setFontSize(String v) => put(_kFontSize, v);
 
@@ -64,9 +59,6 @@ class SettingsStore {
 
   String? get wallpaper => getString(_kWallpaper);
   Future<void> setWallpaper(String? v) => put(_kWallpaper, v);
-
-  double? get wallpaperDim => getDouble(_kWallpaperDim);
-  Future<void> setWallpaperDim(double v) => put(_kWallpaperDim, v);
 
   bool? get enterIsSend => getBool(_kEnterIsSend);
   Future<void> setEnterIsSend(bool v) => put(_kEnterIsSend, v);

@@ -14,7 +14,7 @@ import '../../../state/settings_state.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/settings_rows.dart';
 
-/// Settings → Chats & appearance (batch 6). Display theme, font size, the
+/// Settings → Chats & appearance (batch 6). Font size, the
 /// device-wide chat colour / wallpaper defaults, Enter-is-send, voice
 /// transcript and keep-chats-archived. Every row writes through
 /// [appSettingsProvider] at once; nothing here talks to the server.
@@ -26,7 +26,6 @@ class AppearanceScreen extends ConsumerWidget {
     final l = context.l10n;
     final s = ref.watch(appSettingsProvider);
     final notifier = ref.read(appSettingsProvider.notifier);
-    final dark = AppColors.isDark;
     final defaultTheme = ChatTheme.byId(s.chatTheme) ?? ChatTheme.teal;
     final wallpaper = WallpaperSpec.parse(s.wallpaper);
     final wallpaperLabel = s.wallpaper == WallpaperSpec.localId
@@ -47,19 +46,6 @@ class AppearanceScreen extends ConsumerWidget {
               title: l.appearanceDisplay,
               footer: l.appearanceFontHint,
               children: [
-                SettingsChoiceRow<ThemeMode>(
-                  keyPrefix: 'appearance',
-                  field: 'theme',
-                  title: l.appearanceTheme,
-                  value: s.themeMode,
-                  options: [
-                    (ThemeMode.light, l.appearanceThemeLight),
-                    (ThemeMode.dark, l.appearanceThemeDark),
-                    (ThemeMode.system, l.appearanceThemeSystem),
-                  ],
-                  wire: AppSettings.modeWire,
-                  onPick: notifier.setThemeMode,
-                ),
                 SettingsChoiceRow<AppFontSize>(
                   keyPrefix: 'appearance',
                   field: 'font_size',
@@ -89,14 +75,14 @@ class AppearanceScreen extends ConsumerWidget {
                         vertical: AppSpacing.sm + 2,
                       ),
                       decoration: BoxDecoration(
-                        color: defaultTheme.sent(dark),
+                        color: defaultTheme.sent,
                         borderRadius: AppRadii.bubbleSent,
                       ),
                       child: Text(
                         l.appearancePreview,
                         key: const ValueKey('appearance-preview'),
                         style: AppText.messageBody.copyWith(
-                          color: defaultTheme.onSent(dark),
+                          color: defaultTheme.onSent,
                           fontSize: AppText.messageBody.fontSize! * s.fontSize.factor,
                         ),
                       ),
@@ -113,7 +99,7 @@ class AppearanceScreen extends ConsumerWidget {
               children: [
                 ListTile(
                   key: const ValueKey('appearance-row-chat_theme'),
-                  leading: _Swatch(color: defaultTheme.sent(dark)),
+                  leading: _Swatch(color: defaultTheme.sent),
                   title: Text(l.appearanceDefaultChatTheme, style: AppText.bodyPrimary),
                   subtitle: Text(
                     defaultTheme.name,

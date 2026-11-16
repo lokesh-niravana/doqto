@@ -56,7 +56,7 @@ export default function FinalCTASection() {
           </div>
 
           <p className="text-sm text-cream/50 tracking-wide">
-            No credit card &middot; 14-day free trial on launch &middot; HIPAA compliant from day one
+            Free for verified physicians &middot; No credit card &middot; HIPAA compliant from day one
           </p>
         </div>
       </div>

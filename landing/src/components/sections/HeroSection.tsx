@@ -98,7 +98,7 @@ export default function HeroSection() {
                 Join the waitlist
                 <ArrowRight className="w-5 h-5 transition-transform duration-300 group-hover:translate-x-1" />
               </button>
-              <span className="text-sm text-cream/70">Free for early-access teams</span>
+              <span className="text-sm text-cream/70">Free for verified physicians</span>
             </div>
           </div>
 

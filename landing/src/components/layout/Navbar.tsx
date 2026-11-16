@@ -44,7 +44,7 @@ export default function Navbar() {
             <span
               className={cn(
                 "font-display text-xl transition-colors duration-500",
-                scrolled ? "text-ink" : "text-cream"
+                "text-ink"
               )}
             >
               Doqto
@@ -58,9 +58,7 @@ export default function Navbar() {
                 onClick={() => scrollTo(link.href)}
                 className={cn(
                   "text-sm transition-colors duration-500 cursor-pointer",
-                  scrolled
-                    ? "text-ink-soft hover:text-ink"
-                    : "text-cream/85 hover:text-cream"
+                  "text-ink-soft hover:text-ink"
                 )}
               >
                 {link.label}
@@ -73,9 +71,7 @@ export default function Navbar() {
               onClick={() => scrollTo("#join-waitlist")}
               className={cn(
                 "group inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium transition-colors duration-500 cursor-pointer",
-                scrolled
-                  ? "bg-ink text-cream hover:bg-primary-dark"
-                  : "bg-cream text-ink hover:bg-white"
+                "bg-primary text-white hover:bg-primary-dark"
               )}
             >
               Join the waitlist
@@ -91,7 +87,7 @@ export default function Navbar() {
             {mobileOpen ? (
               <X className="w-6 h-6 text-ink" />
             ) : (
-              <Menu className={cn("w-6 h-6 transition-colors duration-500", scrolled ? "text-ink" : "text-cream")} />
+              <Menu className="w-6 h-6 text-ink" />
             )}
           </button>
         </div>
@@ -130,7 +126,7 @@ export default function Navbar() {
             <div className="mt-4 pt-4 border-t border-line">
               <button
                 onClick={() => scrollTo("#join-waitlist")}
-                className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink px-5 py-3 font-medium text-cream cursor-pointer"
+                className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-primary px-5 py-3 font-medium text-white cursor-pointer"
               >
                 Join the waitlist
                 <ArrowRight className="w-4 h-4" />

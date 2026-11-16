@@ -1,25 +1,33 @@
 @import "tailwindcss";
 
 @theme {
-  /* Soft-luxury warm palette — Neko/Function inspired */
-  --color-cream: #f7f3ec;
-  --color-cream-deep: #efe7da;
-  --color-card: #fdfbf7;
-  --color-ink: #211f1a;
-  --color-ink-soft: #6b6559;
-  --color-line: #e3dccd;
-  --color-primary: #2e6e74;
-  --color-primary-dark: #24565b;
+  /* Doqto design system: white ground, one blue, pale blue cards.
+     The cream-* names are kept as aliases so existing classes still work:
+     cream = ground white, cream-deep = surface tint. */
+  --color-cream: #ffffff;
+  --color-cream-deep: #eaf2fe;
+  --color-card: #ffffff;
+  --color-ink: #0b1220;
+  --color-ink-soft: #3a4558;
+  --color-line: #d8e2f0;
+  --color-primary: #1d6ae5;
+  --color-primary-dark: #1553c7;
+  --color-tint: #eaf2fe;
+  --color-tint-strong: #d6e6fd;
+  --color-subtle: #f6f9fe;
+  --color-navy: #0b1f47;
+  --color-sky: #8db8f5;
+  --color-ink-muted: #5b677a;
 
   /* legacy aliases still referenced by admin/legal pages */
-  --color-surface: #211f1a;
-  --color-surface-light: #35322b;
-  --color-dark: #211f1a;
-  --color-light-bg: #f7f3ec;
-  --color-text-secondary: #6b6559;
+  --color-surface: #0b1f47;
+  --color-surface-light: #1a3368;
+  --color-dark: #0b1f47;
+  --color-light-bg: #f6f9fe;
+  --color-text-secondary: #5b677a;
 
-  --font-sans: var(--font-instrument), sans-serif;
-  --font-serif: var(--font-fraunces), serif;
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-serif: var(--font-inter), system-ui, sans-serif;
 }
 
 html {
@@ -34,18 +42,17 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Serif display headings */
+/* Display headings: Inter, heavy and tight */
 .font-display {
-  font-family: var(--font-serif);
-  font-weight: 480;
-  letter-spacing: -0.02em;
-  font-variation-settings: "SOFT" 60, "WONK" 0;
+  font-family: var(--font-sans);
+  font-weight: 800;
+  letter-spacing: -0.03em;
 }
 
 .font-display em,
 .accent-italic {
-  font-style: italic;
-  font-weight: 430;
+  font-style: normal;
+  font-weight: inherit;
   color: var(--color-primary);
 }
 
@@ -82,12 +89,12 @@ html.lenis body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c9c0ad;
+  background: #c3d2e8;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a89e88;
+  background: #9db3d3;
 }
 
 /* Glass morphism navbar */

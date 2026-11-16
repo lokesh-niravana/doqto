@@ -1,20 +1,12 @@
 import type { Metadata } from "next";
 import Script from "next/script";
-import { Fraunces, Instrument_Sans } from "next/font/google";
+import { Inter } from "next/font/google";
 import SmoothScrollProvider from "@/providers/SmoothScrollProvider";
 import "./globals.css";
 
-const fraunces = Fraunces({
+const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-fraunces",
-  display: "swap",
-  axes: ["SOFT", "WONK", "opsz"],
-  style: ["normal", "italic"],
-});
-
-const instrument = Instrument_Sans({
-  subsets: ["latin"],
-  variable: "--font-instrument",
+  variable: "--font-inter",
   display: "swap",
 });
 
@@ -62,7 +54,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${fraunces.variable} ${instrument.variable}`}>
+    <html lang="en" className={inter.variable}>
       <body className="bg-cream text-ink antialiased">
         <SmoothScrollProvider>{children}</SmoothScrollProvider>
         <Script

@@ -34,19 +34,17 @@ export default function FinalCTASection() {
 
   return (
     <section ref={sectionRef} id={SECTION_IDS.cta} className="px-3 pb-3">
-      {/* Dark ink card — mirrors the hero's rounded full-bleed frame */}
-      <div className="relative overflow-hidden rounded-[2rem] bg-ink py-28 sm:py-36">
-        <div className="halftone absolute inset-x-0 bottom-0 h-72 opacity-[0.15] pointer-events-none [mask-image:linear-gradient(to_top,black,transparent)]" />
-
+      {/* Navy emphasis band: the one dark section on the page */}
+      <div className="relative overflow-hidden rounded-[2rem] bg-navy py-24 sm:py-28">
         <div className="cta-content relative max-w-3xl mx-auto px-6 sm:px-8 text-center">
-          <p className="text-sm uppercase tracking-[0.2em] text-cream/60 mb-6">
+          <p className="text-sm uppercase tracking-[0.2em] text-sky mb-6">
             Early access
           </p>
           <h2 className="font-display text-4xl sm:text-5xl lg:text-6xl text-cream leading-[1.08] mb-6">
-            Care deserves a <em className="text-cream/85">calmer</em> conversation.
+            Care deserves a <em className="text-sky">calmer</em> conversation.
           </h2>
 
-          <p className="text-lg text-cream/70 leading-relaxed mb-12 max-w-xl mx-auto">
+          <p className="text-lg text-sky leading-relaxed mb-12 max-w-xl mx-auto">
             Join the physicians and care teams already on the Doqto waitlist.
             HIPAA-compliant from message one.
           </p>
@@ -55,7 +53,7 @@ export default function FinalCTASection() {
             <WaitlistForm large />
           </div>
 
-          <p className="text-sm text-cream/50 tracking-wide">
+          <p className="text-sm text-sky tracking-wide">
             Free for verified physicians &middot; No credit card &middot; HIPAA compliant from day one
           </p>
         </div>

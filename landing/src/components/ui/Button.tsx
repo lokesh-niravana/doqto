@@ -20,7 +20,7 @@ export default function Button({
         "inline-flex items-center justify-center font-semibold rounded-full transition-all duration-300 cursor-pointer",
         "focus:outline-none focus:ring-2 focus:ring-offset-2",
         variant === "primary" &&
-          "bg-primary text-white hover:bg-primary-dark focus:ring-primary/50 shadow-lg shadow-primary/20 hover:shadow-xl hover:shadow-primary/30 hover:-translate-y-0.5",
+          "bg-primary text-white hover:bg-primary-dark focus:ring-primary/50",
         variant === "secondary" &&
           "bg-surface text-white hover:bg-surface-light focus:ring-surface/50",
         variant === "outline" &&

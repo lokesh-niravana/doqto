@@ -36,6 +36,8 @@ export default function FinalCTASection() {
     <section ref={sectionRef} id={SECTION_IDS.cta} className="px-3 pb-3">
       {/* Navy emphasis band: the one dark section on the page */}
       <div className="relative overflow-hidden rounded-[2rem] bg-navy py-24 sm:py-28">
+        <div className="orb w-[26rem] h-[26rem] bg-primary/45 -top-24 -left-20" />
+        <div className="orb w-[22rem] h-[22rem] bg-sky/25 -bottom-24 -right-16 [animation-delay:-7s]" />
         <div className="cta-content relative max-w-3xl mx-auto px-6 sm:px-8 text-center">
           <p className="text-sm uppercase tracking-[0.2em] text-sky mb-6">
             Early access
@@ -49,7 +51,7 @@ export default function FinalCTASection() {
             HIPAA-compliant from message one.
           </p>
 
-          <div className="max-w-lg mx-auto mb-10">
+          <div className="glass-dark max-w-xl mx-auto mb-10 rounded-[2rem] p-4 sm:p-5">
             <WaitlistForm large />
           </div>
 

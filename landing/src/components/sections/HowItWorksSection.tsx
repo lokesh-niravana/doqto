@@ -66,7 +66,7 @@ export default function HowItWorksSection() {
   }, []);
 
   return (
-    <section ref={sectionRef} id={SECTION_IDS.howItWorks} className="py-28 sm:py-36 bg-cream">
+    <section ref={sectionRef} id={SECTION_IDS.howItWorks} className="py-28 sm:py-36">
       <div className="max-w-7xl mx-auto px-6 sm:px-8">
         <div className="hiw-heading text-center max-w-2xl mx-auto mb-16">
           <p className="text-sm uppercase tracking-[0.2em] text-ink-soft mb-6">

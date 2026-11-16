@@ -1,19 +1,18 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import Image from "next/image";
 import gsap from "gsap";
-import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { SECTION_IDS } from "@/lib/constants";
-import { ArrowRight, Check } from "lucide-react";
-
-gsap.registerPlugin(ScrollTrigger);
+import { ArrowRight, Mic, Users } from "lucide-react";
 
 const HERO_STATS = [
   { value: "AES-256", label: "End-to-end encrypted" },
   { value: "HIPAA", label: "Compliant from day one" },
   { value: "BAA", label: "Ready for your org" },
 ] as const;
+
+// Bar heights for the voice-note waveform in the chat illustration.
+const WAVEFORM = [8, 16, 10, 20, 12, 16, 8, 18, 10, 14, 8, 16, 10, 14, 8] as const;
 
 export default function HeroSection() {
   const sectionRef = useRef<HTMLElement>(null);
@@ -28,23 +27,6 @@ export default function HeroSection() {
         { y: 40, opacity: 0 },
         { y: 0, opacity: 1, duration: 1, ease: "power3.out", stagger: 0.12, delay: 0.2 }
       );
-
-      // Parallax: photo drifts slower than the page as the hero scrolls away
-      gsap.fromTo(
-        ".hero-img",
-        { yPercent: 0, scale: 1.06 },
-        {
-          yPercent: 12,
-          scale: 1.06,
-          ease: "none",
-          scrollTrigger: {
-            trigger: sectionRef.current,
-            start: "top top",
-            end: "bottom top",
-            scrub: true,
-          },
-        }
-      );
     }, sectionRef);
 
     return () => ctx.revert();
@@ -57,63 +39,75 @@ export default function HeroSection() {
   };
 
   return (
-    <section ref={sectionRef} id={SECTION_IDS.hero} className="relative px-3 pt-3">
-      {/* Full-bleed rounded photo hero — Neko/Function pattern */}
-      <div className="relative min-h-[92vh] overflow-hidden rounded-[2rem] flex items-end">
-        <Image
-          src="/images/hero.jpg"
-          alt="Two physicians in a warm modern clinic reviewing a secure conversation"
-          fill
-          priority
-          quality={90}
-          className="hero-img object-cover will-change-transform"
-          sizes="100vw"
-        />
-        {/* Warm legibility wash */}
-        <div className="absolute inset-0 bg-gradient-to-r from-ink/55 via-ink/20 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-t from-ink/50 via-transparent to-transparent" />
-
-        <div className="relative w-full max-w-7xl mx-auto px-6 sm:px-10 pb-14 pt-40">
-          <div className="max-w-2xl">
-            <div className="hero-reveal inline-flex items-center gap-2 rounded-full bg-cream/90 px-4 py-1.5 text-sm text-ink mb-7">
-              <Check className="w-3.5 h-3.5 text-primary" />
+    <section ref={sectionRef} id={SECTION_IDS.hero} className="bg-cream pt-32 sm:pt-40 pb-20">
+      <div className="max-w-7xl mx-auto px-6 sm:px-8">
+        <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+          <div>
+            <div className="hero-reveal inline-flex items-center rounded-full bg-tint px-4 py-2 text-[13px] font-semibold uppercase tracking-[0.08em] text-primary-dark mb-7">
               HIPAA-compliant &middot; Built for clinicians
             </div>
 
-            <h1 className="hero-reveal font-display text-cream text-5xl sm:text-6xl lg:text-7xl leading-[1.04]">
-              Medicine moves at the speed of a <em className="text-cream/90">message.</em>
+            <h1 className="hero-reveal font-display text-ink text-5xl sm:text-6xl leading-[1.06]">
+              Medicine moves at the speed of a <em>message.</em>
             </h1>
 
-            <p className="hero-reveal mt-6 text-lg sm:text-xl text-cream/85 max-w-xl leading-relaxed">
+            <p className="hero-reveal mt-6 text-lg text-ink-soft max-w-xl leading-relaxed">
               Doqto is the encrypted messaging platform built for healthcare
               teams — voice notes, transcription, and your whole organization,
               without the compliance headache.
             </p>
 
-            <div className="hero-reveal mt-9 flex flex-wrap items-center gap-4">
+            <div className="hero-reveal mt-9 flex flex-wrap items-center gap-5">
               <button
                 onClick={scrollToWaitlist}
-                className="group inline-flex items-center gap-2.5 rounded-full bg-cream px-7 py-4 text-base font-medium text-ink transition-all duration-300 hover:bg-white cursor-pointer"
+                className="group inline-flex items-center gap-2.5 rounded-full bg-primary px-8 py-4 text-base font-semibold text-white transition-colors duration-300 hover:bg-primary-dark cursor-pointer"
               >
                 Join the waitlist
                 <ArrowRight className="w-5 h-5 transition-transform duration-300 group-hover:translate-x-1" />
               </button>
-              <span className="text-sm text-cream/70">Free for verified physicians</span>
+              <span className="text-base text-ink-muted">Free for verified physicians</span>
             </div>
           </div>
 
-          {/* Stat strip — Function pattern */}
-          <div className="hero-reveal mt-14 flex flex-wrap gap-y-6 border-t border-cream/25 pt-7">
-            {HERO_STATS.map((stat, i) => (
-              <div
-                key={stat.value}
-                className={i === 0 ? "pr-8 sm:pr-12" : "pl-8 sm:pl-12 border-l border-cream/25"}
-              >
-                <div className="font-display text-2xl text-cream">{stat.value}</div>
-                <div className="mt-1 text-sm text-cream/70">{stat.label}</div>
+          {/* Chat illustration on a tinted panel */}
+          <div className="hero-reveal rounded-3xl bg-tint p-6 sm:p-8 flex flex-col gap-4" aria-hidden="true">
+            <div className="flex items-center gap-3 pb-4 border-b border-tint-strong">
+              <div className="flex items-center justify-center w-12 h-12 rounded-full bg-primary text-white">
+                <Users className="w-5.5 h-5.5" strokeWidth={2} />
               </div>
-            ))}
+              <div>
+                <div className="text-[17px] font-semibold text-ink">Cardiology on-call</div>
+                <div className="text-sm text-ink-muted">Group chat, verified members</div>
+              </div>
+            </div>
+            <div className="self-start max-w-[82%] rounded-2xl bg-white px-4.5 py-3.5 text-ink-soft leading-relaxed">
+              Can someone look at the echo before rounds?
+            </div>
+            <div className="self-end max-w-[82%] rounded-2xl bg-primary px-4.5 py-3.5 text-white flex items-center gap-3">
+              <Mic className="w-5 h-5 shrink-0" strokeWidth={2} />
+              <span className="flex items-center gap-[3px]">
+                {WAVEFORM.map((h, i) => (
+                  <span key={i} className="w-[3px] rounded-full bg-white" style={{ height: h }} />
+                ))}
+              </span>
+              <span className="text-[15px] font-semibold">Voice note</span>
+            </div>
+            <div className="self-start max-w-[82%] rounded-2xl bg-white px-4.5 py-3.5 text-ink-soft leading-relaxed">
+              Listening now. I will call you in five.
+            </div>
           </div>
+        </div>
+
+        <div className="hero-reveal mt-16 flex flex-wrap gap-y-6 border-t border-line pt-8">
+          {HERO_STATS.map((stat, i) => (
+            <div
+              key={stat.value}
+              className={i === 0 ? "pr-8 sm:pr-12" : "pl-8 sm:pl-12 border-l border-line"}
+            >
+              <div className="font-display text-2xl text-ink">{stat.value}</div>
+              <div className="mt-1 text-sm text-ink-muted">{stat.label}</div>
+            </div>
+          ))}
         </div>
       </div>
     </section>

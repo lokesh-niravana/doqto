@@ -87,7 +87,7 @@ export default function WaitlistForm({
           placeholder="Enter your work email"
           required
           className={cn(
-            "w-full rounded-full border bg-card/95 backdrop-blur-sm text-ink placeholder:text-ink-soft/70 transition-all duration-300",
+            "w-full rounded-full border bg-white text-ink placeholder:text-ink-muted transition-all duration-300",
             "focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary",
             large
               ? "px-7 py-4.5 text-lg border-line"
@@ -101,8 +101,7 @@ export default function WaitlistForm({
         disabled={status === "loading"}
         className={cn(
           "inline-flex items-center justify-center gap-2 rounded-full font-medium transition-all duration-300 cursor-pointer",
-          "bg-primary text-cream hover:bg-primary-dark shadow-lg shadow-primary/20",
-          "hover:shadow-xl hover:shadow-primary/30 hover:-translate-y-0.5",
+          "bg-primary text-white hover:bg-primary-dark",
           "disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:translate-y-0",
           "focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2",
           large ? "px-8 py-4.5 text-lg" : "px-6 py-3.5 text-base"

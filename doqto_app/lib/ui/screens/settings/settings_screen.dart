@@ -5,14 +5,21 @@ import 'package:go_router/go_router.dart';
 import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/router/app_router.dart';
+import '../../../core/tokens/colors.dart';
+import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/spacing.dart';
-import '../../../core/utils/error_messages.dart';
-import '../../../data/models/billing.dart';
+import '../../../core/tokens/typography.dart';
+import '../../../l10n/l10n.dart';
 import '../../../state/auth_state.dart';
-import '../../../state/billing_state.dart';
+import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
+import '../../widgets/settings_rows.dart';
+import '../../../core/utils/avatar_urls.dart';
 
+/// Settings home (batch 6): a profile card, then grouped entries into the
+/// Account, Privacy, Chats & appearance, Notifications, Storage, Language and
+/// Help screens. Keys: `settings-<name>` so tests can address each row.
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
@@ -41,105 +48,202 @@ class SettingsScreen extends ConsumerWidget {
     if (context.mounted) context.go(AppRoutes.login);
   }
 
-  /// Someone with no Stripe customer yet (still on the trial) goes to
-  /// checkout; the portal would 409 for them.
-  Future<void> _openBilling(
-      BuildContext context, WidgetRef ref, Billing? billing) async {
-    final repo = ref.read(billingRepositoryProvider);
-    String? error;
-    try {
-      final url = billing?.status == null
-          ? await repo.checkoutUrl('yearly')
-          : await repo.portalUrl();
-      if (!await ref.read(urlOpenerProvider).open(url)) {
-        error = Strings.checkoutOpenFailed;
-      }
-    } catch (e) {
-      error = ErrorMessages.forApi(e);
-    }
-    if (error != null && context.mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
-    }
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l = context.l10n;
     final user = ref.watch(authProvider).user;
+    final status = user?.statusLabel();
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      backgroundColor: AppColors.appBg,
+      appBar: AppBar(title: Text(l.settingsTitle)),
       body: ListView(
+        key: const ValueKey('settings-list'),
+        padding: const EdgeInsets.only(bottom: AppSpacing.xl),
         children: [
+          // Profile card → edit profile.
           FadeSlideIn.staggered(
             0,
-            ListTile(
-                title: const Text('Name'),
-                subtitle: Text(user?.fullName ?? '—')),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.screenHorizontal,
+                AppSpacing.sm,
+                AppSpacing.screenHorizontal,
+                AppSpacing.sm,
+              ),
+              child: ListTile(
+                key: const ValueKey('settings-profile'),
+                tileColor: AppColors.surface,
+                shape: RoundedRectangleBorder(
+                  borderRadius: AppRadii.rLg,
+                  side: BorderSide(color: AppColors.border),
+                ),
+                leading: DoctorAvatar(
+                  initials: user?.initials ?? '?',
+                  size: AvatarSize.lg,
+                  imageUrl: userAvatarUrl(user?.id, user?.avatarUrl),
+                ),
+                title: Text(user?.fullName ?? '—', style: AppText.heading),
+                subtitle: Text(
+                  status ?? user?.specialty ?? user?.phone ?? '',
+                  key: const ValueKey('settings-profile-subtitle'),
+                  style: AppText.caption,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+                onTap: () => context.push(AppRoutes.profileEdit),
+              ),
+            ),
           ),
           FadeSlideIn.staggered(
             1,
-            ListTile(
-                title: const Text('Phone'), subtitle: Text(user?.phone ?? '—')),
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.screenHorizontal, vertical: AppSpacing.sm),
+              child: ListTile(
+                key: const ValueKey('settings-invite'),
+                tileColor: AppColors.medBlueLight,
+                shape: RoundedRectangleBorder(
+                  borderRadius: AppRadii.rLg,
+                  side: const BorderSide(color: AppColors.medBlue, width: 1.5),
+                ),
+                leading: const CircleAvatar(
+                  backgroundColor: AppColors.medBlue,
+                  foregroundColor: AppColors.white,
+                  child: Icon(Icons.person_add_alt_1, size: 20),
+                ),
+                title: const Text(Strings.inviteTitle,
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: const Text(Strings.inviteSettingsSubtitle),
+                trailing: const Icon(Icons.chevron_right, color: AppColors.medBlue),
+                onTap: () => context.push(AppRoutes.invite),
+              ),
+            ),
           ),
           FadeSlideIn.staggered(
             2,
-            ListTile(
-                title: const Text('NPI'),
-                subtitle: Text(user?.npiNumber ?? '—')),
+            SettingsSection(
+              title: l.settingsAccount,
+              children: [
+                _NavRow(
+                  id: 'change-number',
+                  icon: Icons.phone_iphone,
+                  title: l.settingsChangeNumber,
+                  subtitle: user?.phone,
+                  route: AppRoutes.changeNumber,
+                ),
+                _NavRow(
+                  id: 'two-step',
+                  icon: Icons.password_rounded,
+                  title: l.settingsTwoStep,
+                  subtitle: (user?.pinEnabled ?? false) ? l.commonOn : l.commonOff,
+                  route: AppRoutes.twoStepPin,
+                ),
+                _NavRow(
+                  id: 'devices',
+                  icon: Icons.devices_rounded,
+                  title: l.settingsLinkedDevices,
+                  route: AppRoutes.linkedDevices,
+                ),
+                _NavRow(
+                  id: 'export',
+                  icon: Icons.download_rounded,
+                  title: l.settingsExport,
+                  route: AppRoutes.help,
+                  onTap: () => _requestExport(context, ref),
+                  last: true,
+                ),
+              ],
+            ),
           ),
           FadeSlideIn.staggered(
             3,
-            ListTile(
-                title: const Text('Specialty'),
-                subtitle: Text(user?.specialty ?? '—')),
+            SettingsSection(
+              title: l.settingsPrivacy,
+              children: [
+                _NavRow(
+                  id: 'privacy',
+                  icon: Icons.lock_outline,
+                  title: l.settingsPrivacy,
+                  subtitle: l.settingsPrivacySubtitle,
+                  route: AppRoutes.privacy,
+                ),
+                _NavRow(
+                  id: 'app-lock',
+                  icon: Icons.fingerprint,
+                  title: l.settingsAppLock,
+                  route: AppRoutes.appLock,
+                  last: true,
+                ),
+              ],
+            ),
           ),
           FadeSlideIn.staggered(
             4,
-            Consumer(builder: (context, ref, _) {
-              final billing = ref.watch(billingProvider).value;
-              // Staff never pay: there is nothing to open for them. Nor on
-              // Android, which has no in-app way to pay (webCheckoutProvider).
-              final tappable = billing?.reason != 'staff' &&
-                  ref.watch(webCheckoutProvider);
-              final plan = billing?.plan == 'yearly'
-                  ? Strings.planYearly
-                  : Strings.planMonthly;
-              return ListTile(
-                title: const Text(Strings.subscriptionRow),
-                subtitle: Text(switch (billing?.reason) {
-                  // Paid before the trial ran out: the plan is what matters
-                  // now, not a countdown to nothing.
-                  'trial' when const {'active', 'trialing'}
-                          .contains(billing!.status) =>
-                    plan,
-                  'trial' => Strings.trialDaysLeft(billing!.trialDaysLeft),
-                  'subscribed' => plan,
-                  'grace' => tappable
-                      ? Strings.subscriptionGrace
-                      : Strings.subscriptionGraceNoCheckout,
-                  'staff' => Strings.subscriptionStaff,
-                  'expired' => Strings.subscriptionNone,
-                  _ => '—',
-                }),
-                trailing: tappable
-                    ? const Icon(Icons.open_in_new, size: 18)
-                    : null,
-                onTap: tappable
-                    ? () => _openBilling(context, ref, billing)
-                    : null,
-              );
-            }),
+            SettingsSection(
+              title: l.chatsTitle,
+              children: [
+                _NavRow(
+                  id: 'appearance',
+                  icon: Icons.palette_outlined,
+                  title: l.settingsAppearance,
+                  subtitle: l.settingsAppearanceSubtitle,
+                  route: AppRoutes.appearance,
+                ),
+                _NavRow(
+                  id: 'notifications',
+                  icon: Icons.notifications_none_rounded,
+                  title: l.settingsNotifications,
+                  subtitle: l.settingsNotificationsSubtitle,
+                  route: AppRoutes.notifications,
+                ),
+                _NavRow(
+                  id: 'starred',
+                  icon: Icons.star_outline_rounded,
+                  title: l.settingsStarred,
+                  route: AppRoutes.starred,
+                ),
+                _NavRow(
+                  id: 'storage',
+                  icon: Icons.data_usage_rounded,
+                  title: l.settingsStorage,
+                  subtitle: l.settingsStorageSubtitle,
+                  route: AppRoutes.storage,
+                  last: true,
+                ),
+              ],
+            ),
           ),
-          // Destructive zone: visually separated from the info rows above,
-          // rendered in red via the danger variant.
-          const SizedBox(height: AppSpacing.sm),
-          const Divider(),
           FadeSlideIn.staggered(
             5,
+            SettingsSection(
+              title: l.settingsHelp,
+              children: [
+                _NavRow(
+                  id: 'language',
+                  icon: Icons.language_rounded,
+                  title: l.settingsLanguage,
+                  subtitle: _languageLabel(context, ref),
+                  route: AppRoutes.language,
+                ),
+                _NavRow(
+                  id: 'help',
+                  icon: Icons.help_outline_rounded,
+                  title: l.settingsHelp,
+                  subtitle: l.settingsHelpSubtitle,
+                  route: AppRoutes.help,
+                  last: true,
+                ),
+              ],
+            ),
+          ),
+          FadeSlideIn.staggered(
+            6,
             Padding(
               padding: const EdgeInsets.all(AppSpacing.lg),
               child: AppButton(
-                label: 'Sign out',
+                key: const ValueKey('settings-sign-out'),
+                label: l.settingsSignOut,
                 icon: Icons.logout,
                 variant: AppButtonVariant.danger,
                 expand: true,
@@ -151,14 +255,15 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           FadeSlideIn.staggered(
-            6,
+            7,
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg)
                   .copyWith(bottom: AppSpacing.lg),
               child: TextButton(
+                key: const ValueKey('settings-delete-account'),
                 onPressed: () => _confirmAndDelete(context, ref),
                 child: Text(
-                  'Delete account',
+                  l.settingsDeleteAccount,
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ),
@@ -166,6 +271,87 @@ class SettingsScreen extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+
+  String _languageLabel(BuildContext context, WidgetRef ref) {
+    final l = context.l10n;
+    final code = Localizations.localeOf(context).languageCode;
+    return code == 'es' ? l.languageSpanish : l.languageEnglish;
+  }
+
+  /// Account info export: a 10-minute presigned JSON. Opened through the
+  /// system share sheet / browser so nothing is cached in-app.
+  Future<void> _requestExport(BuildContext context, WidgetRef ref) async {
+    final l = context.l10n;
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l.settingsExport),
+        content: const Text(
+          'We\'ll prepare a file with your profile, settings, organizations, '
+          'connections and groups. It never includes messages. The link works '
+          'for 10 minutes.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(l.commonCancel),
+          ),
+          TextButton(
+            key: const ValueKey('export-confirm'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Request'),
+          ),
+        ],
+      ),
+    );
+    if (go != true || !context.mounted) return;
+    try {
+      final r = await ref.read(settingsRepositoryProvider).requestExport();
+      await ref.read(urlOpenerProvider).open(r.url);
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l.commonSaveFailed)));
+    }
+  }
+}
+
+class _NavRow extends StatelessWidget {
+  final String id;
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final String route;
+  final VoidCallback? onTap;
+  final bool last;
+  const _NavRow({
+    required this.id,
+    required this.icon,
+    required this.title,
+    required this.route,
+    this.subtitle,
+    this.onTap,
+    this.last = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        ListTile(
+          key: ValueKey('settings-$id'),
+          leading: Icon(icon, color: AppColors.medBlue),
+          title: Text(title, style: AppText.bodyPrimary),
+          subtitle: subtitle == null || subtitle!.isEmpty
+              ? null
+              : Text(subtitle!, style: AppText.caption, maxLines: 1, overflow: TextOverflow.ellipsis),
+          trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+          onTap: onTap ?? () => context.push(route),
+        ),
+        if (!last) const Divider(height: 1, indent: AppSpacing.lg),
+      ],
     );
   }
 }

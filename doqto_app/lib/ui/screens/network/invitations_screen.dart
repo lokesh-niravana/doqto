@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/strings.dart';
-import '../../../core/di/providers.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/spacing.dart';
@@ -19,6 +18,7 @@ import '../../widgets/fade_slide_in.dart';
 import '../../widgets/invitation_card.dart';
 import '../../widgets/member_row.dart';
 import '../../widgets/primary_button.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 /// Full invitations inbox: Received (accept/ignore, optimistic) + Sent (pending
 /// with withdraw). Reachable from the Network tab's "See all" entry.
@@ -148,6 +148,7 @@ class _SentList extends ConsumerWidget {
     final async = ref.watch(sentInvitationsProvider);
     return async.when(
       loading: () => const SkeletonList(),
+      skipLoadingOnReload: true,
       error: (e, _) => _ErrorPane(
         message: ErrorMessages.forApi(e),
         onRetry: () => ref.invalidate(sentInvitationsProvider),
@@ -160,7 +161,7 @@ class _SentList extends ConsumerWidget {
           );
         }
         return RefreshIndicator(
-          onRefresh: () async => ref.invalidate(sentInvitationsProvider),
+          onRefresh: () => ref.read(sentInvitationsProvider.notifier).refresh(),
           child: ListView.builder(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: EdgeInsets.only(
@@ -195,9 +196,8 @@ class _SentRowState extends ConsumerState<_SentRow> {
     setState(() => _withdrawing = true);
     try {
       await ref
-          .read(networkRepositoryProvider)
-          .withdrawInvitation(widget.invitation.id);
-      ref.invalidate(sentInvitationsProvider);
+          .read(sentInvitationsProvider.notifier)
+          .withdraw(widget.invitation);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text(Strings.netInviteWithdrawnToast)),
@@ -224,7 +224,7 @@ class _SentRowState extends ConsumerState<_SentRow> {
       avatar: DoctorAvatar(
         initials: party?.initials ?? '?',
         colorIndex: party?.avatarIndex ?? 0,
-        imageUrl: party?.avatarPresignedUrl,
+        imageUrl: userAvatarUrl(party?.id, party?.avatarUrl),
         size: AvatarSize.lg,
       ),
       title: party?.fullName ?? '',

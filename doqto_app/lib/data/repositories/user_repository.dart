@@ -3,6 +3,7 @@ import 'dart:io';
 import '../../core/constants/api_routes.dart';
 import '../../core/enums/app_enums.dart';
 import '../api/api_client.dart';
+import '../models/presence.dart';
 import '../models/user.dart';
 
 class UserPatchBody {
@@ -98,6 +99,22 @@ class UserRepository {
   Future<void> unregisterPushToken({required String token}) async {
     await _api.delete(ApiRoutes.usersMePushTokens, body: {'token': token});
   }
+
+  /// Presence + last seen for up to 50 doctors, already filtered by their
+  /// privacy settings relative to me. Unknown ids are simply absent.
+  Future<List<PresenceInfo>> fetchPresence(List<String> ids) async {
+    if (ids.isEmpty) return const [];
+    final j = await _api.getList(
+      ApiRoutes.usersPresence,
+      query: {'ids': ids.take(presenceMaxIds).join(',')},
+    );
+    return j
+        .map((e) => PresenceInfo.fromJson((e as Map).cast<String, dynamic>()))
+        .toList();
+  }
+
+  /// Mirrors PRESENCE_QUERY_MAX_IDS on the backend.
+  static const int presenceMaxIds = 50;
 
   String _mimeFor(String filename) {
     final lower = filename.toLowerCase();

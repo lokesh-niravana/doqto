@@ -128,10 +128,77 @@ Who may find me / view my profile (`user_privacy_settings`, M1). Client edits it
 | `connections` | Only my connections |
 | `nobody` | Not discoverable |
 
+## LastSeenVisibility
+
+Who may see when I was last online (`user_privacy_settings`, batch 2). Client
+edits it. "Connections" means first-degree connections AND same-org
+colleagues. Reciprocal: a user who picks `nobody` sees nobody else's either.
+
+| Wire value | Meaning |
+|---|---|
+| `everyone` | Anyone who can reach my profile |
+| `connections` | Connections and colleagues (default) |
+| `nobody` | Hidden — and I see nobody's |
+
+## OnlineVisibility
+
+Whether my live "online" state is shown (`user_privacy_settings`, batch 2).
+
+| Wire value | Meaning |
+|---|---|
+| `same_as_last_seen` | Follows LastSeenVisibility (default) |
+| `nobody` | Never shown online; last seen still follows its own setting |
+
+## ProfileFieldVisibility
+
+Who may see my profile photo / about text (`user_privacy_settings`, batch 2 —
+`profile_photo_visibility`, `about_visibility`). Hidden fields come back `null`
+on `GET /users/{id}/profile`; the initials avatar always renders.
+
+| Wire value | Meaning |
+|---|---|
+| `everyone` | Anyone who can reach my profile (default) |
+| `connections` | Connections and colleagues only |
+
+## ReportReason
+
+Why a user or message is being reported (`POST /network/reports`, batch 4).
+SHARED — the client renders the reason picker from it.
+
+| Wire value | Meaning |
+|---|---|
+| `spam` | Unsolicited promotion / bulk messages |
+| `harassment` | Abusive or threatening conduct |
+| `phi_misuse` | Patient information shared or requested improperly |
+| `impersonation` | Pretending to be another clinician / organisation |
+| `other` | Anything else (details field) |
+
+## ReportSubjectType (backend-only)
+
+What a report points at. Backend-only — the client sends the string.
+
+| Wire value | Meaning |
+|---|---|
+| `user` | A person (reported from their profile; default) |
+| `message` | A message (batch 4) — reporter must be a conversation member; `context_message_ids` (≤5 ids, never bodies) travel with it |
+
+## AccessRequestStatus (backend-only)
+
+Break-glass request lifecycle (batch 7, `access_requests.status`). Backend-only —
+NOT in the parity SHARED set; the app reads the string.
+
+| Wire value | Meaning |
+|---|---|
+| `pending` | Filed, awaiting a second org admin |
+| `approved` | Approved; `expires_at` = decision + 24 h |
+| `rejected` | Refused by a second org admin |
+| `expired` | Window lapsed (effective immediately, stamped by the job) |
+
 ## ReportStatus (backend-only)
 
-Moderation report lifecycle — never sent to the Flutter client (queue UI is M7),
-so deliberately NOT in the parity-check SHARED set and no Dart mirror.
+Moderation report lifecycle — set by super-admins through
+`GET/PATCH /admin/reports` (batch 4); never sent to the Flutter client, so
+deliberately NOT in the parity-check SHARED set and no Dart mirror.
 
 | Wire value | Meaning |
 |---|---|
@@ -166,9 +233,11 @@ Whether a member may DM a co-member from group context (M5). Backend-only.
 
 | Wire value | Meaning |
 |---|---|
-| `open` | Co-member DM opens directly |
-| `request` | Co-member DM goes through the message-request tier |
-| `disabled` | No member-to-member DM from group context |
+| `open` | Co-members may open a direct chat with each other (`shared_group` in the permission module) |
+| `request` | Co-members must connect first — the direct-chat gate answers `group_dm_request` (the request tier is retired) |
+| `disabled` | No member-to-member DM — the gate answers `group_dm_disabled` |
+
+Enforced on `POST /conversations` (direct) and on every send into a direct chat whenever the two doctors share no org and are not connected; the most permissive policy across their shared groups wins. Groups cap at `GROUP_MAX_MEMBERS` (256) active members — invite, accept and link-accept answer `409 group_full`.
 
 ## GroupMemberState (backend-only)
 
@@ -202,6 +271,8 @@ Invite lifecycle — direct + link (M5). Backend-only.
 | `image` | Image attachment |
 | `file` | Generic file attachment |
 | `system` | System event (joined/left/removed) |
+| `video` | Video clip (batch 5): `s3_key` + JPEG poster in `thumb_key`, length in `voice_duration_sec`, optional `caption` |
+| `poll` | Poll (batch 5): question in `content`, tallies + voter ids in `poll{question, multiple, options[{id, position, text, vote_count, voter_ids}], voter_count}` |
 
 ## TranscriptStatus
 
@@ -218,7 +289,7 @@ Invite lifecycle — direct + link (M5). Backend-only.
 |---|---|
 | `online` | Active in last 5 min |
 | `away` | Inactive 5–30 min |
-| `offline` | Inactive 30+ min |
+| `offline` | Inactive 30+ min — ALSO what a viewer gets for a doctor whose settings hide presence from them (`GET /users/presence`, batch 2), with `last_seen_at: null` |
 
 ## DisappearAfter
 
@@ -240,7 +311,7 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `transcript_ready` | `message_id, transcript` |
 | `message_delivered` | `conversation_id, user_id` (conversation-level ack) |
 | `message_read` | `message_id, user_id, read_at` |
-| `presence_update` | `user_id, status` |
+| `presence_update` | `user_id, status, last_seen_at` — recipient-scoped since batch 2: sent to the user's connections + org colleagues, minus anyone their settings hide it from and anyone hiding their own (reciprocal); `last_seen_at` is set on `away` |
 | `member_added` | `conversation_id, user_id, user_name` |
 | `member_removed` | `conversation_id, user_id` |
 | `system_message` | `conversation_id, text` |
@@ -256,6 +327,27 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `conversation_request_declined` | `conversation_id` (M4) — silent, sent ONLY to the decliner's own devices |
 | `group_invite_received` | `group_id, invite_id, inviter_id, inviter_name, group_name` (M5, no PHI) |
 | `group_member_joined` | `group_id, user_id, user_name` (M5) — a member joined |
+| `message_edited` | full `MessageOut` (incl. `reactions`, `changed_at`) — replace the row by id |
+| `message_deleted` | full `MessageOut` tombstone — replace the row by id |
+| `message_reacted` | `conversation_id, message_id, reactions[], changed_at, actor_id, emoji` (null = removed) — patch reactions only, drop if `changed_at` is not newer |
+
+`new_message` / `message_edited` / `message_deleted` payloads are a full `MessageOut`, which since batch 4 also carries `reply_to_id`, `reply_to {id, sender_id, type, preview}` (rendered live from the quoted row; `preview` is "Message deleted" for a tombstone and the whole object is `null` once the quoted message expired), `forwarded`, `forward_depth`, `mentions[]` (user ids) and `starred` (always `false` in fan-outs — per-viewer, only true on the viewer's own reads).
+| `connected` | `user_id` — first server frame after a successful `auth` |
+| `invitation_withdrawn` | `invitation_id, sender_id` — the sender withdrew it |
+| `org_updated` | `org_id, status` — org status or details changed; refetch |
+| `group_updated` | `group_id` — group details changed; refetch |
+| `profile_updated` | `user_id` — a profile you can see changed; refetch |
+| `conversation_prefs_updated` | `conversation_id, prefs{pinned_at, archived, muted_until, custom_tone, custom_vibrate, theme, wallpaper, marked_unread, cleared_before_seq, hidden_until_seq}` (batch 3) — sent ONLY to the caller's own devices; patch the conversation's `prefs` in place |
+| `message_pinned` | `conversation_id, message_id, pinned_until, actor_id` (batch 4) — every member; show the banner |
+| `message_unpinned` | `conversation_id, message_id, pinned_until: null, actor_id` (null when the auto-unpin job cleared it) — every member |
+| `message_starred` | `conversation_id, message_id, starred` (batch 4) — the actor's OWN devices only; stars are private |
+| `poll_updated` | `conversation_id, message_id, poll{question, multiple, options[], voter_count}, changed_at, actor_id` (batch 5) — every member after a vote changed (or a departed member's votes were purged); replace the message's `poll`, drop if `changed_at` is not newer |
+| `session_created` | `session_id, device_name, platform, created_at` (batch 6) — the user's OWN devices only: another device signed in; refresh the linked-devices list |
+| `session_revoked` | `session_id` (batch 6) — the user's OWN devices only: if `session_id` is this device's, wipe the cache and return to login immediately |
+| `notification_settings_updated` | full `NotificationSettingsOut` (batch 6) — the user's OWN devices only; replace the local copy |
+| `access_request_updated` | `org_id, access_request_id, status` (batch 7) — org admins involved in a break-glass request (requester + the other admins on create; requester + decider on approve/reject; requester on expiry); refetch the list |
+
+Since batch 5 a `MessageOut` also carries `caption` (image/video/file/voice, encrypted at rest), `thumb_key` (video poster; `GET /messages/{id}/file-url?thumb=1`), `waveform` (base64 of ≤ 64 amplitude bytes, voice notes), `media_width` / `media_height` and `poll`.
 
 ## WsEventClient (client → server)
 
@@ -321,6 +413,61 @@ Stored as raw integer seconds in DB (`conversations.disappear_after_sec`), but F
 | `group_ownership_transferred` | Group ownership transferred to a new owner (M5) |
 | `group_invite_sent` | A direct or link group invite was created (M5) |
 | `group_invite_accepted` | A group invite was accepted → membership formed (M5) |
+| `message_receipts_read` | Sender viewed a message's read-by / delivered-to list (`GET /messages/{id}/receipts`) |
+| `privacy_updated` | A privacy setting changed (`PATCH /users/me/privacy`); meta lists the field names only |
+| `conversation_prefs_updated` | A conversation preference changed (`PATCH /conversations/{id}/prefs`: pin / archive / mute / mark unread / clear / delete); meta lists the field names only (batch 3) |
+| `message_forwarded` | A message was forwarded (`POST /messages/{id}/forward`); meta: `source_id`, `destinations[]`, `copies[]` (batch 4) |
+| `message_pinned` | A message was pinned to its conversation; meta: `message_id`, `duration_sec` (batch 4) |
+| `message_unpinned` | The pin was removed by a member (the auto-unpin job does not audit) (batch 4) |
+| `starred_messages_read` | `GET /messages/starred` returned decrypted bodies; one row per page (batch 4) |
+| `report_status_changed` | A super-admin moved a report between statuses; meta: `from`, `to` (batch 4) |
+| `link_preview_fetched` | The server fetched a link preview on the user's behalf; meta: `host` only (batch 4) |
+| `file_exported` | The user is about to save / share a media message (`POST /messages/{id}/export-audit`, allowed by `allow_media_export`); meta: `type`, `conversation_id` (batch 5) |
+| `poll_voted` | The user changed their selection on a poll (`PUT` / `DELETE /messages/{id}/vote`); meta: `options` count, 0 = withdrawn (batch 5) |
+| `screenshot_taken` | The app detected a screenshot of a conversation (`POST /audit/screenshot`, iOS); resource = the conversation (batch 6) |
+| `notification_settings_updated` | A notification preference changed (`PATCH /users/me/notifications`); meta lists field names only, or `reset` (batch 6) |
+| `session_revoked` | A linked device was signed out (`DELETE /users/me/sessions/{id}` or `POST …/revoke-others`); meta: `count`, `session_ids[]` (batch 6) |
+| `phone_changed` | The account's phone number changed (`PATCH /users/me/phone`); neither number is stored in the row (batch 6) |
+| `pin_set` | Two-step PIN turned on or changed (`PUT /users/me/pin`) (batch 6) |
+| `pin_removed` | Two-step PIN turned off (`DELETE /users/me/pin`) (batch 6) |
+| `pin_verified` | A new device entered the PIN (`POST /auth/pin/verify`) (batch 6) |
+| `pin_reset_requested` | Forgot-PIN cooldown started (`POST /auth/pin/reset-request`); meta: `clears_at` (batch 6) |
+| `pin_reset_completed` | The settings loop cleared the PIN after the 7-day cooldown (batch 6) |
+| `account_exported` | Account info export generated (`POST /users/me/export`) — profile, settings, connections, groups; never messages (batch 6) |
+| `status_updated` | Status under the name changed (`PATCH /users/me/status`); meta: `preset`, `custom` (bool — never the text), `expires_in_sec` (batch 6) |
+| `access_request_created` | Org admin filed a break-glass request; meta: `org_id`, `conversation_id` (batch 7) |
+| `access_request_approved` | A second org admin approved it; meta: `org_id`, `conversation_id`, `requester_id` (batch 7) |
+| `access_request_rejected` | A second org admin rejected it (batch 7) |
+| `break_glass_read` | One page of an emergency read; resource = conversation; meta: `access_request_id`, `org_id`, `before_seq`, `count` (batch 7) |
+| `audit_read` | Someone read the audit trail (`GET /admin/audit` or `GET /orgs/{id}/audit`); meta: `scope`, `count`, filters (batch 7) |
+| `retention_applied` | The retention job expired messages for an org (user NULL); meta: `retention_days`, `messages` (batch 7) |
+| `key_rotated` | `scripts/rotate_keys.py` minted a new data key; meta: `scope`, `version` (batch 7) |
+
+## StatusPreset
+
+Status under a doctor's name (batch 6). `PATCH /users/me/status {preset}`;
+stored in `users.status_text`. Custom text (≤ 40 chars) is anything else and
+arrives as `status_text` with `status_preset: null`.
+
+| Wire value | Meaning |
+|---|---|
+| `on_call` | On call |
+| `in_clinic` | In clinic |
+| `in_surgery` | In surgery |
+| `off_duty` | Off duty |
+| `available` | Available |
+
+## VibratePattern
+
+Notification vibration (batch 6, `user_notification_settings.*_vibrate`,
+`conversation_prefs.custom_vibrate`). Android only; iOS ignores it.
+
+| Wire value | Meaning |
+|---|---|
+| `default` | System default |
+| `short` | One short buzz |
+| `long` | One long buzz |
+| `off` | No vibration |
 
 ## TranscribeSpecialty (AWS Transcribe Medical)
 

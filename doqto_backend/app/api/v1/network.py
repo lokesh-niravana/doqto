@@ -5,12 +5,15 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
     MUTUAL_CONNECTIONS_DEFAULT_LIMIT,
     NETWORK_PAGE_SIZE,
+    PEOPLE_SEARCH_MAX_LIMIT,
     RATE_LIMIT_READS_PER_MINUTE,
+    SUGGEST_PAGE_SIZE,
 )
 from app.core.dependencies import get_current_user
 from app.core.enums import InvitationStatus
@@ -18,8 +21,16 @@ from app.core.permissions import can_view_profile
 from app.core.rate_limit import enforce_rate_limit
 from app.core.routes import ApiRoutes
 from app.db.postgres import get_db
-from app.models import Block, Connection, ConnectionInvitation, Mute, User
+from app.models import (
+    Block,
+    Connection,
+    ConnectionInvitation,
+    Mute,
+    SuggestionDismissal,
+    User,
+)
 from app.schemas.common import OkResponse
+from app.schemas.people import PeopleSearchPage, location_label
 from app.schemas.network import (
     BlockOut,
     ConnectionCardOut,
@@ -34,6 +45,7 @@ from app.schemas.network import (
 )
 from app.services.connection_service import ConnectionError, ConnectionService
 from app.services.file_service import FileService
+from app.services.people_search_service import people_search
 from app.services.relationship_service import RelationshipService
 
 router = APIRouter()
@@ -299,17 +311,77 @@ async def mutual_connections(
 
 
 # ---------------------------------------------------------------------- #
+# Recommended for you
+
+
+@router.get(ApiRoutes.NETWORK_SUGGESTIONS, response_model=PeopleSearchPage)
+async def suggestions(
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=SUGGEST_PAGE_SIZE, ge=1, le=PEOPLE_SEARCH_MAX_LIMIT),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PeopleSearchPage:
+    await enforce_rate_limit(user.id, "network_suggestions", RATE_LIMIT_READS_PER_MINUTE)
+    cards, next_cursor = await people_search.suggestions(
+        viewer_id=user.id, cursor=cursor, limit=limit, db=db
+    )
+    return PeopleSearchPage(data=cards, next_cursor=next_cursor)
+
+
+@router.post(ApiRoutes.NETWORK_SUGGESTION_DISMISS, response_model=OkResponse)
+async def dismiss_suggestion(
+    user_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> OkResponse:
+    if user_id == user.id or await db.get(User, user_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="user_unavailable")
+    await db.execute(
+        insert(SuggestionDismissal)
+        .values(user_id=user.id, dismissed_user_id=user_id)
+        .on_conflict_do_nothing()
+    )
+    await db.commit()
+    return OkResponse()
+
+
+# ---------------------------------------------------------------------- #
 # Blocks
 # ---------------------------------------------------------------------- #
-@router.get(ApiRoutes.NETWORK_BLOCKS, response_model=list[BlockOut])
+@router.get(ApiRoutes.NETWORK_BLOCKS, response_model=CursorPage)
 async def list_blocks(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> list[BlockOut]:
+) -> CursorPage:
+    """Everyone I blocked, newest first, as person cards ({data, next_cursor}
+    like every other list; a block list is short, so one page)."""
+    await enforce_rate_limit(user.id, "list_blocks", RATE_LIMIT_READS_PER_MINUTE)
     rows = (
-        await db.scalars(select(Block).where(Block.blocker_id == user.id))
+        await db.execute(
+            select(Block, User)
+            .join(User, User.id == Block.blocked_id)
+            .where(Block.blocker_id == user.id)
+            .order_by(Block.created_at.desc())
+        )
     ).all()
-    return [BlockOut(blocked_id=b.blocked_id, created_at=b.created_at) for b in rows]
+    data = [
+        BlockOut(
+            id=u.id,
+            blocked_id=u.id,
+            full_name=u.full_name,
+            headline=u.headline,
+            specialty=u.specialty,
+            location_label=location_label(u.city, u.state),
+            avatar_color=u.avatar_color,
+            avatar_url=u.avatar_url,
+            avatar_presigned_url=(
+                await FileService.presigned_url(key=u.avatar_url) if u.avatar_url else None
+            ),
+            created_at=b.created_at,
+        ).model_dump(mode="json")
+        for b, u in rows
+    ]
+    return CursorPage(data=data, next_cursor=None)
 
 
 @router.post(ApiRoutes.NETWORK_BLOCK_DETAIL, response_model=OkResponse)
@@ -391,13 +463,17 @@ async def file_report(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> OkResponse:
-    await ConnectionService.report(
-        request=request,
-        user=user,
-        subject_type=body.subject_type,
-        subject_id=body.subject_id,
-        reason=body.reason,
-        details=body.details,
-        db=db,
-    )
+    try:
+        await ConnectionService.report(
+            request=request,
+            user=user,
+            subject_type=body.subject_type.value,
+            subject_id=body.subject_id,
+            reason=body.reason.value,
+            details=body.details,
+            db=db,
+            context_message_ids=body.context_message_ids,
+        )
+    except ConnectionError as e:
+        _raise(e)
     return OkResponse()

@@ -89,6 +89,11 @@ class NetworkProfile {
   final List<String> skills;
   final Relationship relationship;
 
+  /// Status under the name (batch 6) — directory data like the headline.
+  final StatusPreset? statusPreset;
+  final String? statusText;
+  final DateTime? statusExpiresAt;
+
   const NetworkProfile({
     required this.id,
     required this.fullName,
@@ -102,7 +107,19 @@ class NetworkProfile {
     required this.yearsOfExperience,
     required this.skills,
     required this.relationship,
+    this.statusPreset,
+    this.statusText,
+    this.statusExpiresAt,
   });
+
+  /// Preset label or custom text; null when unset or expired.
+  String? statusLabel([DateTime? now]) {
+    final exp = statusExpiresAt;
+    if (exp != null && !exp.isAfter(now ?? DateTime.now().toUtc())) return null;
+    if (statusPreset != null) return statusPreset!.label;
+    final t = statusText?.trim();
+    return (t == null || t.isEmpty) ? null : t;
+  }
 
   factory NetworkProfile.fromJson(Map<String, dynamic> j) => NetworkProfile(
         id: (j['id'] ?? '') as String,
@@ -118,6 +135,11 @@ class NetworkProfile {
         skills: ((j['skills'] as List?) ?? const []).map((e) => e.toString()).toList(),
         // Relationship fields live flat on PublicProfileOut.
         relationship: Relationship.fromJson(j),
+        statusPreset: StatusPreset.fromWire(j['status_preset'] as String?),
+        statusText: j['status_text'] as String?,
+        statusExpiresAt: j['status_expires_at'] is String
+            ? DateTime.tryParse(j['status_expires_at'] as String)?.toUtc()
+            : null,
       );
 
   String get initials => initialsOf(fullName);
@@ -136,6 +158,9 @@ class NetworkProfile {
         yearsOfExperience: yearsOfExperience,
         skills: skills,
         relationship: relationship ?? this.relationship,
+        statusPreset: statusPreset,
+        statusText: statusText,
+        statusExpiresAt: statusExpiresAt,
       );
 }
 
@@ -152,6 +177,10 @@ class PersonCard {
   final ConnectionDegree degree;
   final int mutualCount;
 
+  /// Suggestions only: why they're suggested (colleague, mutual,
+  /// specialty_nearby, specialty, nearby, new_member).
+  final String? reason;
+
   const PersonCard({
     required this.id,
     required this.fullName,
@@ -163,6 +192,7 @@ class PersonCard {
     required this.avatarPresignedUrl,
     required this.degree,
     required this.mutualCount,
+    this.reason,
   });
 
   factory PersonCard.fromJson(Map<String, dynamic> j) => PersonCard(
@@ -178,6 +208,7 @@ class PersonCard {
         avatarPresignedUrl: j['avatar_presigned_url'] as String?,
         degree: ConnectionDegree.fromWire(j['degree'] as String?),
         mutualCount: (j['mutual_count'] as num?)?.toInt() ?? 0,
+        reason: j['reason'] as String?,
       );
 
   String get initials => initialsOf(fullName);
@@ -192,6 +223,7 @@ class InvitationParty {
   final String? headline;
   final String? specialty;
   final String? avatarColor;
+  final String? avatarUrl;
   final String? avatarPresignedUrl;
 
   const InvitationParty({
@@ -200,6 +232,7 @@ class InvitationParty {
     this.headline,
     this.specialty,
     this.avatarColor,
+    this.avatarUrl,
     this.avatarPresignedUrl,
   });
 
@@ -209,6 +242,7 @@ class InvitationParty {
         headline: j['headline'] as String?,
         specialty: j['specialty'] as String?,
         avatarColor: j['avatar_color'] as String?,
+        avatarUrl: j['avatar_url'] as String?,
         avatarPresignedUrl: j['avatar_presigned_url'] as String?,
       );
 
@@ -267,28 +301,145 @@ class PrivacySettings {
   final InvitePolicy invitePolicy;
   final DmPolicy dmPolicy;
   final Discoverability discoverability;
+  final bool showMutualConnections;
+  final LastSeenVisibility lastSeenVisibility;
+  final OnlineVisibility onlineVisibility;
+  final ProfileFieldVisibility profilePhotoVisibility;
+  final ProfileFieldVisibility aboutVisibility;
+
+  /// Direct chats only; groups always show read-by.
+  final bool readReceipts;
+
+  /// Applied to new direct chats I start. null = off.
+  final int? defaultDisappearSec;
+  final bool linkPreviews;
 
   const PrivacySettings({
     required this.invitePolicy,
     required this.dmPolicy,
     required this.discoverability,
+    this.showMutualConnections = true,
+    this.lastSeenVisibility = LastSeenVisibility.connections,
+    this.onlineVisibility = OnlineVisibility.sameAsLastSeen,
+    this.profilePhotoVisibility = ProfileFieldVisibility.everyone,
+    this.aboutVisibility = ProfileFieldVisibility.everyone,
+    this.readReceipts = true,
+    this.defaultDisappearSec,
+    this.linkPreviews = true,
   });
+
+  /// Server defaults — what a doctor who never opened the screen has.
+  static const defaults = PrivacySettings(
+    invitePolicy: InvitePolicy.everyone,
+    dmPolicy: DmPolicy.connectionsAndRequests,
+    discoverability: Discoverability.everyone,
+  );
 
   factory PrivacySettings.fromJson(Map<String, dynamic> j) => PrivacySettings(
         invitePolicy: InvitePolicy.fromWire((j['invite_policy'] ?? 'everyone') as String),
-        dmPolicy: DmPolicy.fromWire((j['dm_policy'] ?? 'everyone') as String),
+        dmPolicy: DmPolicy.fromWire(
+            (j['dm_policy'] ?? 'connections_and_requests') as String),
         discoverability:
             Discoverability.fromWire((j['discoverability'] ?? 'everyone') as String),
+        showMutualConnections: (j['show_mutual_connections'] ?? true) as bool,
+        lastSeenVisibility: LastSeenVisibility.fromWire(
+            (j['last_seen_visibility'] ?? 'connections') as String?),
+        onlineVisibility: OnlineVisibility.fromWire(
+            (j['online_visibility'] ?? 'same_as_last_seen') as String?),
+        profilePhotoVisibility: ProfileFieldVisibility.fromWire(
+            (j['profile_photo_visibility'] ?? 'everyone') as String?),
+        aboutVisibility: ProfileFieldVisibility.fromWire(
+            (j['about_visibility'] ?? 'everyone') as String?),
+        readReceipts: (j['read_receipts'] ?? true) as bool,
+        defaultDisappearSec: (j['default_disappear_sec'] as num?)?.toInt(),
+        linkPreviews: (j['link_previews'] ?? true) as bool,
       );
 
+  /// Full snapshot. PATCH callers send only the field that changed (see
+  /// NetworkRepository.patchPrivacy) so a tolerant `unknown` never goes back.
   Map<String, dynamic> toJson() => {
         'invite_policy': invitePolicy.wire,
         'dm_policy': dmPolicy.wire,
         'discoverability': discoverability.wire,
+        'show_mutual_connections': showMutualConnections,
+        'last_seen_visibility': lastSeenVisibility.wire,
+        'online_visibility': onlineVisibility.wire,
+        'profile_photo_visibility': profilePhotoVisibility.wire,
+        'about_visibility': aboutVisibility.wire,
+        'read_receipts': readReceipts,
+        'default_disappear_sec': defaultDisappearSec,
+        'link_previews': linkPreviews,
       };
+
+  PrivacySettings copyWith({
+    InvitePolicy? invitePolicy,
+    DmPolicy? dmPolicy,
+    Discoverability? discoverability,
+    bool? showMutualConnections,
+    LastSeenVisibility? lastSeenVisibility,
+    OnlineVisibility? onlineVisibility,
+    ProfileFieldVisibility? profilePhotoVisibility,
+    ProfileFieldVisibility? aboutVisibility,
+    bool? readReceipts,
+    int? Function()? defaultDisappearSec,
+    bool? linkPreviews,
+  }) =>
+      PrivacySettings(
+        invitePolicy: invitePolicy ?? this.invitePolicy,
+        dmPolicy: dmPolicy ?? this.dmPolicy,
+        discoverability: discoverability ?? this.discoverability,
+        showMutualConnections: showMutualConnections ?? this.showMutualConnections,
+        lastSeenVisibility: lastSeenVisibility ?? this.lastSeenVisibility,
+        onlineVisibility: onlineVisibility ?? this.onlineVisibility,
+        profilePhotoVisibility: profilePhotoVisibility ?? this.profilePhotoVisibility,
+        aboutVisibility: aboutVisibility ?? this.aboutVisibility,
+        readReceipts: readReceipts ?? this.readReceipts,
+        defaultDisappearSec: defaultDisappearSec == null
+            ? this.defaultDisappearSec
+            : defaultDisappearSec(),
+        linkPreviews: linkPreviews ?? this.linkPreviews,
+      );
 }
 
 /// A cursor-paginated list page — `{data, next_cursor}`.
+/// "Invite a colleague": an NPI Registry result and whether they're on Doqto.
+enum NpiStatus { message, requested, connect, invite }
+
+class NpiHit {
+  final String npi;
+  final String name;
+  final String? specialty;
+  final String? location;
+  final NpiStatus status;
+
+  /// Set when they're on Doqto (every status but invite).
+  final String? userId;
+
+  const NpiHit({
+    required this.npi,
+    required this.name,
+    this.specialty,
+    this.location,
+    required this.status,
+    this.userId,
+  });
+
+  factory NpiHit.fromJson(Map<String, dynamic> j) => NpiHit(
+        npi: j['npi'] as String,
+        name: j['name'] as String,
+        specialty: j['specialty'] as String?,
+        location: j['location'] as String?,
+        status: NpiStatus.values.asNameMap()[j['status']] ?? NpiStatus.invite,
+        userId: j['user_id'] as String?,
+      );
+
+  /// "Neel Patel, MD" → "Dr. Patel" for the invite message.
+  String get greeting {
+    final last = name.split(',').first.trim().split(' ').last;
+    return 'Dr. $last';
+  }
+}
+
 class CursorPage<T> {
   final List<T> data;
   final String? nextCursor;

@@ -15,16 +15,17 @@ from __future__ import annotations
 
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from collections.abc import Iterable
+from datetime import datetime, timezone
 
 from fastapi import Request
-from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.ws_manager import ws_manager
 from app.core import constants
 from app.core.enums import (
+    OrgStatus,
     AuditAction,
     ConversationType,
     GroupInviteState,
@@ -37,19 +38,24 @@ from app.core.enums import (
 from app.core.permissions import can_add_to_group
 from app.core.rate_limit import enforce_rate_limit
 from app.models import (
+    Organization,
     Conversation,
     ConversationMember,
     Group,
     GroupInvite,
     GroupMember,
+    Message,
+    MessageReaction,
     User,
 )
+from app.schemas.message import MessageReactedEvent
 from app.services.audit_service import AuditService
 from app.services.message_service import MessageService
 from app.services.notification_service import (
     TYPE_GROUP_INVITE_RECEIVED,
     NotificationService,
 )
+from app.services.push_service import PushService
 from app.services.relationship_service import RelationshipService
 
 _ROLE_RANK = {
@@ -176,6 +182,143 @@ class GroupService:
         await GroupService._sync_member(group, member.user_id, add=False, db=db)
         await GroupService._recount(group, db)
 
+    @staticmethod
+    def _assert_capacity(group: Group) -> None:
+        """One more ACTIVE member must fit under GROUP_MAX_MEMBERS. Checked on
+        invite (so an admin learns early), on direct-invite accept and on link
+        accept (the counts may have moved since the invite was sent)."""
+        if group.member_count >= constants.GROUP_MAX_MEMBERS:
+            raise GroupError("group_full", status_code=409)
+
+    @staticmethod
+    async def _purge_reactions(
+        group: Group, user_id: uuid.UUID, db: AsyncSession
+    ) -> list[uuid.UUID]:
+        """A member who left / was removed / was banned takes their reactions
+        with them: delete every message_reactions row of theirs in the group's
+        conversation and stamp changed_at on the touched messages so offline
+        clients catch the change up. Returns the touched message ids; the
+        caller fans out `message_reacted` for each AFTER commit."""
+        touched = list(
+            (
+                await db.execute(
+                    select(MessageReaction.message_id)
+                    .join(Message, Message.id == MessageReaction.message_id)
+                    .where(
+                        MessageReaction.user_id == user_id,
+                        Message.conversation_id == group.conversation_id,
+                    )
+                )
+            ).scalars().all()
+        )
+        if not touched:
+            return []
+        await db.execute(
+            delete(MessageReaction).where(
+                MessageReaction.user_id == user_id,
+                MessageReaction.message_id.in_(touched),
+            )
+        )
+        now = _now()
+        for msg in (
+            await db.execute(select(Message).where(Message.id.in_(touched)))
+        ).scalars().all():
+            msg.changed_at = now
+        await db.flush()
+        return touched
+
+    @staticmethod
+    async def _purge_votes(group: Group, user_id: uuid.UUID, db: AsyncSession) -> list[uuid.UUID]:
+        """Poll votes leave with the member too (batch 5). Returns the touched
+        poll message ids for a `poll_updated` fan-out after commit."""
+        from app.services.media_service import MediaService
+
+        return await MediaService.purge_votes_for_member(
+            conversation_id=group.conversation_id, user_id=user_id, db=db
+        )
+
+    @staticmethod
+    async def _publish_polls_changed(
+        group: Group, message_ids: list[uuid.UUID], actor_id: uuid.UUID, db: AsyncSession
+    ) -> None:
+        if not message_ids:
+            return
+        from app.schemas.message import PollUpdatedEvent
+        from app.services.media_service import MediaService
+
+        recipients = await MessageService.member_ids(
+            conversation_id=group.conversation_id, db=db
+        )
+        if not recipients:
+            return
+        msgs = (
+            await db.execute(select(Message).where(Message.id.in_(message_ids)))
+        ).scalars().all()
+        polls = await MediaService.polls_for(msgs=list(msgs), db=db)
+        for msg in msgs:
+            if msg.id not in polls:
+                continue
+            event = PollUpdatedEvent(
+                conversation_id=group.conversation_id,
+                message_id=msg.id,
+                poll=polls[msg.id],
+                changed_at=msg.changed_at or _now(),
+                actor_id=actor_id,
+            )
+            await ws_manager.publish_to_users(
+                recipients, WsEventServer.POLL_UPDATED, event.model_dump(mode="json")
+            )
+
+    @staticmethod
+    async def _publish_reactions_changed(
+        group: Group, message_ids: list[uuid.UUID], actor_id: uuid.UUID, db: AsyncSession
+    ) -> None:
+        """Post-commit: one `message_reacted` per purged message to the members
+        who remain, so open threads drop the departed member's emoji at once."""
+        if not message_ids:
+            return
+        recipients = await MessageService.member_ids(
+            conversation_id=group.conversation_id, db=db
+        )
+        if not recipients:
+            return
+        reactions = await MessageService.reactions_for(message_ids=message_ids, db=db)
+        msgs = (
+            await db.execute(select(Message).where(Message.id.in_(message_ids)))
+        ).scalars().all()
+        for msg in msgs:
+            event = MessageReactedEvent(
+                conversation_id=group.conversation_id,
+                message_id=msg.id,
+                reactions=reactions.get(msg.id, []),
+                changed_at=msg.changed_at or _now(),
+                actor_id=actor_id,
+                emoji=None,
+            )
+            await ws_manager.publish_to_users(
+                recipients, WsEventServer.MESSAGE_REACTED, event.model_dump(mode="json")
+            )
+
+    # ------------------------------------------------------------------ #
+    # Realtime sync
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    async def publish_group_updated(
+        group: Group, db: AsyncSession, *, extra_user_ids: Iterable[uuid.UUID] = ()
+    ) -> None:
+        """`group_updated` to every ACTIVE member plus `extra_user_ids` (a user
+        who just left the member set, or an invitee). Call strictly AFTER the
+        commit — recipients are read back from the committed state."""
+        members = await MessageService.member_ids(
+            conversation_id=group.conversation_id, db=db
+        )
+        recipients = {*members, *(u for u in extra_user_ids if u is not None)}
+        if not recipients:
+            return
+        await ws_manager.publish_to_users(
+            list(recipients), WsEventServer.GROUP_UPDATED, {"group_id": str(group.id)}
+        )
+
     # ------------------------------------------------------------------ #
     # Create
     # ------------------------------------------------------------------ #
@@ -200,6 +343,11 @@ class GroupService:
         )
         if (owned or 0) >= constants.GROUP_MAX_OWNED:
             raise GroupError("group_owner_limit", status_code=429)
+        if org_id is not None:
+            # Groups wait for the org to be verified.
+            org = await db.get(Organization, org_id)
+            if org is None or org.status != OrgStatus.ACTIVE:
+                raise GroupError("org_not_verified", status_code=403)
 
         # One transaction: conversation (network group) + group + owner as
         # group_member(owner) AND conversation_member (via create_conversation).
@@ -270,7 +418,7 @@ class GroupService:
             select(Conversation).where(Conversation.id == group.conversation_id)
         )
         sys_msg = await MessageService.send_system(
-            conv=conv, sender_id=user.id, content=f"{user.full_name} joined", db=db
+            conv=conv, sender_id=user.id, content=f"{user.full_name} joined the group", db=db
         )
         sys_out = MessageService.to_out(sys_msg)
         recipients = await MessageService.member_ids(
@@ -305,6 +453,21 @@ class GroupService:
         existing = await GroupService._get_member(group.id, invitee_id, db)
         if existing is not None and existing.state == GroupMemberState.ACTIVE:
             raise GroupError("already_a_member", status_code=409)
+        if existing is not None and existing.state == GroupMemberState.BANNED:
+            # A ban is final until an admin lifts it; the inviter sees the same
+            # answer as for anyone they cannot reach (no ban oracle).
+            raise GroupError("not_invitable", status_code=403)
+        GroupService._assert_capacity(group)
+        pending = await db.scalar(
+            select(GroupInvite).where(
+                GroupInvite.group_id == group.id,
+                GroupInvite.invitee_id == invitee_id,
+                GroupInvite.state == GroupInviteState.PENDING,
+            )
+        )
+        if pending is not None:
+            # Idempotent: re-inviting someone with a live invite returns it.
+            return pending
 
         # Consent boundary: NO bulk-add. The invitee must be reachable from the
         # inviter — 1st-degree connection OR same org (permission module).
@@ -350,6 +513,13 @@ class GroupService:
             },
         )
         await NotificationService.publish(notification=notif, unread_count=unread)
+        # PHI-free push: a doctor's name and a group name are directory data.
+        PushService.notify_group_invite(
+            recipient_id=invitee_id,
+            actor_name=inviter.full_name,
+            group_name=group.name,
+            group_id=group.id,
+        )
         return invite
 
     @staticmethod
@@ -398,6 +568,7 @@ class GroupService:
             raise GroupError("invite_not_found", status_code=404)
         if invite.state != GroupInviteState.PENDING:
             raise GroupError("invite_not_pending", status_code=409)
+        GroupService._assert_capacity(group)
         invite.state = GroupInviteState.ACCEPTED
         await GroupService._accept_invite_membership(
             request=request, user=user, group=group, inviter_id=invite.inviter_id, db=db
@@ -406,7 +577,9 @@ class GroupService:
     @staticmethod
     async def accept_link_invite(
         *, request: Request, user: User, token: str, db: AsyncSession
-    ) -> Group:
+    ) -> tuple[Group, bool]:
+        """Returns (group, joined). joined=False when the caller was already an
+        active member — the link then simply opens the group."""
         invite = await db.scalar(select(GroupInvite).where(GroupInvite.token == token))
         if invite is None or invite.state != GroupInviteState.PENDING:
             raise GroupError("invite_not_found", status_code=404)
@@ -425,14 +598,19 @@ class GroupService:
             raise GroupError("invite_not_found", status_code=404)
         existing = await GroupService._get_member(group.id, user.id, db)
         if existing is not None and existing.state == GroupMemberState.ACTIVE:
-            raise GroupError("already_a_member", status_code=409)
+            return group, False
+        if existing is not None and existing.state == GroupMemberState.BANNED:
+            # Banned members cannot re-enter through a link; same 404 as a
+            # dead token so the ban stays unobservable.
+            raise GroupError("invite_not_found", status_code=404)
+        GroupService._assert_capacity(group)
         invite.use_count += 1
         if invite.max_uses is not None and invite.use_count >= invite.max_uses:
             invite.state = GroupInviteState.ACCEPTED
         await GroupService._accept_invite_membership(
             request=request, user=user, group=group, inviter_id=invite.inviter_id, db=db
         )
-        return group
+        return group, True
 
     @staticmethod
     async def _accept_invite_membership(
@@ -458,7 +636,7 @@ class GroupService:
             select(Conversation).where(Conversation.id == group.conversation_id)
         )
         sys_msg = await MessageService.send_system(
-            conv=conv, sender_id=user.id, content=f"{user.full_name} joined", db=db
+            conv=conv, sender_id=user.id, content=f"{user.full_name} joined the group", db=db
         )
         sys_out = MessageService.to_out(sys_msg)
         recipients = await MessageService.member_ids(
@@ -489,6 +667,8 @@ class GroupService:
             raise GroupError("invite_not_pending", status_code=409)
         invite.state = GroupInviteState.DECLINED
         await db.commit()
+        # Members see the pending invite disappear; the decliner already knows.
+        await GroupService.publish_group_updated(group, db)
 
     @staticmethod
     async def revoke_invite(
@@ -502,6 +682,10 @@ class GroupService:
             raise GroupError("invite_not_found", status_code=404)
         invite.state = GroupInviteState.REVOKED
         await db.commit()
+        # Members + the invitee (direct invites only; link invites have none).
+        await GroupService.publish_group_updated(
+            group, db, extra_user_ids=[invite.invitee_id]
+        )
 
     # ------------------------------------------------------------------ #
     # Roles, removal, ban, transfer (§9.3 capability matrix)
@@ -546,6 +730,7 @@ class GroupService:
             metadata={"member_id": str(target_id), "role": new_role.value},
         )
         await db.commit()
+        await GroupService.publish_group_updated(group, db)
 
     @staticmethod
     async def remove_member(
@@ -570,6 +755,8 @@ class GroupService:
                 raise GroupError("not_authorized", status_code=403)
             state = GroupMemberState.REMOVED
         await GroupService._remove_membership(group, target_m, state=state, db=db)
+        purged = await GroupService._purge_reactions(group, target_id, db)
+        purged_polls = await GroupService._purge_votes(group, target_id, db)
         await AuditService.log_request(
             request,
             user_id=actor.id,
@@ -586,12 +773,39 @@ class GroupService:
         recipients = await MessageService.member_ids(
             conversation_id=group.conversation_id, db=db
         )
+        # In-chat banner for the people who stay: "X left the group" /
+        # "X was removed by Y". The leaver is told through MEMBER_REMOVED.
+        target_user = await db.get(User, target_id)
+        target_name = target_user.full_name if target_user else "A member"
+        conv = await db.scalar(
+            select(Conversation).where(Conversation.id == group.conversation_id)
+        )
+        sys_out = None
+        if conv is not None:
+            sys_msg = await MessageService.send_system(
+                conv=conv,
+                sender_id=actor.id,
+                content=(
+                    f"{target_name} left the group"
+                    if is_self
+                    else f"{target_name} was removed by {actor.full_name}"
+                ),
+                db=db,
+            )
+            sys_out = MessageService.to_out(sys_msg)
         await db.commit()
+        if sys_out is not None:
+            await ws_manager.publish_to_users(
+                recipients, WsEventServer.NEW_MESSAGE, sys_out.model_dump(mode="json")
+            )
         await ws_manager.publish_to_users(
             [*recipients, target_id],
             WsEventServer.MEMBER_REMOVED,
             {"conversation_id": str(group.conversation_id), "user_id": str(target_id)},
         )
+        await GroupService._publish_reactions_changed(group, purged, target_id, db)
+        await GroupService._publish_polls_changed(group, purged_polls, target_id, db)
+        await GroupService.publish_group_updated(group, db, extra_user_ids=[target_id])
 
     @staticmethod
     async def ban_member(
@@ -610,6 +824,8 @@ class GroupService:
         await GroupService._remove_membership(
             group, target_m, state=GroupMemberState.BANNED, db=db
         )
+        purged = await GroupService._purge_reactions(group, target_id, db)
+        purged_polls = await GroupService._purge_votes(group, target_id, db)
         await AuditService.log_request(
             request,
             user_id=actor.id,
@@ -628,6 +844,9 @@ class GroupService:
             WsEventServer.MEMBER_REMOVED,
             {"conversation_id": str(group.conversation_id), "user_id": str(target_id)},
         )
+        await GroupService._publish_reactions_changed(group, purged, target_id, db)
+        await GroupService._publish_polls_changed(group, purged_polls, target_id, db)
+        await GroupService.publish_group_updated(group, db, extra_user_ids=[target_id])
 
     @staticmethod
     async def transfer_ownership(
@@ -654,6 +873,7 @@ class GroupService:
             metadata={"new_owner_id": str(new_owner_id)},
         )
         await db.commit()
+        await GroupService.publish_group_updated(group, db)
 
     # ------------------------------------------------------------------ #
     # Post-policy gate + member DM policy (wired from the send path / M6)
@@ -669,6 +889,23 @@ class GroupService:
             select(Group).where(Group.conversation_id == conversation_id)
         )
         if group is None or group.post_policy == GroupPostPolicy.ALL_MEMBERS:
+            return True
+        member = await GroupService._get_member(group.id, user_id, db)
+        if member is None or member.state != GroupMemberState.ACTIVE:
+            return False
+        return _rank(member.role) >= _rank(GroupRole.ADMIN)
+
+    @staticmethod
+    async def can_manage_conversation(
+        *, conversation_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession
+    ) -> bool:
+        """Owner/admin of the linked group may change conversation-level
+        settings (disappearing timer). Legacy org group chats (no groups row)
+        have no owner: any member may, as before."""
+        group = await db.scalar(
+            select(Group).where(Group.conversation_id == conversation_id)
+        )
+        if group is None:
             return True
         member = await GroupService._get_member(group.id, user_id, db)
         if member is None or member.state != GroupMemberState.ACTIVE:

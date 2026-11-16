@@ -606,8 +606,16 @@ Same layout as direct chat thread (8.5) with these differences:
 - Sent bubbles unchanged — no sender name (it's you)
 
 **Read receipts in groups:**
-- No per-message read receipts (too complex for MVP)
-- Show only `✓✓` delivered. Read tracking deferred to roadmap.
+- Bubble ticks stay coarse (`✓✓` once every member has it).
+- Per-member detail lives in **Message info**: select one of your own sent
+  messages → ⓘ in the selection bar → sheet with *Read by / Delivered to /
+  Not yet delivered*, each row name + avatar + time. Backed by
+  `GET /messages/{id}/receipts` (sender-only; groups read the per-member
+  `last_read_seq` / `last_delivered_seq` cursors, direct chats the receipt rows).
+
+**Admins-only posting:** when `post_policy = admins_only`, members see a
+read-only strip "Only admins can send messages" where the composer was; the
+server refuses their sends with `403 post_restricted`.
 
 **Input bar:** identical to direct chat — mic, text, attachment, send
 
@@ -638,12 +646,27 @@ Accessed by tapping the group name / avatar in the chat thread nav bar.
 └─────────────────────────────┘
 ```
 
-**Rules:**
-- "Edit" pencil (top right): visible to group creator only — allows renaming the group
-- "Add Members" button: visible to all members — opens doctor search sheet (same as Create Group flow)
-- "Leave Group": available to all members. Danger button style. On tap: confirmation dialog — "Leave ICU Consult Team? You won't be able to rejoin unless added again." with [Cancel] and [Leave] buttons
-- If the group creator leaves, the next member alphabetically becomes the new creator
-- Long press on a member row (creator only): shows "Remove from group" option
+**Rules (as shipped, role-aware):**
+- A pending invitee lands here instead of the chat: info banner "You've
+  been invited to this group" + **Decline / Accept**. Accept → the chat opens.
+  The Groups tab shows the same pair on the Invited row.
+- **Owner / admin** (`canManage`): tap the avatar → photo sheet (library /
+  camera / remove, `POST|DELETE /groups/{id}/avatar`); tap the name → rename
+  dialog; pencil on About → description dialog. **Group settings** section:
+  Send messages (All members / Admins only), Member direct messages (Open /
+  Connections only / Off), Disappearing messages (same picker as a chat).
+  **Invite links** section: create (max uses + 1 day / 7 days / never),
+  copy, share sheet, revoke; links are `doqto:///g/<token>`. **Add members**
+  opens a searchable sheet of connections + org colleagues minus current
+  members, multi-select, one invite each.
+- Tap a member row → actions sheet: Message, View profile for everyone;
+  Remove / Ban for owner and admins (admins cannot touch the owner or other
+  admins); Make admin / Remove as admin / Transfer ownership for the owner.
+- Members see facts only: About (incl. the DM rule and "Admins only" when
+  set), the member list, Leave Group.
+- Leave Group: confirmation, then back to the Groups tab.
+- Legacy org group chats (no `groups` row) never open this screen; their
+  header still opens Chat details.
 
 ---
 

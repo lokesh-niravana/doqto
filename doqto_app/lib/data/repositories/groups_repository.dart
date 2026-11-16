@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import '../../core/constants/api_routes.dart';
 import '../../core/enums/app_enums.dart';
 import '../api/api_client.dart';
@@ -67,6 +69,31 @@ class GroupsRepository {
     return Group.fromJson(j);
   }
 
+  /// Owner/admin sets the group picture (JPG/PNG/WEBP ≤ 2 MB).
+  Future<Group> uploadAvatar(String id, File file) async {
+    final bytes = await file.readAsBytes();
+    final filename = file.path.split('/').last;
+    final lower = filename.toLowerCase();
+    final mime = lower.endsWith('.png')
+        ? 'image/png'
+        : lower.endsWith('.webp')
+            ? 'image/webp'
+            : 'image/jpeg';
+    final j = await _api.postMultipart(
+      ApiRoutes.groupAvatar(id),
+      fileField: 'file',
+      bytes: bytes,
+      filename: filename,
+      contentType: mime,
+    );
+    return Group.fromJson(j);
+  }
+
+  Future<Group> deleteAvatar(String id) async {
+    final j = await _api.delete(ApiRoutes.groupAvatar(id));
+    return Group.fromJson(j);
+  }
+
   /// `/me/groups?state=member|invited` → bare list of cards.
   Future<List<Group>> myGroups({String state = 'member'}) async {
     final list = await _api.getList(ApiRoutes.meGroups, query: {'state': state});
@@ -77,19 +104,32 @@ class GroupsRepository {
 
   // --- Invites (the only way into a group) ---
 
-  Future<Map<String, dynamic>> inviteUser(String groupId, String userId) =>
-      _api.post(ApiRoutes.groupInvites(groupId), body: {'user_id': userId});
+  Future<GroupInvite> inviteUser(String groupId, String userId) async {
+    final j = await _api.post(ApiRoutes.groupInvites(groupId),
+        body: {'user_id': userId});
+    return GroupInvite.fromJson(j);
+  }
 
-  Future<Map<String, dynamic>> createLinkInvite(
+  Future<GroupInvite> createLinkInvite(
     String groupId, {
     int? maxUses,
     DateTime? expiresAt,
-  }) =>
-      _api.post(ApiRoutes.groupInvites(groupId), body: {
-        'link': true,
-        'max_uses': ?maxUses,
-        if (expiresAt != null) 'expires_at': expiresAt.toIso8601String(),
-      });
+  }) async {
+    final j = await _api.post(ApiRoutes.groupInvites(groupId), body: {
+      'link': true,
+      'max_uses': ?maxUses,
+      if (expiresAt != null) 'expires_at': expiresAt.toUtc().toIso8601String(),
+    });
+    return GroupInvite.fromJson(j);
+  }
+
+  /// Pending invites (direct + link) — owner/admin only.
+  Future<List<GroupInvite>> listInvites(String groupId) async {
+    final list = await _api.getList(ApiRoutes.groupInvites(groupId));
+    return list
+        .map((e) => GroupInvite.fromJson((e as Map).cast<String, dynamic>()))
+        .toList();
+  }
 
   Future<JoinResult> acceptLinkInvite(String token) async {
     final j = await _api.post(ApiRoutes.groupInviteTokenAccept(token));

@@ -2,19 +2,22 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     CHAR,
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
     true,
 )
-from sqlalchemy.dialects.postgresql import UUID as PgUUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.enums import DirectoryVisibility, ExternalDmPolicy, OrgRole, OrgStatus
@@ -24,6 +27,15 @@ from app.db.tables import Tables
 
 class Organization(Base):
     __tablename__ = Tables.ORGANIZATIONS
+    __table_args__ = (
+        Index(
+            "uq_organizations_directory",
+            "directory_source",
+            "directory_id",
+            unique=True,
+            postgresql_where=text("directory_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
@@ -38,6 +50,10 @@ class Organization(Base):
         String(20), default=OrgStatus.PENDING, nullable=False, index=True
     )
     review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The public-directory entry this org was created from (org_directory),
+    # unique together so one practice can't be created twice.
+    directory_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    directory_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Networking policy (M0 substrate). Kill switch checked server-side on
     # every external path; changes are audit-logged (ORG_POLICY_CHANGED).
     external_networking_enabled: Mapped[bool] = mapped_column(
@@ -54,6 +70,11 @@ class Organization(Base):
         default=DirectoryVisibility.NETWORK,
         server_default=DirectoryVisibility.NETWORK.value,
         nullable=False,
+    )
+    # Content policies (batch 4): allow_forward_outside_org, allow_copy —
+    # defaults in constants.ORG_POLICY_DEFAULTS; missing key = default.
+    policies: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict
     )
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verified_by: Mapped[uuid.UUID | None] = mapped_column(

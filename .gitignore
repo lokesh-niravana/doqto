@@ -70,3 +70,7 @@ terraform.tfvars
 secrets.json
 # Chrome's download directory points here; downloaded config lands in it.
 credentials/
+
+# Screen recordings for App Review (never commit)
+*.MP4
+*.mp4

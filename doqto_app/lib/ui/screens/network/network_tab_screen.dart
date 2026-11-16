@@ -16,25 +16,32 @@ import '../../widgets/invitation_card.dart';
 import '../../widgets/person_card_row.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/section_card.dart';
+import 'suggestions_screen.dart';
 
 /// Network tab: an invitations preview (top ≤2 received pending), a connections
-/// preview with a count + "Manage all", and a search entry. No PYMK/Discover
-/// rails (deferred M7). Pull-to-refresh refetches both lists.
+/// preview with a count + "Manage all", "Recommended for you" (top 5 + See all)
+/// and a search entry. Pull-to-refresh refetches all three.
 class NetworkTabScreen extends ConsumerWidget {
   const NetworkTabScreen({super.key});
 
   static const _invitePreviewCount = 2;
   static const _connectionPreviewCount = 5;
+  static const _suggestionPreviewCount = 5;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final invitesAsync = ref.watch(invitationsProvider);
     final connectionsAsync = ref.watch(connectionsProvider);
+    final suggestions =
+        ref.watch(suggestionsProvider).valueOrNull ?? const <PersonCard>[];
 
     final invites = invitesAsync.valueOrNull ?? const <Invitation>[];
     final connections = connectionsAsync.valueOrNull ?? const <PersonCard>[];
     final loading = invitesAsync.isLoading && connectionsAsync.isLoading;
-    final isEmpty = !loading && invites.isEmpty && connections.isEmpty;
+    final isEmpty = !loading &&
+        invites.isEmpty &&
+        connections.isEmpty &&
+        suggestions.isEmpty;
 
     return Scaffold(
       backgroundColor: AppColors.appBg,
@@ -57,6 +64,7 @@ class NetworkTabScreen extends ConsumerWidget {
           await Future.wait([
             ref.read(invitationsProvider.notifier).refresh(),
             ref.read(connectionsProvider.notifier).refresh(),
+            ref.read(suggestionsProvider.notifier).refresh(),
           ]);
         },
         child: loading
@@ -82,6 +90,11 @@ class NetworkTabScreen extends ConsumerWidget {
                         connections: connections,
                         previewCount: _connectionPreviewCount,
                       ),
+                      if (suggestions.isNotEmpty)
+                        _SuggestionsPreview(
+                          suggestions: suggestions,
+                          previewCount: _suggestionPreviewCount,
+                        ),
                     ],
                   ),
       ),
@@ -256,6 +269,46 @@ class _ConnectionsPreview extends StatelessWidget {
             _SeeAllButton(
               label: Strings.netManageAll,
               onTap: () => context.push(AppRoutes.networkConnections),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SuggestionsPreview extends StatelessWidget {
+  final List<PersonCard> suggestions;
+  final int previewCount;
+  const _SuggestionsPreview({
+    required this.suggestions,
+    required this.previewCount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.screenHorizontal,
+        AppSpacing.lg,
+        AppSpacing.screenHorizontal,
+        0,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(
+                left: AppSpacing.xs, bottom: AppSpacing.sm),
+            child: Text('RECOMMENDED FOR YOU', style: AppText.label),
+          ),
+          for (final (i, p) in suggestions.take(previewCount).indexed)
+            FadeSlideIn.staggered(i, SuggestionRow(person: p)),
+          if (suggestions.length > previewCount) ...[
+            const SizedBox(height: AppSpacing.xs),
+            _SeeAllButton(
+              label: 'See all',
+              onTap: () => context.push(AppRoutes.networkSuggestions),
             ),
           ],
         ],

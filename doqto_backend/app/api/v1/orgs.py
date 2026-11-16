@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import RATE_LIMIT_READS_PER_MINUTE
+from app.core.constants import (
+    ORG_POLICY_ALLOW_COPY,
+    ORG_POLICY_ALLOW_MEDIA_EXPORT,
+    ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG,
+    ORG_POLICY_BLOCK_SCREENSHOTS,
+    ORG_POLICY_DEFAULTS,
+    RATE_LIMIT_READS_PER_MINUTE,
+)
 from app.core.dependencies import get_current_user, require_org_admin, require_org_member
-from app.core.enums import AuditAction
+from app.api.ws_manager import ws_manager
+from app.core.enums import AuditAction, OrgStatus, WsEventServer
 from app.core.rate_limit import enforce_rate_limit
 from app.core.redis_keys import presence_key
 from app.core.routes import ApiRoutes
@@ -18,6 +27,9 @@ from app.db.redis import get_redis
 from app.models import OrgMember, Organization, User
 from app.schemas.common import OkResponse
 from app.schemas.organization import (
+    DirectoryEntryOut,
+    DirectoryOrgOut,
+    DirectoryRefIn,
     MemberOut,
     OrgCreateIn,
     OrgJoinIn,
@@ -27,15 +39,67 @@ from app.schemas.organization import (
 )
 from app.services.audit_service import AuditService
 from app.services.file_service import FileService
-from app.services.org_service import OrgError, OrgService
+from app.services.org_directory_service import DirectoryHit, OrgDirectoryService
+from app.services.org_service import ORG_ERROR_STATUS, OrgError, OrgService
 
 router = APIRouter()
+
+
+def _org_http_error(e: OrgError) -> HTTPException:
+    code = str(e)
+    return HTTPException(ORG_ERROR_STATUS.get(code, status.HTTP_400_BAD_REQUEST), detail=code)
+
+
+def _hit_out(hit: DirectoryHit) -> DirectoryEntryOut:
+    e = hit.entry
+    return DirectoryEntryOut(
+        source=e.source,
+        source_id=e.source_id,
+        name=e.display_name,
+        legal_name=e.name,
+        city=e.city,
+        state=e.state,
+        practice_type=e.practice_type,
+        member_count=e.member_count,
+        you_are_listed=hit.you_are_listed,
+        doqto_org=(
+            DirectoryOrgOut(id=hit.doqto_org.id, name=hit.doqto_org.name, status=hit.doqto_org.status)
+            if hit.doqto_org
+            else None
+        ),
+    )
+
+
+async def publish_org_updated(
+    org_id: uuid.UUID, db: AsyncSession, *, extra_user_ids: Iterable[uuid.UUID] = ()
+) -> None:
+    """Tell every current member (plus `extra_user_ids`, e.g. a just-removed
+    member) that the org changed. Call strictly AFTER the commit — the
+    recipients and status are read back from the committed state."""
+    org = await db.scalar(select(Organization).where(Organization.id == org_id))
+    if org is None:
+        return
+    rows = await db.scalars(select(OrgMember.user_id).where(OrgMember.org_id == org_id))
+    recipients = {*rows.all(), *extra_user_ids}
+    if not recipients:
+        return
+    await ws_manager.publish_to_users(
+        list(recipients),
+        WsEventServer.ORG_UPDATED,
+        {"org_id": str(org.id), "status": OrgStatus(org.status).value},
+    )
+
+
+def effective_policies(org: Organization) -> dict:
+    """Content policies with defaults filled in (batch 4)."""
+    return {**ORG_POLICY_DEFAULTS, **(org.policies or {})}
 
 
 async def _to_out(org: Organization, db: AsyncSession) -> OrgOut:
     count = await OrgService.member_count(org_id=org.id, db=db)
     out = OrgOut.model_validate(org)
     out.member_count = count
+    out.policies = effective_policies(org)
     return out
 
 
@@ -53,10 +117,57 @@ async def create_org(
             city=body.city,
             state=body.state,
             practice_type=body.practice_type.value if body.practice_type else None,
+            directory_source=body.directory_source,
+            directory_id=body.directory_id,
             db=db,
         )
     except OrgError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        await db.rollback()
+        raise _org_http_error(e) from e
+    await db.commit()
+    await publish_org_updated(org.id, db)
+    return await _to_out(org, db)
+
+
+# Directory routes sit above /{org_id} so "directory" is never read as an id.
+@router.get(ApiRoutes.ORGS_DIRECTORY_SEARCH, response_model=list[DirectoryEntryOut])
+async def search_directory(
+    q: str = Query(min_length=2, max_length=100),
+    state: str | None = Query(default=None, min_length=2, max_length=2),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[DirectoryEntryOut]:
+    await enforce_rate_limit(user.id, "org_directory_search", RATE_LIMIT_READS_PER_MINUTE)
+    hits = await OrgDirectoryService.search(db=db, query=q, state=state, npi=user.npi_number)
+    return [_hit_out(h) for h in hits]
+
+
+@router.get(ApiRoutes.ORGS_DIRECTORY_SUGGESTED, response_model=list[DirectoryEntryOut])
+async def suggested_directory(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[DirectoryEntryOut]:
+    hits = await OrgDirectoryService.suggested(db=db, npi=user.npi_number)
+    return [_hit_out(h) for h in hits]
+
+
+@router.post(ApiRoutes.ORGS_DIRECTORY_JOIN, response_model=OrgOut)
+async def join_by_directory(
+    body: DirectoryRefIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> OrgOut:
+    try:
+        org = await OrgService.join_by_directory(
+            user=user,
+            directory_source=body.directory_source,
+            directory_id=body.directory_id,
+            db=db,
+        )
+    except OrgError as e:
+        raise _org_http_error(e) from e
+    await db.commit()
+    await publish_org_updated(org.id, db)
     return await _to_out(org, db)
 
 
@@ -85,6 +196,8 @@ async def join_org(
         org = await OrgService.join(user=user, invite_code=body.invite_code, db=db)
     except OrgError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await db.commit()
+    await publish_org_updated(org.id, db)
     return await _to_out(org, db)
 
 
@@ -146,6 +259,9 @@ async def remove_member(
         )
     except OrgError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await db.commit()
+    # The removed user is no longer a member — include them explicitly.
+    await publish_org_updated(org_id, db, extra_user_ids=[user_id])
     return OkResponse()
 
 
@@ -171,6 +287,21 @@ async def update_networking_settings(
     if body.directory_visibility is not None:
         org.directory_visibility = body.directory_visibility
         changes["directory_visibility"] = body.directory_visibility.value
+    # Content policies (batch 4) live in the JSONB column; copy-on-write so
+    # SQLAlchemy sees the change.
+    policies = dict(org.policies or {})
+    for key in (
+        ORG_POLICY_ALLOW_FORWARD_OUTSIDE_ORG,
+        ORG_POLICY_ALLOW_COPY,
+        ORG_POLICY_ALLOW_MEDIA_EXPORT,
+        ORG_POLICY_BLOCK_SCREENSHOTS,
+    ):
+        value = getattr(body, key)
+        if value is not None:
+            policies[key] = value
+            changes[key] = value
+    if policies != (org.policies or {}):
+        org.policies = policies
     if changes:
         await AuditService.log_request(
             request,
@@ -183,7 +314,10 @@ async def update_networking_settings(
         )
         await db.commit()
         await db.refresh(org)
-    return OrgNetworkingSettingsOut.model_validate(org)
+        await publish_org_updated(org_id, db)
+    out = OrgNetworkingSettingsOut.model_validate(org)
+    out.policies = effective_policies(org)
+    return out
 
 
 @router.get(ApiRoutes.ORGS_INVITE_CODE)

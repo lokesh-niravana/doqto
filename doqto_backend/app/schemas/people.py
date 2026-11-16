@@ -12,12 +12,16 @@ purely client-facing display badge. See docs/enums.md note.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from app.core.enums import StatusPreset
 
 DegreeLabel = Literal["1st", "2nd", "3rd", "out"]
-ConnectionState = Literal["none", "pending_outgoing", "pending_incoming", "connected"]
+# "blocked" is only ever returned to the BLOCKER (the blocked party gets 404).
+ConnectionState = Literal["none", "pending_outgoing", "pending_incoming", "connected", "blocked"]
 CanMessage = Literal["open", "request", "denied"]
 
 
@@ -47,6 +51,9 @@ class PersonCardOut(BaseModel):
     avatar_presigned_url: str | None = None
     degree: DegreeLabel
     mutual_count: int = 0
+    # Suggestions only: why this doctor is suggested. colleague | mutual |
+    # specialty_nearby | specialty | nearby | new_member.
+    reason: str | None = None
 
 
 class PeopleSearchPage(BaseModel):
@@ -74,9 +81,29 @@ class PublicProfileOut(BaseModel):
     degree: DegreeLabel
     connection_state: ConnectionState
     mutual_count: int = 0
+    # Status under the name (batch 6): preset wire value or custom text.
+    status_preset: StatusPreset | None = None
+    status_text: str | None = None
+    status_expires_at: datetime | None = None
     can_message: CanMessage
     context_label: str | None = None
     # True when viewer and target share an organization. `can_message: open`
     # alone can't stand in for this — an org with dm_policy 'everyone' also
     # yields open, and there a Connect prompt is still meaningful.
     is_colleague: bool = False
+
+
+class NpiHitOut(BaseModel):
+    """An NPI Registry result for "Invite a colleague". The NPI is public
+    registry data the viewer searched for; it is the invite's key."""
+
+    npi: str
+    name: str
+    specialty: str | None = None
+    location: str | None = None
+    status: Literal["message", "requested", "connect", "invite"]
+    user_id: uuid.UUID | None = None
+
+
+class AppInviteIn(BaseModel):
+    npi: str = Field(pattern=r"^[0-9]{10}$")

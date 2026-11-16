@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 
 import '../../core/constants/api_routes.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/security/certificate_pinning.dart';
+import '../services/network_usage.dart';
 import 'token_storage.dart';
 
 class ApiException implements Exception {
@@ -15,14 +19,40 @@ class ApiException implements Exception {
   String toString() => 'ApiException($status): $detail';
 }
 
+/// `exp` claim of a JWT as a UTC instant, or null when the token is not a
+/// readable JWT. No signature check — this is only for deciding whether to
+/// refresh before the server would reject it.
+DateTime? jwtExpiry(String token) {
+  final parts = token.split('.');
+  if (parts.length < 2) return null;
+  try {
+    final payload = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+    final exp = (jsonDecode(payload) as Map<String, dynamic>)['exp'];
+    if (exp is! num) return null;
+    return DateTime.fromMillisecondsSinceEpoch(exp.toInt() * 1000, isUtc: true);
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Called by the interceptor when the refresh attempt itself is unrecoverable
 /// (refresh token expired/revoked). Set by the DI layer so the client can
 /// signal auth state to flip to signedOut without a circular import.
 typedef SessionEndedCallback = void Function();
 
+/// 401 codes that mean this device's session is gone for good: no refresh
+/// could revive it, so the app wipes its PHI and returns to login at once
+/// (docs/security.md, "Sessions and devices").
+const Set<String> sessionTerminalCodes = {'session_revoked', 'account_deleted'};
+
+/// Called when the server answers 403 `pin_required` (batch 6): this device
+/// still owes its two-step PIN. The auth layer flips to the PIN gate.
+typedef PinRequiredCallback = void Function();
+
 class ApiClient {
   final Dio _dio;
   final TokenStorage _tokens;
+  final String _baseUrl;
 
   // One-at-a-time refresh. Future completes when the in-flight refresh
   // finishes; null means no refresh is running. Must be reassigned on every
@@ -30,20 +60,39 @@ class ApiClient {
   Future<void>? _refreshInFlight;
 
   SessionEndedCallback? onSessionEnded;
+  PinRequiredCallback? onPinRequired;
 
-  /// Called on any 402 (`subscription_required`). Set by the DI layer so the
-  /// app can re-check billing and show the paywall.
-  void Function()? onPaymentRequired;
+  /// Response `detail` codes that mean the session is gone for good: no
+  /// refresh attempt, wipe at once (linked-devices revoke, account delete).
+  static const Set<String> terminalAuthCodes = {
+    'session_revoked',
+    'account_deleted',
+  };
 
-  ApiClient({TokenStorage? tokens})
+  static String? _detailOf(DioException e) {
+    final data = e.response?.data;
+    return data is Map ? data['detail']?.toString() : null;
+  }
+
+  /// Bytes up / down for Storage and data (batch 5). Null = not counted.
+  final NetworkUsage? usage;
+
+  /// [baseUrl] defaults to the build's API; tests point it at a local server.
+  ApiClient({TokenStorage? tokens, this.usage, String? baseUrl})
       : _tokens = tokens ?? TokenStorage(),
+        _baseUrl = baseUrl ?? AppConstants.apiBaseUrl,
         _dio = Dio(BaseOptions(
-          baseUrl: AppConstants.apiBaseUrl,
+          baseUrl: baseUrl ?? AppConstants.apiBaseUrl,
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 20),
           contentType: 'application/json',
         )) {
+    _dio.httpClientAdapter = _pinnedAdapter(_baseUrl);
     _dio.interceptors.add(InterceptorsWrapper(
+      onResponse: (resp, handler) {
+        _count(resp.requestOptions, resp);
+        handler.next(resp);
+      },
       onRequest: (opts, handler) async {
         // Never attach a token to auth endpoints — they either don't need one
         // (otp, refresh) or receive it via a dedicated Header param (logout).
@@ -59,7 +108,26 @@ class ApiClient {
         final is401 = e.response?.statusCode == 401;
         final alreadyRetried = e.requestOptions.extra['retried'] == true;
         final isRefreshCall = e.requestOptions.path.contains(ApiRoutes.authRefresh);
+        final detail = _detailOf(e);
+        if (e.response?.statusCode == 403 && detail == 'pin_required') {
+          onPinRequired?.call();
+          return handler.next(e);
+        }
+        if (is401 && detail != null && terminalAuthCodes.contains(detail)) {
+          // A revoked session: no refresh would succeed. Wipe now so the app
+          // returns to login immediately (docs/settings.md, linked devices).
+          await _tokens.clear();
+          onSessionEnded?.call();
+          return handler.next(e);
+        }
         if (!is401 || alreadyRetried || isRefreshCall) {
+          return handler.next(e);
+        }
+        if (sessionTerminalCodes.contains(_detailOf(e))) {
+          // Remote wipe: the session was revoked from another device or the
+          // account is gone. Do not try to refresh — end the session now.
+          await _tokens.clear();
+          onSessionEnded?.call();
           return handler.next(e);
         }
         try {
@@ -87,6 +155,67 @@ class ApiClient {
     ));
   }
 
+  /// Transport with the production trust store pinned in release
+  /// (`CertificatePinning`); the post-handshake leaf check runs on every
+  /// response from the pinned host.
+  static HttpClientAdapter _pinnedAdapter(String baseUrl) => IOHttpClientAdapter(
+        createHttpClient: () => CertificatePinning.httpClient(baseUrl),
+        validateCertificate: CertificatePinning.validateLeaf,
+      );
+
+  /// Network usage: the request body as sent and the response body as
+  /// received. Multipart bodies report their length; streamed bodies are
+  /// counted by the caller.
+  void _count(RequestOptions req, Response<dynamic>? resp) {
+    final u = usage;
+    if (u == null) return;
+    u.addSent(_sizeOf(req.data));
+    final header = resp?.headers.value(Headers.contentLengthHeader);
+    final parsed = header == null ? null : int.tryParse(header);
+    u.addReceived(parsed ?? _sizeOf(resp?.data));
+  }
+
+  static int _sizeOf(Object? data) {
+    if (data == null) return 0;
+    if (data is List<int>) return data.length;
+    if (data is String) return utf8.encode(data).length;
+    if (data is FormData) return data.length;
+    if (data is Map || data is List) return utf8.encode(jsonEncode(data)).length;
+    return 0;
+  }
+
+  /// Access token that will still be valid in a minute, refreshing first if
+  /// needed. The socket dials with this: a token that expired while the app
+  /// was backgrounded would otherwise bounce off the server (4401) until some
+  /// REST call happened to trigger the interceptor's refresh. A refresh the
+  /// server rejects ends the session exactly like the interceptor does; a
+  /// network failure returns the token we have and lets the caller retry.
+  Future<String?> freshAccessToken() async {
+    final token = await _tokens.accessToken;
+    if (token == null || token.isEmpty) return null;
+    final exp = jwtExpiry(token);
+    if (exp == null ||
+        exp.isAfter(DateTime.now().toUtc().add(tokenRefreshLeeway))) {
+      return token;
+    }
+    try {
+      await _refreshOnce();
+    } on ApiException catch (e) {
+      if (e.status == 401 || e.status == 403) {
+        await _tokens.clear();
+        onSessionEnded?.call();
+        return null;
+      }
+      return token;
+    } catch (_) {
+      return token;
+    }
+    return _tokens.accessToken;
+  }
+
+  /// Refresh when the access token expires within this window.
+  static const Duration tokenRefreshLeeway = Duration(seconds: 60);
+
   bool _isAuthEndpoint(String path) =>
       path.contains(ApiRoutes.authFirebase) ||
       path.contains(ApiRoutes.authRefresh);
@@ -107,8 +236,9 @@ class ApiClient {
     if (refresh == null || refresh.isEmpty) {
       throw ApiException('no_refresh_token', status: 401);
     }
-    // Bare Dio — no interceptor, no recursion.
-    final bare = Dio(BaseOptions(baseUrl: AppConstants.apiBaseUrl));
+    // Bare Dio — no interceptor, no recursion. Same pinned transport.
+    final bare = Dio(BaseOptions(baseUrl: _baseUrl))
+      ..httpClientAdapter = _pinnedAdapter(_baseUrl);
     try {
       final resp = await bare.post(
         ApiRoutes.authRefresh,
@@ -142,6 +272,17 @@ class ApiClient {
     return (r.data as Map).cast<String, dynamic>();
   }
 
+  /// POST whose 200 body is a JSON array (forward: one row per destination).
+  Future<List<dynamic>> postList(String path, {Object? body}) async {
+    final r = await _call(() => _dio.post(path, data: body));
+    return (r.data as List).cast<dynamic>();
+  }
+
+  Future<Map<String, dynamic>> put(String path, {Object? body}) async {
+    final r = await _call(() => _dio.put(path, data: body));
+    return (r.data as Map).cast<String, dynamic>();
+  }
+
   Future<Map<String, dynamic>> patch(String path, {Object? body}) async {
     final r = await _call(() => _dio.patch(path, data: body));
     return (r.data as Map).cast<String, dynamic>();
@@ -161,6 +302,7 @@ class ApiClient {
     required String filename,
     String? contentType,
     Map<String, dynamic>? fields,
+    Map<String, ({List<int> bytes, String filename, String contentType})>? extraFiles,
   }) async {
     final form = FormData.fromMap({
       fileField: MultipartFile.fromBytes(
@@ -168,10 +310,53 @@ class ApiClient {
         filename: filename,
         contentType: contentType != null ? DioMediaType.parse(contentType) : null,
       ),
+      if (extraFiles != null)
+        for (final e in extraFiles.entries)
+          e.key: MultipartFile.fromBytes(
+            e.value.bytes,
+            filename: e.value.filename,
+            contentType: DioMediaType.parse(e.value.contentType),
+          ),
       if (fields != null) ...fields,
     });
     final r = await _call(() => _dio.post(path, data: form));
     return (r.data as Map).cast<String, dynamic>();
+  }
+
+  /// Direct PUT of [bytes] to a presigned S3 URL (batch 5 upload flow). No
+  /// Authorization header — the signature in the URL is the credential, and
+  /// the declared Content-Type must match what the intent was signed for.
+  /// Returns the `ETag` S3 answers with (needed to complete a multipart
+  /// upload). [onProgress] reports bytes sent so far.
+  Future<String> putToUrl(
+    String url,
+    List<int> bytes, {
+    required String contentType,
+    void Function(int sent, int total)? onProgress,
+  }) async {
+    final bare = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 20),
+      sendTimeout: const Duration(minutes: 10),
+      receiveTimeout: const Duration(minutes: 2),
+    ));
+    try {
+      final r = await bare.put<dynamic>(
+        url,
+        data: Stream.fromIterable([bytes]),
+        options: Options(
+          headers: {
+            Headers.contentTypeHeader: contentType,
+            Headers.contentLengthHeader: bytes.length,
+          },
+        ),
+        onSendProgress: onProgress,
+      );
+      usage?.addSent(bytes.length);
+      final etag = r.headers.value('etag') ?? r.headers.value('ETag') ?? '';
+      return etag.replaceAll('"', '');
+    } on DioException catch (e) {
+      throw ApiException('upload_put_failed', status: e.response?.statusCode);
+    }
   }
 
   Future<Response<dynamic>> _call(Future<Response<dynamic>> Function() fn) async {
@@ -179,8 +364,6 @@ class ApiClient {
       return await fn();
     } on DioException catch (e) {
       final status = e.response?.statusCode;
-      // `/billing` itself must never be gated, or this would loop.
-      if (status == 402) onPaymentRequired?.call();
       final detail = (e.response?.data is Map) ? (e.response!.data['detail']?.toString() ?? e.message ?? '') : (e.message ?? '');
       throw ApiException(detail, status: status);
     }

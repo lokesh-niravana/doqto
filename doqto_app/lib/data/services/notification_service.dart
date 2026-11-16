@@ -19,6 +19,14 @@ class NotificationService {
     priority: Priority.high,
   );
 
+  static const _groupsChannel = AndroidNotificationDetails(
+    'groups',
+    'Groups',
+    channelDescription: 'New group messages',
+    importance: Importance.high,
+    priority: Priority.high,
+  );
+
   static const _networkChannel = AndroidNotificationDetails(
     'network',
     'Network',
@@ -26,6 +34,46 @@ class NotificationService {
     importance: Importance.high,
     priority: Priority.high,
   );
+
+  /// Android notification channels (batch 6). Created up front so the user
+  /// sees Messages / Groups / Invitations in system settings before the first
+  /// banner, and so an FCM payload's `android_channel_id` resolves. Creating
+  /// an existing channel is a no-op on Android, so this is idempotent.
+  ///
+  /// Limitation: a channel's sound is fixed at creation, so per-tone sounds
+  /// on Android O+ would need one channel per tone; these use the default.
+  Future<void> ensureChannels() async {
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (android == null) return;
+    const channels = [
+      AndroidNotificationChannel(
+        'messages',
+        'Messages',
+        description: 'New secure messages',
+        importance: Importance.high,
+      ),
+      AndroidNotificationChannel(
+        'groups',
+        'Groups',
+        description: 'New group messages',
+        importance: Importance.high,
+      ),
+      AndroidNotificationChannel(
+        'invitations',
+        'Invitations',
+        description: 'Connection and group invitations',
+        importance: Importance.high,
+      ),
+    ];
+    for (final c in channels) {
+      try {
+        await android.createNotificationChannel(c);
+      } catch (_) {
+        // Never let a channel hiccup block init.
+      }
+    }
+  }
 
   /// [onTap] receives the notification payload (a conversation id).
   Future<void> init({required void Function(String payload) onTap}) async {
@@ -46,21 +94,27 @@ class NotificationService {
         .resolvePlatformSpecificImplementation<
             IOSFlutterLocalNotificationsPlugin>()
         ?.requestPermissions(alert: true, badge: true, sound: true);
+    await ensureChannels();
   }
 
+  /// [channelId] picks the Android channel (`messages` or `groups`);
+  /// [showPreview] false replaces [body] with a generic label so the banner
+  /// never carries content when the user turned previews off.
   Future<void> showMessage({
     required String conversationId,
     required String title,
     required String body,
+    String channelId = 'messages',
+    bool showPreview = true,
   }) async {
     await _plugin.show(
       // One notification per conversation — newest replaces older.
       id: conversationId.hashCode,
       title: title,
-      body: body,
-      notificationDetails: const NotificationDetails(
-        iOS: DarwinNotificationDetails(),
-        android: _channel,
+      body: showPreview ? body : 'New message',
+      notificationDetails: NotificationDetails(
+        iOS: const DarwinNotificationDetails(),
+        android: channelId == 'groups' ? _groupsChannel : _channel,
       ),
       payload: conversationId,
     );

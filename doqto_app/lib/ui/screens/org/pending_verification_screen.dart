@@ -24,23 +24,11 @@ class PendingVerificationScreen extends ConsumerStatefulWidget {
 
 class _PendingVerificationScreenState
     extends ConsumerState<PendingVerificationScreen> {
-  static const _pollInterval = Duration(seconds: 15);
-
-  Timer? _timer;
+  // No poll: the verification decision arrives as an `org_updated` socket
+  // event (OrgNotifier re-resolves the auth stage). The button below is a
+  // manual fallback for a flaky connection.
   bool _checking = false;
   DateTime? _lastChecked;
-
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(_pollInterval, (_) => _checkNow(silent: true));
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
 
   Future<void> _checkNow({bool silent = false}) async {
     if (_checking) return;
@@ -166,7 +154,7 @@ class _PendingVerificationScreenState
   }
 
   String _lastCheckedLabel() {
-    if (_lastChecked == null) return 'Checking every 15 seconds…';
+    if (_lastChecked == null) return 'Updates arrive automatically';
     final secs = DateTime.now().difference(_lastChecked!).inSeconds;
     if (secs < 5) return 'Just checked';
     if (secs < 60) return 'Last checked ${secs}s ago';

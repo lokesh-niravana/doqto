@@ -41,22 +41,28 @@
 			<string>google-signin</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.googleusercontent.apps.877848716365-994933avmd8jc7792f3t72lvt0hsoroq</string>
+				<string>com.googleusercontent.apps.877848716365-hv40uhirlbuu9kiero392diaqiv4d0lf</string>
 			</array>
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>FlutterDeepLinkingEnabled</key>
+	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Doqto needs access to your camera so you can take a profile photo.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Doqto uses Face ID to unlock the app and protect your messages.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Doqto needs microphone access to record voice notes.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Doqto saves photos and videos from chats to your library only when you ask it to.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Doqto needs access to your photo library so you can set a profile photo.</string>
+	<string>Doqto needs access to your photo library so you can set a profile photo and send photos and videos in chats.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Doqto uses speech recognition to transcribe your voice notes.</string>
 	<key>UIApplicationSceneManifest</key>
@@ -96,5 +102,7 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>UIUserInterfaceStyle</key>
+	<string>Light</string>
 </dict>
 </plist>

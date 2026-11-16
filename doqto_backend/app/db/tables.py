@@ -5,15 +5,30 @@ class Tables:
     ORGANIZATIONS = "organizations"
     USERS = "users"
     ORG_MEMBERS = "org_members"
+    # Public directory of US practices (CMS / NPPES), refreshed by
+    # scripts/import_org_directory.py
+    ORG_DIRECTORY = "org_directory"
+    ORG_DIRECTORY_MEMBERS = "org_directory_members"
     CONVERSATIONS = "conversations"
     CONVERSATION_MEMBERS = "conversation_members"
+    # Per-member conversation preferences (pin / archive / mute / clear …), batch 3.
+    CONVERSATION_PREFS = "conversation_prefs"
     DIRECT_CONVERSATION_KEYS = "direct_conversation_keys"
     MESSAGES = "messages"
     SCHEDULED_MESSAGES = "scheduled_messages"
     MESSAGE_RECEIPTS = "message_receipts"
     MESSAGE_EDITS = "message_edits"
     MESSAGE_HIDES = "message_hides"
+    MESSAGE_REACTIONS = "message_reactions"
+    MESSAGE_STARS = "message_stars"
+    # Media (batch 5): presigned multipart uploads in flight, poll options/votes.
+    UPLOAD_INTENTS = "upload_intents"
+    POLL_OPTIONS = "poll_options"
+    POLL_VOTES = "poll_votes"
     AUDIT_LOGS = "audit_logs"
+    # Compliance (batch 7): wrapped per-org data keys, break-glass requests.
+    DATA_KEYS = "data_keys"
+    ACCESS_REQUESTS = "access_requests"
     DEVICE_TOKENS = "device_tokens"
     # Networking graph (M1)
     CONNECTION_INVITATIONS = "connection_invitations"
@@ -21,8 +36,14 @@ class Tables:
     CONNECTION_REMOVALS = "connection_removals"
     BLOCKS = "blocks"
     MUTES = "mutes"
+    SUGGESTION_DISMISSALS = "suggestion_dismissals"
+    # "Invite a colleague": who invited which NPI to join Doqto
+    APP_INVITES = "app_invites"
     REPORTS = "reports"
     USER_PRIVACY_SETTINGS = "user_privacy_settings"
+    # Settings (batch 6): tones / vibrate / previews, and linked devices.
+    USER_NOTIFICATION_SETTINGS = "user_notification_settings"
+    SESSIONS = "sessions"
     NOTIFICATIONS = "notifications"
     # Groups (M5)
     GROUPS = "groups"

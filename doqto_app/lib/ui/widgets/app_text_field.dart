@@ -54,6 +54,10 @@ class AppTextField extends StatefulWidget {
   /// wrapper, say). The owner disposes it; the field only borrows it.
   final FocusNode? focusNode;
 
+  /// Lines the field grows to (1 = single line). Multi-line fields keep the
+  /// same tap-outside dismissal — the return key inserts a newline.
+  final int maxLines;
+
   const AppTextField({
     super.key,
     this.controller,
@@ -73,6 +77,7 @@ class AppTextField extends StatefulWidget {
     this.textCapitalization,
     this.suffix,
     this.focusNode,
+    this.maxLines = 1,
   });
 
   @override
@@ -175,6 +180,7 @@ class AppTextFieldState extends State<AppTextField> {
                     ? TextCapitalization.none
                     : TextCapitalization.words),
             obscureText: widget.obscure,
+            maxLines: widget.obscure ? 1 : widget.maxLines,
             maxLength: widget.maxLength,
             inputFormatters: widget.inputFormatters,
             onChanged: _onChanged,

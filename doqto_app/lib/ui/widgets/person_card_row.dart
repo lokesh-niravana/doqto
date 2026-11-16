@@ -4,6 +4,7 @@ import '../../data/models/network_profile.dart';
 import 'app_pill.dart';
 import 'doctor_avatar.dart';
 import 'member_row.dart';
+import '../../core/utils/avatar_urls.dart';
 
 /// A [MemberRow] bound to a [PersonCard] — avatar (hero-paired on
 /// `member-avatar-<id>`), name, headline/specialty subtitle, and a trailing
@@ -18,23 +19,33 @@ class PersonCardRow extends StatelessWidget {
   /// message ghost icon). When null, the degree badge is shown (if any).
   final Widget? trailing;
 
+  /// Replaces the headline/specialty line (e.g. why a doctor is suggested).
+  final String? subtitle;
+
+  /// Presence dot on the avatar (green online / amber away); null = none.
+  final PresenceStatusDot? presence;
+
   const PersonCardRow({
     super.key,
     required this.person,
     this.onTap,
     this.onLongPress,
     this.trailing,
+    this.subtitle,
+    this.presence,
   });
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = _firstNonEmpty([person.headline, person.specialty]);
+    final subtitle =
+        this.subtitle ?? _firstNonEmpty([person.headline, person.specialty]);
     final row = MemberRow(
       avatar: DoctorAvatar(
         initials: person.initials,
         colorIndex: person.avatarIndex,
-        imageUrl: person.avatarPresignedUrl,
+        imageUrl: userAvatarUrl(person.id, person.avatarUrl),
         size: AvatarSize.lg,
+        presence: presence,
         heroTag: 'member-avatar-${person.id}',
       ),
       title: person.fullName,

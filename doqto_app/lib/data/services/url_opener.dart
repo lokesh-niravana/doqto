@@ -12,8 +12,7 @@ class ExternalUrlOpener implements UrlOpener {
   @override
   Future<bool> open(String url) => launchUrl(
         Uri.parse(url),
-        // externalApplication, not an in-app web view: Apple's link-out rule
-        // for web payments requires the real browser.
+        // The real browser, not an in-app web view.
         mode: LaunchMode.externalApplication,
       );
 }

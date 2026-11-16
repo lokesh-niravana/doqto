@@ -6,7 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/spacing.dart';
@@ -20,6 +22,8 @@ import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/skills_input.dart';
+import '../media/image_crop_screen.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 class ProfileEditScreen extends ConsumerStatefulWidget {
   const ProfileEditScreen({super.key});
@@ -110,9 +114,16 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
         maxHeight: 1024,
         imageQuality: 85,
       );
-      if (xfile == null) return;
+      if (xfile == null || !mounted) return;
+      // Crop before upload: circle mask, square output. Null = cancelled.
+      final file = await showImageCrop(
+        context,
+        File(xfile.path),
+        circle: true,
+        title: Strings.cropTitle,
+      );
+      if (file == null || !mounted) return;
       setState(() => _uploadingAvatar = true);
-      final file = File(xfile.path);
       final updated = await ref.read(userRepositoryProvider).uploadAvatar(file);
       ref.read(authProvider.notifier).setUser(updated);
     } catch (e) {
@@ -235,7 +246,7 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
                   DoctorAvatar(
                     initials: user.initials,
                     size: AvatarSize.xxl,
-                    imageUrl: user.avatarPresignedUrl,
+                    imageUrl: userAvatarUrl(user.id, user.avatarUrl),
                   ),
                   Positioned(
                     right: 0,
@@ -274,6 +285,17 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    // Status under the name (batch 6).
+                    ListTile(
+                      key: const ValueKey('profile-edit-status'),
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.mood_outlined, color: AppColors.medBlue),
+                      title: Text('Status', style: AppText.bodyPrimary),
+                      subtitle: Text(user.statusLabel() ?? 'Not set', style: AppText.caption),
+                      trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+                      onTap: () => context.push(AppRoutes.profileStatus),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
                     _SectionTitle('Basic'),
                     AppTextField(
                       controller: _fullName,

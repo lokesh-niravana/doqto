@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_S3_BUCKET_NAME: str = "doqto"
+    # Envelope encryption (batch 7): when set, per-org data keys are wrapped
+    # by this KMS key (kms:Encrypt/Decrypt on the task role). Empty = the
+    # static MESSAGE_ENCRYPTION_KEY wraps them (local / test / CI).
+    AWS_KMS_KEY_ID: str = ""
 
     # Push notifications — "log" is the dev stub ([FAKE PUSH] log lines);
     # "fcm" requires the FCM_* credentials below.
@@ -45,6 +49,9 @@ class Settings(BaseSettings):
     BILLING_PRICE_MONTHLY_CENTS: int = 899
     BILLING_PRICE_YEARLY_CENTS: int = 8000
     BILLING_RETURN_URL: str = "https://doqto.ai/billing/done"
+    # In-App Purchase on iOS (Apple requires it next to the Stripe link-out).
+    APPLE_BUNDLE_ID: str = "com.doqto.ios"
+    APPLE_APP_ID: int = 6823733882
 
     JWT_SECRET: str
     MESSAGE_ENCRYPTION_KEY: str
@@ -57,6 +64,11 @@ class Settings(BaseSettings):
     # false (NETWORK_DM_ENABLED=false in the prod env) until the networking
     # client ships, at which point it is turned on.
     NETWORK_DM_ENABLED: bool = True
+
+    # Minimum app builds (GET /app/min-version). Bump to force an update.
+    MIN_VERSION_IOS: str = "1.0.0+45"
+    MIN_VERSION_ANDROID: str = "1.0.0+35"
+    MIN_VERSION_MESSAGE: str = "Please update Doqto to keep messaging securely."
 
     SUPER_ADMIN_PHONE: str = ""
     SUPER_ADMIN_NAME: str = ""

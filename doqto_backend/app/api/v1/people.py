@@ -18,7 +18,9 @@ from app.core.rate_limit import enforce_rate_limit
 from app.core.routes import ApiRoutes
 from app.db.postgres import get_db
 from app.models import User
-from app.schemas.people import PeopleSearchPage
+from app.schemas.common import OkResponse
+from app.schemas.people import AppInviteIn, NpiHitOut, PeopleSearchPage
+from app.services.invite_service import InviteService
 from app.services.people_search_service import PeopleSearchFilters, people_search
 
 router = APIRouter()
@@ -45,3 +47,25 @@ async def search_people(
         db=db,
     )
     return PeopleSearchPage(data=cards, next_cursor=next_cursor)
+
+
+@router.get(ApiRoutes.PEOPLE_NPI_LOOKUP, response_model=list[NpiHitOut])
+async def npi_lookup(
+    q: str = Query(min_length=2, max_length=100),
+    state: str | None = Query(default=None, min_length=2, max_length=2),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[NpiHitOut]:
+    await enforce_rate_limit(user.id, "npi_lookup", PEOPLE_SEARCH_PER_MINUTE, 60)
+    hits = await InviteService.lookup(viewer_id=user.id, query=q, state=state, db=db)
+    return [NpiHitOut(**h.__dict__) for h in hits]
+
+
+@router.post(ApiRoutes.PEOPLE_INVITES, response_model=OkResponse)
+async def record_invite(
+    body: AppInviteIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> OkResponse:
+    await InviteService.record(inviter_id=user.id, npi=body.npi, db=db)
+    return OkResponse()

@@ -42,15 +42,27 @@ SHARED = {
     "InvitePolicy",
     "DmPolicy",
     "Discoverability",
+    # Privacy screen (batch 2): all three reach the client wire via
+    # GET/PATCH /users/me/privacy.
+    "LastSeenVisibility",
+    "OnlineVisibility",
+    "ProfileFieldVisibility",
     # Groups (M5). Only GroupRole reaches the client wire (role pills), so it
     # alone is gated. The rest (post/member-DM policy, member/invite states) are
     # backend-only — deliberately NOT gated, no Dart mirror needed. Visibility
     # and join policy were retired when groups became invite-only.
     "GroupRole",
+    # Batch 4: the report-reason picker renders from this enum. ReportSubjectType
+    # and ReportStatus stay backend-only.
+    "ReportReason",
     "MessageType",
     "TranscriptStatus",
     "WsEventServer",
     "WsEventClient",
+    # Settings (batch 6): the status picker and the vibrate picker render from
+    # these. The notification tone list is a plain string (resource name).
+    "StatusPreset",
+    "VibratePattern",
 }
 
 

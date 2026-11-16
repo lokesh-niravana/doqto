@@ -47,51 +47,6 @@ class Strings {
   static const String regSignOut = 'Not you? Sign out';
   static const String regApplePrivateEmail = 'your Apple ID (email hidden)';
 
-  // Plans (after registration) and the paywall (after the trial)
-  static const String planTitle = 'Choose your plan';
-  static const String planSubtitle =
-      'Full access to secure messaging, groups and your network.';
-  static const String planMonthly = 'Monthly';
-  static const String planYearly = 'Yearly';
-  static const String planSkip = 'Skip for now';
-  static const String planStartTrial = 'Start 14-day free trial';
-  static const String planSubscribe = 'Subscribe';
-  static const String paywallTitle = 'Subscribe to keep going';
-  static const String paywallBody =
-      'Your free trial has ended. Your messages are safe and still readable — '
-      'subscribing turns sending back on.';
-  static const String paywallCardBody =
-      "Your last payment didn't go through. Your messages are safe and still "
-      'readable — update your card to turn sending back on.';
-  // Android: no way to pay in the app, so no call to action and no website.
-  static const String planTrialStarts = 'Your 14-day free trial starts now.';
-  static const String paywallTitleNoCheckout = 'Subscription inactive';
-  static const String paywallBodyNoCheckout =
-      'Your free trial has ended. Your messages are safe and still readable. '
-      'Sending is paused while your subscription is inactive.';
-  static const String paywallCardBodyNoCheckout =
-      "Your subscription payment didn't go through. Your messages are safe "
-      'and still readable. Sending is paused while your subscription is '
-      'inactive.';
-  static const String paywallPaid = 'I have already paid';
-  static const String paywallRefreshStatus = 'Refresh status';
-  static const String paywallUpdatePayment = 'Update payment method';
-  static const String paywallReadMessages = 'Read my messages';
-  static const String paywallSignOut = 'Sign out';
-  static const String paywallNotPaidYet =
-      'We haven\'t received your payment yet. It can take a minute.';
-  static const String checkoutOpenFailed =
-      'Couldn\'t open the payment page. Please try again.';
-  static const String subscriptionRow = 'Subscription';
-  static const String subscriptionGrace = 'Payment problem — update your card';
-  static const String subscriptionGraceNoCheckout = 'Payment problem';
-  static const String subscriptionStaff = 'Staff account';
-  static const String subscriptionNone = 'No subscription';
-  static String planSaving(int percent, String perMonth) =>
-      'Save $percent% · $perMonth';
-  static String trialDaysLeft(int days) =>
-      days == 1 ? 'Trial: 1 day left' : 'Trial: $days days left';
-
   // Org
   static const String orgNoneTitle = 'You\'re not in an organization yet';
   static const String orgNoneBody =
@@ -244,6 +199,33 @@ class Strings {
   static const String netEmptyConnections =
       'No connections yet. Search for colleagues to get started.';
   static const String netEmptySearch = 'No people found. Try a different name.';
+  // -- Invite a colleague
+  static const String inviteTitle = 'Invite a colleague';
+  static const String inviteSettingsSubtitle = 'Find a doctor by name or NPI';
+  static const String inviteSearchHint = 'Name or NPI';
+  static const String inviteAnyState = 'Any';
+  static const String inviteStateLabel = 'State';
+  static const String inviteButton = 'Invite';
+  static const String inviteRequested = 'Requested';
+  static const String inviteOnDoqto = 'On Doqto';
+  static const String inviteIntro =
+      'Search the NPI Registry. Colleagues already on Doqto show Connect or Message.';
+  static const String inviteNoResults =
+      'No match yet. Add a first name or pick a state: common last names need one.';
+  static String inviteResultCount(int n) =>
+      '$n ${n == 1 ? 'doctor' : 'doctors'} in the NPI Registry';
+  static const String inviteCantFind = "Can't find them?";
+  static const String inviteCantFindBody =
+      'Residents, doctors outside the US, or anyone else: send them the app link directly.';
+  static const String inviteShareLink = 'Share invite link';
+  static const String inviteLink = 'https://doqto.ai/get';
+  static String inviteMessage(String? greeting) =>
+      "${greeting == null ? '' : '$greeting, '}I'm on Doqto, secure messaging for doctors. "
+      "Join me and let's message there: $inviteLink";
+  static String inviteFromSearch(String q) => 'Invite "$q"';
+  static String inviteNobodyNamed(String q) => 'No one named "$q" on Doqto yet';
+  static const String inviteNobodyBody =
+      'Look them up in the NPI Registry and send them an invite.';
   static const String netEmptyNetwork =
       'Grow your network. Search for colleagues to connect.';
   static const String netEmptySent = 'No pending sent invitations';
@@ -258,7 +240,8 @@ class Strings {
   static const String groupRequestToJoin = 'Request to join';
   static const String groupRequested = 'Requested';
   static const String groupInvited = 'Invited';
-  static const String groupMembersLabel = 'Members';
+  static const String groupYou = 'You';
+  static String groupMemberCount(int n) => n == 1 ? '1 member' : '$n members';
   static const String groupAboutLabel = 'About';
   static const String groupJoinedToast = 'You joined the group';
   static const String groupLeftToast = 'You left the group';
@@ -266,7 +249,6 @@ class Strings {
   static const String groupsMyGroups = 'My groups';
   static const String groupsDiscover = 'Discover';
   static const String groupsCreate = 'Create group';
-  static const String groupsChatLabel = 'Chat';
   static const String groupsOpenChat = 'Open chat';
   static const String groupsView = 'View';
   static const String groupsAdmins = 'Admins';
@@ -277,6 +259,8 @@ class Strings {
   static const String groupsSearchHint = 'Search groups by name…';
   static const String groupsNoRequests = 'No pending join requests';
   static const String groupsNoMembers = 'No members yet';
+  static const String groupMembersAfterJoin =
+      'You can see who is in this group once you join.';
   static const String groupsNoDiscover = 'No groups found. Try a different name.';
   static const String groupsCreatedLabel = 'Created';
   static const String groupsRulesLabel = 'Rules';
@@ -315,6 +299,74 @@ class Strings {
   static const String groupsCopyLink = 'Copy invite link';
   static const String groupsLinkCopiedToast = 'Invite link copied';
   static const String groupsCreateCta = 'Create group';
+  // -- Group management (batch 1)
+  static const String groupAccept = 'Accept';
+  static const String groupDecline = 'Decline';
+  static const String groupInvitedBy = 'You\'ve been invited to this group';
+  static const String groupDeclinedToast = 'Invite declined';
+  static const String groupEditName = 'Group name';
+  static const String groupEditDescription = 'Description';
+  static const String groupAddDescription = 'Add a description';
+  static const String groupChangePhoto = 'Change group photo';
+  static const String groupRemovePhoto = 'Remove photo';
+  static const String groupAddMembersTitle = 'Add members';
+  static const String groupInviteSent = 'Invite sent';
+  static String groupInvitesSent(int n) =>
+      n == 1 ? '1 invite sent' : '$n invites sent';
+  static const String groupNoOneToAdd =
+      'Everyone you can invite is already here. Share an invite link instead.';
+  static const String groupMemberMessage = 'Message';
+  static const String groupMemberViewProfile = 'View profile';
+  static const String groupMemberPromote = 'Make admin';
+  static const String groupMemberDemote = 'Remove as admin';
+  static const String groupMemberRemove = 'Remove from group';
+  static const String groupMemberBan = 'Ban from group';
+  static const String groupMemberTransfer = 'Transfer ownership';
+  static String groupRemoveConfirm(String name) => 'Remove $name from the group?';
+  static String groupBanConfirm(String name) =>
+      'Ban $name? They won\'t be able to rejoin, even by invite.';
+  static String groupTransferConfirm(String name) =>
+      'Make $name the owner? You\'ll become an admin.';
+  static const String groupSettingsLabel = 'Group settings';
+  static const String groupSendMessagesLabel = 'Send messages';
+  static const String groupSendAll = 'All members';
+  static const String groupSendAdmins = 'Admins only';
+  static const String groupDmLabel = 'Member direct messages';
+  static const String groupDmOpenShort = 'Open';
+  static const String groupDmRequestShort = 'Connections only';
+  static const String groupDmDisabledShort = 'Off';
+  static const String groupDisappearingLabel = 'Disappearing messages';
+  static const String groupAdminsOnlyNotice = 'Only admins can send messages';
+  static const String groupInviteLinksLabel = 'Invite links';
+  static const String groupCreateLink = 'Create invite link';
+  static const String groupLinkMaxUses = 'Max uses';
+  static const String groupLinkMaxUsesHint = 'Unlimited';
+  static const String groupLinkExpires = 'Expires';
+  static const String groupLinkExpiry1Day = '1 day';
+  static const String groupLinkExpiry7Days = '7 days';
+  static const String groupLinkExpiryNever = 'Never';
+  static const String groupLinkShare = 'Share';
+  static const String groupLinkCopy = 'Copy';
+  static const String groupLinkRevoke = 'Revoke';
+  static const String groupLinkRevoked = 'Invite link revoked';
+  static const String groupLinkNone = 'No active invite links';
+  static const String groupPendingInvitesLabel = 'Pending invites';
+  static const String groupInviteCancel = 'Cancel invite';
+  static const String groupPhotoAdjustTitle = 'Adjust group photo';
+  static const String groupInviteCancelled = 'Invite cancelled';
+  static const String groupInviteAwaiting = 'Waiting for them to accept';
+  static String groupInvitedAgo(String when) => 'Invited $when';
+  static const String groupJoinedViaLink = 'You joined the group';
+  static const String groupJoiningViaLink = 'Joining group…';
+  static const String groupMessageInfo = 'Message info';
+  static const String groupReadBy = 'Read by';
+  static const String groupDeliveredTo = 'Delivered to';
+  static const String groupNotYetDelivered = 'Not yet delivered';
+  static const String groupInviteNotificationTitle = 'Group invite';
+  static String groupInviteNotificationBody(String name, String group) =>
+      '$name invited you to $group';
+  static const String groupInviteNotificationBodyGeneric =
+      'You\'ve been invited to a group';
   static const String groupsNext = 'Next';
   static const String groupsBack = 'Back';
   // -- Inline explanations
@@ -339,10 +391,363 @@ class Strings {
   static const String profileExperience = 'Experience';
   static const String profileSkills = 'Skills';
 
+  // Privacy screen (batch 2)
+  static const String privacyTitle = 'Privacy';
+  static const String privacySettingsSubtitle =
+      'Last seen, read receipts, blocked contacts';
+  static const String privacyWhoCanSee = 'Who can see my';
+  static const String privacyLastSeen = 'Last seen';
+  static const String privacyOnline = 'Online';
+  static const String privacyProfilePhoto = 'Profile photo';
+  static const String privacyAbout = 'About';
+  static const String privacyMessaging = 'Messaging';
+  static const String privacyReadReceipts = 'Read receipts';
+  static const String privacyReadReceiptsHint =
+      "If turned off, you won't send or receive read receipts in direct "
+      'chats. Groups always show read-by.';
+  static const String privacyDefaultTimer = 'Default message timer';
+  static const String privacyDefaultTimerHint =
+      'New direct chats you start disappear after this long.';
+  static const String privacyLinkPreviews = 'Link previews';
+  static const String privacyLinkPreviewsHint =
+      'Show a preview card for links you send and receive.';
+  static const String privacyNetwork = 'Network';
+  static const String privacyInvitePolicy = 'Connection requests';
+  static const String privacyDiscoverability = 'Discoverability';
+  static const String privacyShowMutuals = 'Show mutual connections';
+  static const String privacyShowMutualsHint =
+      'Let others see the connections you have in common.';
+  static const String privacyBlocked = 'Blocked contacts';
+  static const String privacyBlockedEmpty = 'You haven\'t blocked anyone.';
+  static const String privacyBlockedHint =
+      "Blocked doctors can't message you, see your profile or find you.";
+  static const String privacyUnblockConfirmTitle = 'Unblock this doctor?';
+  static const String privacyUnblockConfirmBody =
+      'They will be able to find you, view your profile and message you '
+      'again. You are not reconnected automatically.';
+  static const String privacyUnblockedToast = 'Unblocked';
+  static const String privacyBlockedBanner = 'You blocked this doctor';
+  static const String privacyReciprocalHint =
+      "If you don't share your last seen, you won't see others' either.";
+  static const String privacyLastSeenEveryone = 'Everyone';
+  static const String privacyLastSeenConnections = 'Connections and colleagues';
+  static const String privacyLastSeenNobody = 'Nobody';
+  static const String privacyOnlineSame = 'Same as last seen';
+  static const String privacyOnlineNobody = 'Nobody';
+  static const String privacyTimerOff = 'Off';
+  static const String privacySaveFailed = "Couldn't save that. Try again.";
+  static const String presenceOnline = 'online';
+
+  // Chat list preferences (batch 3)
+  static const String chatPin = 'Pin';
+  static const String chatUnpin = 'Unpin';
+  static const String chatMute = 'Mute';
+  static const String chatUnmute = 'Unmute';
+  static const String chatMuteTitle = 'Mute notifications';
+  static const String chatMuteHint =
+      'Messages still arrive; you just won\'t be notified.';
+  static const String chatArchive = 'Archive';
+  static const String chatUnarchive = 'Unarchive';
+  static const String chatMarkUnread = 'Mark as unread';
+  static const String chatMarkRead = 'Mark as read';
+  static const String chatClear = 'Clear chat';
+  static const String chatClearTitle = 'Clear this chat?';
+  static const String chatClearBody =
+      'Messages are removed from this device and your view only. The other '
+      'members keep their copies.';
+  static const String chatDeleteChat = 'Delete chat';
+  static const String chatDeleteChatTitle = 'Delete this chat?';
+  static const String chatDeleteChatBody =
+      'The chat leaves your list and its messages are cleared for you. It '
+      'comes back if the other person writes again.';
+  static const String chatLeaveGroupTitle = 'Leave this group?';
+  static const String chatLeaveGroupBody =
+      'You\'ll stop receiving its messages. An admin can invite you back.';
+  static const String chatLeave = 'Leave';
+  static const String chatMore = 'More';
+  static String chatArchivedRow(int n) => 'Archived ($n)';
+  static const String chatArchivedEmpty = 'No archived chats';
+  static const String chatArchivedEmptyHint =
+      'Swipe a chat left to archive it.';
+  static const String chatUnreadEmpty = 'You\'re all caught up';
+  static const String chatUnreadEmptyHint = 'No unread chats right now.';
+  static const String chatGroupsEmpty = 'No group chats yet';
+  static const String chatGroupsEmptyHint =
+      'Create a group from the Groups tab.';
+  static const String chatDraftPrefix = 'Draft: ';
+  static const String chatPinnedToast = 'Pinned';
+  static const String chatUnpinnedToast = 'Unpinned';
+  static const String chatArchivedToast = 'Archived';
+  static const String chatUnarchivedToast = 'Unarchived';
+  static const String chatMutedToast = 'Muted';
+  static const String chatUnmutedToast = 'Unmuted';
+  static const String chatClearedToast = 'Chat cleared';
+  static const String chatDeletedToast = 'Chat deleted';
+  // Message features (batch 4)
+  static const String chatReply = 'Reply';
+  static const String chatForward = 'Forward';
+  static const String chatCopy = 'Copy';
+  static const String chatCopied = 'Copied';
+  static const String chatStar = 'Star';
+  static const String chatUnstar = 'Unstar';
+  static const String chatPinMessage = 'Pin';
+  static const String chatUnpinMessage = 'Unpin';
+  static const String chatInfo = 'Info';
+  static const String chatEdit = 'Edit';
+  static const String chatDelete = 'Delete';
+  static const String chatReport = 'Report';
+  static const String chatSelect = 'Select';
+  static const String chatReplyingTo = 'Replying to';
+  static const String chatYou = 'You';
+  static const String chatForwarded = 'Forwarded';
+  static const String chatForwardedManyTimes = 'Forwarded many times';
+  static const String chatForwardTitle = 'Forward to…';
+  static const String chatForwardHint = 'Search chats and people';
+  static const String chatForwardLimit = 'Up to 5 chats';
+  static const String chatForwardedToast = 'Forwarded';
+  static const String chatStarredToast = 'Starred';
+  static const String chatUnstarredToast = 'Unstarred';
+  static const String chatStarredMessages = 'Starred messages';
+  static const String chatStarredEmpty = 'No starred messages';
+  static const String chatStarredEmptyHint =
+      'Long-press a message and tap Star to keep it here.';
+  static const String chatPinTitle = 'Pin message';
+  static const String chatPinHint = 'Everyone in the chat sees it at the top.';
+  static const String chatPinnedMessage = 'Pinned message';
+  static const String chatPinnedToastMessage = 'Message pinned';
+  static const String chatUnpinnedToastMessage = 'Message unpinned';
+  static const String chatOpenLinkTitle = 'Open link?';
+  static const String chatOpenLinkBody =
+      'This opens outside Doqto. Only open links you trust.';
+  static const String chatOpenLink = 'Open';
+  static const String chatCallNumberTitle = 'Call this number?';
+  static const String chatSearch = 'Search';
+  static const String chatSearchHint = 'Search in chat';
+  static const String chatSearchNone = 'No matches';
+  static const String chatJumpToDate = 'Jump to date';
+  static const String chatJumpToDateNone = 'Nothing on or before that day.';
+  static String chatUnreadDivider(int n) =>
+      n == 1 ? '1 unread message' : '$n unread messages';
+  static const String chatReportTitle = 'Report message';
+  static const String chatReportHint =
+      'The message and the few before it are sent to Doqto for review. The '
+      'sender is not told.';
+  static const String chatReportDetails = 'Details (optional)';
+  static const String chatReportSubmit = 'Send report';
+  static const String chatReportedToast = 'Report sent. Thank you.';
+  static const String chatAdminRemoved = 'Admin removed a message';
+  static const String chatFormatBold = 'Bold';
+  static const String chatFormatItalic = 'Italic';
+  static const String chatFormatStrike = 'Strikethrough';
+  static const String chatFormatMono = 'Monospace';
+  static const String chatMentionHint = 'Mention someone';
+  static const String settingsKeepArchived = 'Keep chats archived';
+  static const String settingsKeepArchivedHint =
+      'Archived chats stay archived when a new message arrives.';
+  static const String profileMuteNotifications =
+      'Mute notifications from this person';
+  static const String profileUnmuteNotifications = 'Unmute notifications';
+  static const String profileMutedToast = 'Notifications muted';
+  static const String profileUnmutedToast = 'Notifications on';
+
   // Common
   static const String copy = 'Copy';
   static const String cancel = 'Cancel';
   static const String save = 'Save';
   static const String retry = 'Retry';
   static const String loading = 'Loading...';
+
+  // ---- Media (batch 5) ----
+  static const String mediaTapToDownload = 'Tap to download';
+  static const String mediaCaptionHint = 'Add a caption…';
+  static const String mediaPhotos = 'Photos';
+  static const String mediaPhoto = 'Photo';
+  static const String mediaVideo = 'Video';
+  static const String mediaDocument = 'Document';
+  static const String mediaScanDocument = 'Scan document';
+  static const String mediaTakePhoto = 'Take photo';
+  static const String mediaRecordVideo = 'Record video';
+  static const String mediaChooseGallery = 'Choose from gallery';
+  static const String mediaPoll = 'Poll';
+  static const String mediaShare = 'Share';
+  static const String mediaSaveToPhotos = 'Save to Photos';
+  static const String mediaSaved = 'Saved to Photos';
+  static const String mediaSaveFailed = 'Could not save';
+  static const String mediaForward = 'Forward';
+  static const String mediaDeleteForMe = 'Delete for me';
+  static const String mediaStar = 'Star';
+  static const String mediaExportBlocked = 'Saving and sharing is turned off for this chat';
+  static const String mediaGalleryTitle = 'Media, links and docs';
+  static const String mediaTabMedia = 'Media';
+  static const String mediaTabDocs = 'Docs';
+  static const String mediaTabLinks = 'Links';
+  static const String mediaGalleryEmptyMedia = 'No photos or videos yet';
+  static const String mediaGalleryEmptyDocs = 'No documents yet';
+  static const String mediaGalleryEmptyLinks = 'No links yet';
+  static const String mediaTooManyPhotos = 'You can send up to 30 photos at once';
+  static const String mediaVideoTooLong = 'Videos can be up to 10 minutes';
+  static const String mediaVideoTooLarge = 'Videos can be up to 100 MB';
+  static const String mediaFileTooLarge = 'Files can be up to 100 MB';
+  static const String mediaScanUnavailable = 'Scanning is not available on this device';
+  static const String voiceTooShort = 'Hold to record';
+  static const String voiceSlideToCancel = 'Slide to cancel';
+  static const String voiceLocked = 'Recording';
+  static const String voiceSend = 'Send';
+  static const String voiceCancel = 'Cancel';
+  static const String pollCreateTitle = 'New poll';
+  static const String pollQuestion = 'Question';
+  static const String pollQuestionHint = 'Ask a question';
+  static const String pollOptions = 'Options';
+  static const String pollOptionHint = 'Add option';
+  static const String pollAllowMultiple = 'Allow multiple answers';
+  static const String pollAddOption = 'Add option';
+  static const String pollSend = 'Send poll';
+  static const String pollNeedTwo = 'Add at least two options';
+  static const String pollNeedQuestion = 'Add a question';
+  static const String pollDuplicate = 'Options must be different';
+  static const String pollSelectOne = 'Select one';
+  static const String pollSelectMany = 'Select one or more';
+  static const String pollViewVotes = 'View votes';
+  static const String pollNoVotes = 'No votes yet';
+  static const String pollVotes = 'votes';
+  static const String pollVote = 'vote';
+  static const String storageTitle = 'Storage and data';
+  static const String storageUploadQuality = 'Upload quality';
+  static const String storageUploadQualityHint = 'Photos are resized before sending';
+  static const String storageAutoDownload = 'Media auto-download';
+  static const String storageAutoDownloadHint = 'Choose when photos, voice notes, videos and documents download by themselves';
+  static const String storageManage = 'Manage storage';
+  static const String storageNetworkUsage = 'Network usage';
+  static const String storageSent = 'Sent';
+  static const String storageReceived = 'Received';
+  static const String storageResetUsage = 'Reset statistics';
+  static const String storageClearAll = 'Clear all media';
+  static const String storageClearChat = 'Clear';
+  static const String storageEmpty = 'No downloaded media';
+  static const String storageTotal = 'Total';
+  static const String storageWifi = 'Wi-Fi';
+  static const String storageCellular = 'Cellular';
+  static const String storageNever = 'Never';
+  static const String storageWifiOnly = 'Wi-Fi only';
+  static const String storageWifiAndCellular = 'Wi-Fi and cellular';
+
+  // Compliance (batch 7): My Org → Policies / Access requests / Reports
+  static const String myOrgAdminSection = 'Administration';
+  static const String myOrgPolicies = 'Policies';
+  static const String myOrgPoliciesHint = 'Copy, export, screenshots, retention, legal hold';
+  static const String myOrgAccessRequests = 'Access requests';
+  static const String myOrgAccessRequestsHint = 'Emergency access to a conversation, approved by a second admin';
+  static const String myOrgReports = 'Reports';
+  static const String myOrgReportsHint = 'Reports about or by members of this organisation';
+  static const String myOrgMemberPolicies = 'Your organisation\'s policies';
+  static const String myOrgMemberPoliciesHint = 'What your admins allow in organisation chats';
+
+  static const String orgPoliciesTitle = 'Policies';
+  static const String orgPoliciesReadOnlyFooter = 'Set by your organisation\'s admins. Ask them to change anything here.';
+  static const String orgPoliciesSectionContent = 'Content';
+  static const String orgPoliciesSectionNotifications = 'Notifications';
+  static const String orgPoliciesSectionRetention = 'Retention';
+  static const String orgPolicyForwardOutside = 'Forward outside the organisation';
+  static const String orgPolicyForwardOutsideHint = 'Members can forward messages to chats outside this organisation';
+  static const String orgPolicyAllowCopy = 'Copy message text';
+  static const String orgPolicyAllowCopyHint = 'Show Copy on messages in organisation chats';
+  static const String orgPolicyMediaExport = 'Save and share media';
+  static const String orgPolicyMediaExportHint = 'Save to Photos and Share on photos, videos and documents';
+  static const String orgPolicyBlockScreenshots = 'Block screenshots';
+  static const String orgPolicyBlockScreenshotsHint = 'Android blanks organisation chats in screenshots; iOS screenshots are audited';
+  static const String orgPolicyPreviewDefault = 'Message previews in banners';
+  static const String orgPolicyPreviewDefaultHint = 'Members who have not chosen see message text in notifications';
+  static const String orgPolicyDefaultDisappear = 'Default disappearing timer';
+  static const String orgPolicyDefaultDisappearHint = 'New organisation group chats start with this timer';
+  static const String orgPolicyRetention = 'Keep messages for';
+  static const String orgPolicyRetentionHint = 'Older messages in organisation chats are removed automatically';
+  static const String orgPolicyRetentionForever = 'Forever';
+  static String orgPolicyRetentionDays(int days) => days == 1 ? '1 day' : '$days days';
+  static const String orgPolicyLegalHold = 'Legal hold';
+  static const String orgPolicyLegalHoldHint = 'Nothing in organisation chats is destroyed, including deleted messages, until the hold is lifted';
+  static const String orgPolicyLegalHoldOnTitle = 'Turn on legal hold?';
+  static const String orgPolicyLegalHoldOnBody =
+      'Deleted messages, expired messages and deleted accounts keep their content for this organisation\'s chats until you lift the hold. Members still see deletions as usual. Content is readable only through an approved access request.';
+  static const String orgPolicyLegalHoldOffTitle = 'Lift legal hold?';
+  static const String orgPolicyLegalHoldOffBody =
+      'Everything held back will be destroyed on the next purge pass — deleted messages, expired messages and deleted accounts. This cannot be undone.';
+  static const String orgPolicyRetentionTitle = 'Change retention?';
+  static String orgPolicyRetentionBody(String keep) =>
+      'Messages in this organisation\'s chats older than $keep will be removed for everyone on the next pass. This cannot be undone.';
+  static const String orgPolicyConfirm = 'Confirm';
+  static const String orgPoliciesSaveFailed = 'Could not save that policy';
+  static const String policyOn = 'On';
+  static const String policyOff = 'Off';
+
+  static const String accessRequestsTitle = 'Access requests';
+  static const String accessRequestsEmpty = 'No access requests';
+  static const String accessRequestsEmptyHint =
+      'Emergency access to a conversation needs a written reason and a second admin\'s approval. Every read is audited and the members are told.';
+  static const String accessRequestNew = 'Request access';
+  static const String accessRequestConversation = 'Conversation';
+  static const String accessRequestConversationHint = 'Conversation ID';
+  static const String accessRequestPickConversation = 'Choose from my chats';
+  static const String accessRequestReason = 'Reason';
+  static const String accessRequestReasonHint = 'Why you need to read this conversation';
+  static const String accessRequestReasonRequired = 'A reason is required';
+  static const String accessRequestConversationRequired = 'Choose or paste a conversation';
+  static const String accessRequestSubmit = 'Send request';
+  static const String accessRequestCreated = 'Request sent. Another admin must approve it.';
+  static const String accessRequestApprove = 'Approve';
+  static const String accessRequestReject = 'Reject';
+  static const String accessRequestOpen = 'Open audited view';
+  static const String accessRequestStatusPending = 'Pending';
+  static const String accessRequestStatusApproved = 'Approved';
+  static const String accessRequestStatusRejected = 'Rejected';
+  static const String accessRequestStatusExpired = 'Expired';
+  static String accessRequestRequestedBy(String who) => 'Requested by $who';
+  static const String accessRequestYou = 'you';
+  static String accessRequestAccessUntil(String when) => 'Access until $when';
+  static const String accessRequestAwaitingOther = 'Waiting for another admin to decide';
+  static const String accessRequestDecisionFailed = 'Could not record that decision';
+  static const String accessRequestApproveTitle = 'Approve access?';
+  static String accessRequestApproveBody(String who) =>
+      '$who will be able to read this conversation for 24 hours. Every page they open is audited and the members are told an administrator accessed it.';
+  static const String breakGlassTitle = 'Audited view';
+  static const String breakGlassBanner = 'Compliance access — audited; the members were told';
+  static const String breakGlassEmpty = 'No messages in this conversation';
+  static const String breakGlassOlder = 'Load older messages';
+  static const String breakGlassDeleted = 'Deleted by the sender — content kept under legal hold';
+  static const String breakGlassSystem = 'System message';
+
+  static const String orgReportsTitle = 'Reports';
+  static const String orgReportsEmpty = 'No reports';
+  static const String orgReportsEmptyHint =
+      'Reports about members of this organisation, or filed by them, appear here. Message content is never shown.';
+  static const String orgReportsFilterAll = 'All';
+  static const String orgReportStatusOpen = 'Open';
+  static const String orgReportStatusReviewing = 'Reviewing';
+  static const String orgReportStatusActioned = 'Actioned';
+  static const String orgReportStatusDismissed = 'Dismissed';
+  static const String orgReportSubjectUser = 'About a member';
+  static const String orgReportSubjectMessage = 'About a message';
+  static String orgReportContext(int n) => n == 1 ? '1 message attached' : '$n messages attached';
+  static const String orgReportChangeStatus = 'Change status';
+  static const String orgReportStatusFailed = 'Could not update the report';
+
+  static const String scheduledTitle = 'Scheduled messages';
+  static const String scheduledEmpty = 'Nothing scheduled in this chat';
+  static const String scheduledEmptyHint = 'Hold the send button to schedule a message.';
+  static const String scheduledCancel = 'Cancel';
+  static const String scheduledCancelled = 'Scheduled message cancelled';
+  static const String scheduledCancelFailed = 'Could not cancel that message';
+  static const String scheduledFailed = 'Failed to send';
+  static const String scheduledPending = 'Will be sent';
+
+  static const String deviceModifiedBanner =
+      'This device appears modified; your organisation may block access';
+
+  // Image crop (before a photo is saved or sent)
+  static const String cropTitle = 'Adjust photo';
+  static const String cropDone = 'Done';
+  static const String cropCancel = 'Cancel';
+  static const String cropReset = 'Reset';
+  static const String cropAspectFree = 'Free';
+  static const String cropFailed = "Couldn't crop that photo";
+  static const String captionCrop = 'Crop';
 }

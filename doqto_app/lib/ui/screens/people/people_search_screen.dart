@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/strings.dart';
-import '../../../core/di/providers.dart';
 import '../../../core/enums/app_enums.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
@@ -16,7 +14,7 @@ import '../../widgets/app_pill.dart';
 import '../../widgets/app_skeleton.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/person_card_row.dart';
-import '../../widgets/primary_button.dart';
+import '../../widgets/inline_connect.dart';
 import '../../widgets/search_bar.dart';
 
 /// People search (M3). Opens on a browsable directory and narrows as you
@@ -58,11 +56,13 @@ class _Body extends StatelessWidget {
           icon: Icons.wifi_off_rounded,
           text: ErrorMessages.forApi(error),
         ),
-      PeopleSearchResults(:final people) => people.isEmpty
-          ? const _Message(
-              icon: Icons.search_off_rounded,
-              text: Strings.netEmptySearch,
-            )
+      PeopleSearchResults(:final people, :final query) => people.isEmpty
+          ? query.isEmpty
+              ? const _Message(
+                  icon: Icons.search_off_rounded,
+                  text: Strings.netEmptySearch,
+                )
+              : _InviteInstead(query: query)
           : _ResultsList(results: state as PeopleSearchResults),
     };
   }
@@ -138,75 +138,11 @@ class _ResultsListState extends ConsumerState<_ResultsList> {
               onTap: () => context.push(AppRoutes.person(p.id)),
               trailing: p.degree == ConnectionDegree.first
                   ? DegreeBadge.forDegree(p.degree)
-                  : _InlineConnect(userId: p.id),
+                  : InlineConnect(userId: p.id),
             ),
           );
         },
       ),
-    );
-  }
-}
-
-/// A minimal connect affordance for a search row. PersonCard carries only a
-/// degree (not the full relationship), so this tracks invite state locally:
-/// idle → optimistic Pending on tap, calling [NetworkRepository.sendInvitation];
-/// rolls back + error-haptics on failure. The full state machine (accept /
-/// withdraw) lives on the profile screen via ConnectButton.
-class _InlineConnect extends ConsumerStatefulWidget {
-  final String userId;
-  const _InlineConnect({required this.userId});
-
-  @override
-  ConsumerState<_InlineConnect> createState() => _InlineConnectState();
-}
-
-class _InlineConnectState extends ConsumerState<_InlineConnect> {
-  bool _pending = false;
-  bool _busy = false;
-
-  Future<void> _connect() async {
-    if (_busy || _pending) return;
-    setState(() {
-      _pending = true; // optimistic
-      _busy = true;
-    });
-    try {
-      await ref.read(networkRepositoryProvider).sendInvitation(widget.userId);
-      if (mounted) {
-        setState(() => _busy = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text(Strings.netInviteSentToast)),
-        );
-      }
-    } catch (e) {
-      HapticFeedback.heavyImpact();
-      if (mounted) {
-        setState(() {
-          _pending = false;
-          _busy = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(ErrorMessages.forApi(e)),
-          backgroundColor: AppColors.red,
-        ));
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_pending) {
-      return AppButton(
-        label: Strings.netPending,
-        variant: AppButtonVariant.secondary,
-        loading: _busy,
-        onPressed: null,
-      );
-    }
-    return AppButton(
-      label: Strings.netConnect,
-      icon: Icons.person_add_alt_1,
-      onPressed: _connect,
     );
   }
 }
@@ -227,6 +163,37 @@ class _Message extends StatelessWidget {
             Icon(icon, size: 48, color: AppColors.gray400),
             const SizedBox(height: AppSpacing.md),
             Text(text, style: AppText.body, textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A search that finds nobody on Doqto: offer to invite them instead.
+class _InviteInstead extends StatelessWidget {
+  final String query;
+  const _InviteInstead({required this.query});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.person_add_alt_1, size: 48, color: AppColors.medBlue),
+            const SizedBox(height: AppSpacing.md),
+            Text(Strings.inviteNobodyNamed(query),
+                style: AppText.heading, textAlign: TextAlign.center),
+            const SizedBox(height: AppSpacing.sm),
+            Text(Strings.inviteNobodyBody, style: AppText.body, textAlign: TextAlign.center),
+            const SizedBox(height: AppSpacing.lg),
+            FilledButton(
+              onPressed: () => context.push(AppRoutes.inviteFor(query)),
+              child: Text(Strings.inviteFromSearch(query)),
+            ),
           ],
         ),
       ),

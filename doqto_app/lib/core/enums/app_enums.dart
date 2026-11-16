@@ -95,6 +95,9 @@ enum MessageType {
   @JsonValue('image') image,
   @JsonValue('file') file,
   @JsonValue('system') system,
+  // Batch 5 (media): video clip with a poster thumbnail; poll.
+  @JsonValue('video') video,
+  @JsonValue('poll') poll,
 
   /// Tolerant fallback for wire values this client doesn't know yet (A5).
   /// Consumers must treat it like [text] (generic bubble) — never crash.
@@ -106,6 +109,8 @@ enum MessageType {
         MessageType.image => 'image',
         MessageType.file => 'file',
         MessageType.system => 'system',
+        MessageType.video => 'video',
+        MessageType.poll => 'poll',
         MessageType.unknown => 'unknown',
       };
 
@@ -115,6 +120,8 @@ enum MessageType {
         'image' => MessageType.image,
         'file' => MessageType.file,
         'system' => MessageType.system,
+        'video' => MessageType.video,
+        'poll' => MessageType.poll,
         _ => MessageType.unknown,
       };
 }
@@ -191,6 +198,7 @@ enum WsEventServer {
   messageRead,
   messageEdited,
   messageDeleted,
+  messageReacted,
   presenceUpdate,
   memberAdded,
   memberRemoved,
@@ -209,7 +217,33 @@ enum WsEventServer {
   conversationRequestDeclined,
   // Groups (M5) — recipient-scoped, PHI-free.
   groupInviteReceived,
-  groupMemberJoined;
+  groupMemberJoined,
+  // Realtime coverage (R1) — recipient-scoped, PHI-free.
+  /// First frame after a successful auth frame: the socket is live.
+  connected,
+  invitationWithdrawn,
+  orgUpdated,
+  groupUpdated,
+  profileUpdated,
+  /// Conversation preferences (batch 3) — sent only to my own devices.
+  conversationPrefsUpdated,
+  // Message features (batch 4). Pin events reach every member; the star
+  // event only the actor's own devices (stars are private).
+  messagePinned,
+  messageUnpinned,
+  messageStarred,
+  // Polls (batch 5): tallies + voter ids after a vote changed — every member.
+  pollUpdated,
+  // Settings (batch 6) — all sent ONLY to my own devices.
+  /// Another device signed in to my account; payload has its session_id.
+  sessionCreated,
+  /// A session was revoked; if session_id is mine, wipe and go to login.
+  sessionRevoked,
+  /// My notification settings changed elsewhere; payload is the full set.
+  notificationSettingsUpdated,
+  // Compliance (batch 7) — org admins only.
+  /// A break-glass access request in one of my orgs changed; refetch.
+  accessRequestUpdated;
 
   String get wire => switch (this) {
         WsEventServer.newMessage => 'new_message',
@@ -218,6 +252,7 @@ enum WsEventServer {
         WsEventServer.messageRead => 'message_read',
         WsEventServer.messageEdited => 'message_edited',
         WsEventServer.messageDeleted => 'message_deleted',
+        WsEventServer.messageReacted => 'message_reacted',
         WsEventServer.presenceUpdate => 'presence_update',
         WsEventServer.memberAdded => 'member_added',
         WsEventServer.memberRemoved => 'member_removed',
@@ -237,6 +272,21 @@ enum WsEventServer {
           'conversation_request_declined',
         WsEventServer.groupInviteReceived => 'group_invite_received',
         WsEventServer.groupMemberJoined => 'group_member_joined',
+        WsEventServer.connected => 'connected',
+        WsEventServer.invitationWithdrawn => 'invitation_withdrawn',
+        WsEventServer.orgUpdated => 'org_updated',
+        WsEventServer.groupUpdated => 'group_updated',
+        WsEventServer.profileUpdated => 'profile_updated',
+        WsEventServer.conversationPrefsUpdated => 'conversation_prefs_updated',
+        WsEventServer.messagePinned => 'message_pinned',
+        WsEventServer.messageUnpinned => 'message_unpinned',
+        WsEventServer.messageStarred => 'message_starred',
+        WsEventServer.pollUpdated => 'poll_updated',
+        WsEventServer.sessionCreated => 'session_created',
+        WsEventServer.sessionRevoked => 'session_revoked',
+        WsEventServer.notificationSettingsUpdated =>
+          'notification_settings_updated',
+        WsEventServer.accessRequestUpdated => 'access_request_updated',
       };
 
   static WsEventServer? fromWire(String s) => switch (s) {
@@ -246,6 +296,7 @@ enum WsEventServer {
         'message_read' => WsEventServer.messageRead,
         'message_edited' => WsEventServer.messageEdited,
         'message_deleted' => WsEventServer.messageDeleted,
+        'message_reacted' => WsEventServer.messageReacted,
         'presence_update' => WsEventServer.presenceUpdate,
         'member_added' => WsEventServer.memberAdded,
         'member_removed' => WsEventServer.memberRemoved,
@@ -265,6 +316,21 @@ enum WsEventServer {
           WsEventServer.conversationRequestDeclined,
         'group_invite_received' => WsEventServer.groupInviteReceived,
         'group_member_joined' => WsEventServer.groupMemberJoined,
+        'connected' => WsEventServer.connected,
+        'invitation_withdrawn' => WsEventServer.invitationWithdrawn,
+        'org_updated' => WsEventServer.orgUpdated,
+        'group_updated' => WsEventServer.groupUpdated,
+        'profile_updated' => WsEventServer.profileUpdated,
+        'conversation_prefs_updated' => WsEventServer.conversationPrefsUpdated,
+        'message_pinned' => WsEventServer.messagePinned,
+        'message_unpinned' => WsEventServer.messageUnpinned,
+        'message_starred' => WsEventServer.messageStarred,
+        'poll_updated' => WsEventServer.pollUpdated,
+        'session_created' => WsEventServer.sessionCreated,
+        'session_revoked' => WsEventServer.sessionRevoked,
+        'notification_settings_updated' =>
+          WsEventServer.notificationSettingsUpdated,
+        'access_request_updated' => WsEventServer.accessRequestUpdated,
         _ => null,
       };
 }
@@ -294,6 +360,33 @@ enum DevicePlatform {
         'ios' => DevicePlatform.ios,
         'android' => DevicePlatform.android,
         _ => throw ArgumentError('Unknown DevicePlatform: $s'),
+      };
+}
+
+/// Why a user or message is being reported (`POST /network/reports`, batch 4).
+/// Shared wire enum — mirrors backend ReportReason; the reason picker renders
+/// from it. Tolerant: unknown → [other].
+enum ReportReason {
+  @JsonValue('spam') spam,
+  @JsonValue('harassment') harassment,
+  @JsonValue('phi_misuse') phiMisuse,
+  @JsonValue('impersonation') impersonation,
+  @JsonValue('other') other;
+
+  String get wire => switch (this) {
+        ReportReason.spam => 'spam',
+        ReportReason.harassment => 'harassment',
+        ReportReason.phiMisuse => 'phi_misuse',
+        ReportReason.impersonation => 'impersonation',
+        ReportReason.other => 'other',
+      };
+
+  static ReportReason fromWire(String? s) => switch (s) {
+        'spam' => ReportReason.spam,
+        'harassment' => ReportReason.harassment,
+        'phi_misuse' => ReportReason.phiMisuse,
+        'impersonation' => ReportReason.impersonation,
+        _ => ReportReason.other,
       };
 }
 
@@ -409,6 +502,73 @@ enum Discoverability {
       };
 }
 
+/// Who may see when I was last online (user_privacy_settings, batch 2).
+/// Reciprocal: picking `nobody` hides everyone else's from me too.
+enum LastSeenVisibility {
+  @JsonValue('everyone') everyone,
+  @JsonValue('connections') connections,
+  @JsonValue('nobody') nobody,
+
+  /// Tolerant fallback (A5) — never emitted by the server.
+  @JsonValue('unknown') unknown;
+
+  String get wire => switch (this) {
+        LastSeenVisibility.everyone => 'everyone',
+        LastSeenVisibility.connections => 'connections',
+        LastSeenVisibility.nobody => 'nobody',
+        LastSeenVisibility.unknown => 'unknown',
+      };
+
+  static LastSeenVisibility fromWire(String? s) => switch (s) {
+        'everyone' => LastSeenVisibility.everyone,
+        'connections' => LastSeenVisibility.connections,
+        'nobody' => LastSeenVisibility.nobody,
+        _ => LastSeenVisibility.unknown,
+      };
+}
+
+/// Whether my live "online" state follows my last-seen audience or is hidden.
+enum OnlineVisibility {
+  @JsonValue('same_as_last_seen') sameAsLastSeen,
+  @JsonValue('nobody') nobody,
+
+  /// Tolerant fallback (A5) — never emitted by the server.
+  @JsonValue('unknown') unknown;
+
+  String get wire => switch (this) {
+        OnlineVisibility.sameAsLastSeen => 'same_as_last_seen',
+        OnlineVisibility.nobody => 'nobody',
+        OnlineVisibility.unknown => 'unknown',
+      };
+
+  static OnlineVisibility fromWire(String? s) => switch (s) {
+        'same_as_last_seen' => OnlineVisibility.sameAsLastSeen,
+        'nobody' => OnlineVisibility.nobody,
+        _ => OnlineVisibility.unknown,
+      };
+}
+
+/// Who may see my profile photo / about text (user_privacy_settings, batch 2).
+enum ProfileFieldVisibility {
+  @JsonValue('everyone') everyone,
+  @JsonValue('connections') connections,
+
+  /// Tolerant fallback (A5) — never emitted by the server.
+  @JsonValue('unknown') unknown;
+
+  String get wire => switch (this) {
+        ProfileFieldVisibility.everyone => 'everyone',
+        ProfileFieldVisibility.connections => 'connections',
+        ProfileFieldVisibility.unknown => 'unknown',
+      };
+
+  static ProfileFieldVisibility fromWire(String? s) => switch (s) {
+        'everyone' => ProfileFieldVisibility.everyone,
+        'connections' => ProfileFieldVisibility.connections,
+        _ => ProfileFieldVisibility.unknown,
+      };
+}
+
 /// Member capability ladder (groups, M5). Shared wire enum — mirrors backend
 /// GroupRole. §9.3.
 enum GroupRole {
@@ -474,19 +634,25 @@ enum RelationshipState {
   none,
   pendingOutgoing,
   pendingIncoming,
-  connected;
+  connected,
+
+  /// I blocked this doctor. Only ever sent to the blocker (the blocked party
+  /// gets a generic 404), so the profile can offer Unblock.
+  blocked;
 
   String get wire => switch (this) {
         RelationshipState.none => 'none',
         RelationshipState.pendingOutgoing => 'pending_outgoing',
         RelationshipState.pendingIncoming => 'pending_incoming',
         RelationshipState.connected => 'connected',
+        RelationshipState.blocked => 'blocked',
       };
 
   static RelationshipState fromWire(String? s) => switch (s) {
         'pending_outgoing' => RelationshipState.pendingOutgoing,
         'pending_incoming' => RelationshipState.pendingIncoming,
         'connected' => RelationshipState.connected,
+        'blocked' => RelationshipState.blocked,
         _ => RelationshipState.none,
       };
 }
@@ -519,4 +685,66 @@ enum DisappearAfter {
 
   final int? seconds;
   const DisappearAfter(this.seconds);
+}
+
+/// Status under a doctor's name (batch 6). Shared wire enum — mirrors backend
+/// StatusPreset. `PATCH /users/me/status {preset}`; anything that is not a
+/// preset arrives as `status_text` instead. Tolerant: unknown → null.
+enum StatusPreset {
+  @JsonValue('on_call') onCall,
+  @JsonValue('in_clinic') inClinic,
+  @JsonValue('in_surgery') inSurgery,
+  @JsonValue('off_duty') offDuty,
+  @JsonValue('available') available;
+
+  String get wire => switch (this) {
+        StatusPreset.onCall => 'on_call',
+        StatusPreset.inClinic => 'in_clinic',
+        StatusPreset.inSurgery => 'in_surgery',
+        StatusPreset.offDuty => 'off_duty',
+        StatusPreset.available => 'available',
+      };
+
+  /// Human label shown under the name (English; the status screen uses
+  /// localized copy for its own rows).
+  String get label => switch (this) {
+        StatusPreset.onCall => 'On call',
+        StatusPreset.inClinic => 'In clinic',
+        StatusPreset.inSurgery => 'In surgery',
+        StatusPreset.offDuty => 'Off duty',
+        StatusPreset.available => 'Available',
+      };
+
+  static StatusPreset? fromWire(String? s) => switch (s) {
+        'on_call' => StatusPreset.onCall,
+        'in_clinic' => StatusPreset.inClinic,
+        'in_surgery' => StatusPreset.inSurgery,
+        'off_duty' => StatusPreset.offDuty,
+        'available' => StatusPreset.available,
+        _ => null,
+      };
+}
+
+/// Notification vibration pattern (batch 6, Android only — iOS ignores it).
+/// Shared wire enum — mirrors backend VibratePattern. Tolerant: unknown →
+/// [defaultPattern].
+enum VibratePattern {
+  @JsonValue('default') defaultPattern,
+  @JsonValue('short') short,
+  @JsonValue('long') long,
+  @JsonValue('off') off;
+
+  String get wire => switch (this) {
+        VibratePattern.defaultPattern => 'default',
+        VibratePattern.short => 'short',
+        VibratePattern.long => 'long',
+        VibratePattern.off => 'off',
+      };
+
+  static VibratePattern fromWire(String? s) => switch (s) {
+        'short' => VibratePattern.short,
+        'long' => VibratePattern.long,
+        'off' => VibratePattern.off,
+        _ => VibratePattern.defaultPattern,
+      };
 }

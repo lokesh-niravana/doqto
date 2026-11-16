@@ -14,9 +14,10 @@ import '../../core/tokens/spacing.dart';
 /// bounces so the rhythm reads as organic typing rather than a metronome.
 /// Reduced-motion aware (static dots when animations are disabled).
 class TypingDots extends StatefulWidget {
-  final Color color;
+  /// null = the muted text colour of the current theme.
+  final Color? color;
   final double size;
-  const TypingDots({super.key, this.color = AppColors.gray400, this.size = 7});
+  const TypingDots({super.key, this.color, this.size = 7});
 
   @override
   State<TypingDots> createState() => _TypingDotsState();
@@ -55,7 +56,7 @@ class _TypingDotsState extends State<TypingDots>
             width: widget.size,
             height: widget.size,
             decoration:
-                BoxDecoration(color: widget.color, shape: BoxShape.circle),
+                BoxDecoration(color: widget.color ?? AppColors.gray400, shape: BoxShape.circle),
           ),
         ),
       ),

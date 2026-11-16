@@ -30,6 +30,19 @@ void main() {
     expect(tester.testTextInput.isVisible, isFalse);
   });
 
+  testWidgets('AppTextField: multi-line (group description) still dismisses on tap outside',
+      (tester) async {
+    await pump(tester, AppTextField(controller: TextEditingController(), maxLines: 4));
+
+    await tester.tap(find.byType(TextField));
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isTrue);
+
+    await tester.tap(find.text('outside'));
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isFalse);
+  });
+
   testWidgets('AppTextField: dismissOnValid drops the keypad when complete',
       (tester) async {
     await pump(

@@ -127,6 +127,10 @@ class ConnectButton extends ConsumerWidget {
           expand: expand,
           onPressed: onMessage,
         );
+
+      case RelationshipState.blocked:
+        // The profile screen renders the Unblock affordance itself.
+        return const SizedBox.shrink();
     }
   }
 

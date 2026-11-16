@@ -94,3 +94,12 @@ ConversationDisplay conversationDisplay({
     initials: initials,
   );
 }
+
+/// The other member of a direct conversation (null for groups / unknown).
+String? directPeerId(Conversation c, String? meId) {
+  if (c.type == ConversationType.group) return null;
+  for (final id in c.memberIds) {
+    if (id != meId) return id;
+  }
+  return null;
+}

@@ -21,6 +21,36 @@ class OrgCreateIn(BaseModel):
     city: str | None = None
     state: str | None = Field(default=None, min_length=2, max_length=2)
     practice_type: PracticeType | None = None
+    # The org_directory entry picked in lookup, if any.
+    directory_source: str | None = Field(default=None, max_length=20)
+    directory_id: str | None = Field(default=None, max_length=20)
+
+
+class DirectoryRefIn(BaseModel):
+    directory_source: str = Field(max_length=20)
+    directory_id: str = Field(max_length=20)
+
+
+class DirectoryOrgOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    status: OrgStatus
+
+
+class DirectoryEntryOut(BaseModel):
+    """One lookup result. `doqto_org` is set when it's already on Doqto —
+    the app offers to join instead of creating a duplicate."""
+
+    source: str
+    source_id: str
+    name: str
+    legal_name: str
+    city: str | None
+    state: str | None
+    practice_type: str
+    member_count: int | None
+    you_are_listed: bool
+    doqto_org: DirectoryOrgOut | None = None
 
 
 class OrgJoinIn(BaseModel):
@@ -37,9 +67,13 @@ class OrgOut(ORMModel):
     invite_code: str
     status: OrgStatus
     review_notes: str | None = None
+    directory_source: str | None = None
+    directory_id: str | None = None
     verified_at: datetime | None
     created_at: datetime
     member_count: int = 0
+    # Content policies (batch 4) — effective values, defaults filled in.
+    policies: dict = {}
 
 
 class OrgApproveIn(BaseModel):
@@ -56,12 +90,20 @@ class OrgNetworkingSettingsIn(BaseModel):
     external_networking_enabled: bool | None = None
     external_dm_policy: ExternalDmPolicy | None = None
     directory_visibility: DirectoryVisibility | None = None
+    # Content policies (batch 4, organizations.policies).
+    allow_forward_outside_org: bool | None = None
+    allow_copy: bool | None = None
+    # Batch 5: Save to Photos / share sheet for media in org chats.
+    allow_media_export: bool | None = None
+    # Batch 6: Android FLAG_SECURE in org chats (iOS only audits screenshots).
+    block_screenshots: bool | None = None
 
 
 class OrgNetworkingSettingsOut(ORMModel):
     external_networking_enabled: bool
     external_dm_policy: ExternalDmPolicy
     directory_visibility: DirectoryVisibility
+    policies: dict = {}
 
 
 class MemberOut(BaseModel):

@@ -17,6 +17,7 @@ import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/member_row.dart';
 import '../../widgets/primary_button.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 /// The Groups tab: my groups only — groups are not discoverable by browsing.
 /// Create is a header action (the center FAB slot is owned by the mic).
@@ -84,30 +85,100 @@ class GroupsTabScreen extends ConsumerWidget {
   }
 }
 
-/// A "My groups" list row: avatar, name, member count, and an Invited chip for
-/// a group you have been asked to join but have not accepted yet.
-class _GroupRow extends StatelessWidget {
+/// A "My groups" list row: avatar, name, member count, and for a group you
+/// have been asked to join but have not accepted yet, an Invited chip plus
+/// Accept / Decline right on the row.
+class _GroupRow extends ConsumerWidget {
   final Group group;
   final VoidCallback onTap;
   const _GroupRow({required this.group, required this.onTap});
 
+  Future<void> _accept(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    // The row moves from "Invited" to the member list as soon as the
+    // optimistic state flips, so this context is dead after the await.
+    final router = GoRouter.maybeOf(context); // null in widget tests
+    try {
+      await ref.read(myGroupsProvider.notifier).acceptInvite(group);
+      messenger.showSnackBar(
+        const SnackBar(content: Text(Strings.groupJoinedToast)),
+      );
+      router?.push(AppRoutes.group(group.id));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+        content: Text(ErrorMessages.forApi(e)),
+        backgroundColor: AppColors.red,
+      ));
+    }
+  }
+
+  Future<void> _decline(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(myGroupsProvider.notifier).declineInvite(group);
+      messenger.showSnackBar(
+        const SnackBar(content: Text(Strings.groupDeclinedToast)),
+      );
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+        content: Text(ErrorMessages.forApi(e)),
+        backgroundColor: AppColors.red,
+      ));
+    }
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final invited = group.membershipTag == GroupMembershipTag.invited;
     final subtitle = _memberCountLabel(group.memberCount);
-    final trailing = group.membershipTag == GroupMembershipTag.invited
-        ? const AppPill(label: Strings.groupInvited, tone: PillTone.brand)
-        : null;
-    return MemberRow(
+    final row = MemberRow(
+      key: ValueKey('group-row-${group.id}'),
       avatar: DoctorAvatar(
         initials: group.initials,
         colorIndex: group.avatarIndex,
-        imageUrl: group.avatarUrl,
+        imageUrl: groupAvatarUrl(group.id, group.avatarUrl),
         heroTag: 'group-avatar-${group.id}',
       ),
       title: group.name,
       subtitle: subtitle,
-      trailing: trailing,
+      trailing: invited
+          ? const AppPill(label: Strings.groupInvited, tone: PillTone.brand)
+          : null,
       onTap: onTap,
+    );
+    if (!invited) return row;
+    return Column(
+      children: [
+        row,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.screenHorizontal,
+            0,
+            AppSpacing.screenHorizontal,
+            AppSpacing.sm,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: AppButton(
+                  key: ValueKey('group-decline-${group.id}'),
+                  label: Strings.groupDecline,
+                  variant: AppButtonVariant.secondary,
+                  onPressed: () => _decline(context, ref),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: AppButton(
+                  key: ValueKey('group-accept-${group.id}'),
+                  label: Strings.groupAccept,
+                  onPressed: () => _accept(context, ref),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

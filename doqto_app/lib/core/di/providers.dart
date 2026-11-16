@@ -4,17 +4,26 @@ import '../../data/api/api_client.dart';
 import '../../data/api/token_storage.dart';
 import '../../data/api/websocket_client.dart';
 import '../../data/repositories/auth_repository.dart';
-import '../../data/repositories/billing_repository.dart';
 import '../../data/services/auth_broker.dart';
 import '../../data/services/firebase_auth_broker.dart';
 import '../../data/repositories/chat_repository.dart';
+import '../../data/repositories/compliance_repository.dart';
 import '../../data/repositories/groups_repository.dart';
 import '../../data/repositories/network_repository.dart';
 import '../../data/repositories/org_repository.dart';
+import '../../data/repositories/settings_repository.dart';
 import '../../data/repositories/user_repository.dart';
+import '../../data/services/app_badge.dart';
+import '../../data/services/app_clipboard.dart';
 import '../../data/services/chat_cache.dart';
+import '../../data/services/chat_document_store.dart';
+import '../../data/services/chat_media_cache.dart';
+import '../../data/services/device_info.dart';
+import '../../data/services/document_viewer.dart';
 import '../../data/services/groups_cache.dart';
+import '../../data/services/media_native.dart';
 import '../../data/services/network_cache.dart';
+import '../../data/services/network_usage.dart';
 import '../../data/services/npi_lookup.dart';
 import '../../data/services/outbox.dart';
 import '../../data/services/push_token_provider.dart';
@@ -22,16 +31,36 @@ import '../../data/services/url_opener.dart';
 
 final tokenStorageProvider = Provider<TokenStorage>((ref) => TokenStorage());
 
-final apiClientProvider = Provider<ApiClient>(
-  (ref) => ApiClient(tokens: ref.watch(tokenStorageProvider)),
+/// Bytes up / down (batch 5, Storage and data). Persisted in the encrypted
+/// chat cache; the store is read lazily so tests without Hive still build.
+final networkUsageProvider = ChangeNotifierProvider<NetworkUsage>(
+  (ref) => NetworkUsage(store: ChatCacheUsageStore(ref.watch(chatCacheProvider))),
 );
+
+final apiClientProvider = Provider<ApiClient>(
+  (ref) => ApiClient(
+    tokens: ref.watch(tokenStorageProvider),
+    // `.notifier`, never the value: the counter notifies on every byte, and
+    // watching the value would rebuild the client, every repository and
+    // everything downstream (outbox drainer, socket session…) per request —
+    // duplicate client_id sends were the visible symptom.
+    usage: ref.watch(networkUsageProvider.notifier),
+  ),
+);
+
+/// Native media tools behind `doqto/media` (poster frames, Save to Photos,
+/// document scanner, network type, earpiece routing). Faked in tests.
+final mediaNativeProvider = Provider<MediaNative>((ref) => ChannelMediaNative());
 
 /// Firebase sign-in, behind an interface so tests never need a Firebase
 /// binding. Overridden with [FakeAuthBroker] in widget tests.
 final authBrokerProvider = Provider<AuthBroker>((ref) => FirebaseAuthBroker());
 
 final authRepositoryProvider = Provider<AuthRepository>(
-  (ref) => AuthRepository(ref.watch(apiClientProvider), ref.watch(tokenStorageProvider)),
+  (ref) => AuthRepository(
+    ref.watch(apiClientProvider),
+    ref.watch(tokenStorageProvider),
+  ),
 );
 
 final orgRepositoryProvider = Provider<OrgRepository>(
@@ -42,9 +71,23 @@ final chatRepositoryProvider = Provider<ChatRepository>(
   (ref) => ChatRepository(ref.watch(apiClientProvider)),
 );
 
+/// Org policies, break-glass, org moderation, scheduled list (batch 7).
+final complianceRepositoryProvider = Provider<ComplianceRepository>(
+  (ref) => ComplianceRepository(ref.watch(apiClientProvider)),
+);
+
 final userRepositoryProvider = Provider<UserRepository>(
   (ref) => UserRepository(ref.watch(apiClientProvider)),
 );
+
+/// Batch 6 settings endpoints (notifications, sessions, PIN, status, …).
+final settingsRepositoryProvider = Provider<SettingsRepository>(
+  (ref) => SettingsRepository(ref.watch(apiClientProvider)),
+);
+
+/// Device name / platform / app version for sign-in and the min-version
+/// check. Overridden with [FakeDeviceInfo] in tests.
+final deviceInfoProvider = Provider<DeviceInfo>((ref) => PlatformDeviceInfo());
 
 final groupsRepositoryProvider = Provider<GroupsRepository>(
   (ref) => GroupsRepository(ref.watch(apiClientProvider)),
@@ -67,13 +110,50 @@ final wsConnStateProvider = StreamProvider<WsConnState>(
 
 final outboxProvider = Provider<Outbox>((ref) => Outbox());
 
-final outboxMediaStoreProvider =
-    Provider<OutboxMediaStore>((ref) => OutboxMediaStore());
+final outboxMediaStoreProvider = Provider<OutboxMediaStore>(
+  (ref) => OutboxMediaStore(),
+);
 
-final pushTokenProviderProvider =
-    Provider<PushTokenProvider>((ref) => FirebasePushTokenProvider());
+final pushTokenProviderProvider = Provider<PushTokenProvider>(
+  (ref) => FirebasePushTokenProvider(),
+);
 
 final chatCacheProvider = Provider<ChatCache>((ref) => ChatCache());
+
+/// App-icon badge (batch 3). Overridden in tests.
+final appBadgeProvider = Provider<AppBadge>((ref) => AppBadge());
+
+/// Chat images on the phone, keyed by message id: downloaded once, wiped on
+/// sign-out. Overridden with a temp-dir backend in tests.
+/// Which chat each cached photo / document belongs to (Manage storage).
+final mediaIndexProvider = Provider<MediaIndex>((ref) {
+  final cache = ref.watch(chatCacheProvider);
+  return ChatCacheMediaIndex(
+    all: cache.mediaIndex,
+    put: cache.putMediaIndex,
+    remove: cache.removeMediaIndex,
+    clear: cache.clearMediaIndex,
+  );
+});
+
+final chatDocumentStoreProvider = Provider<ChatDocumentStore>(
+  (ref) => ChatDocumentStore(
+    index: ref.watch(mediaIndexProvider),
+    onDownloaded: ref.read(networkUsageProvider).addReceived,
+  ),
+);
+
+final documentViewerProvider = Provider<DocumentViewer>(
+  (ref) => const NativeDocumentViewer(),
+);
+
+final chatMediaCacheProvider = Provider<ChatMediaCache>(
+  (ref) => ChatMediaCache(
+    CacheManagerMediaBackend(),
+    index: ref.watch(mediaIndexProvider),
+    onDownloaded: ref.read(networkUsageProvider).addReceived,
+  ),
+);
 
 /// Public CMS registry prefill. Overridden with a fake in widget tests.
 final npiLookupProvider = Provider<NpiLookup>((ref) => NpiLookup());
@@ -82,8 +162,9 @@ final networkCacheProvider = Provider<NetworkCache>((ref) => NetworkCache());
 
 final groupsCacheProvider = Provider<GroupsCache>((ref) => GroupsCache());
 
-final billingRepositoryProvider = Provider<BillingRepository>(
-  (ref) => BillingRepository(ref.watch(apiClientProvider)),
-);
+/// Copy-to-clipboard (batch 4): local-only pasteboard on iOS. Faked in tests.
+final clipboardProvider = Provider<AppClipboard>((ref) => const SystemClipboard());
 
-final urlOpenerProvider = Provider<UrlOpener>((ref) => const ExternalUrlOpener());
+final urlOpenerProvider = Provider<UrlOpener>(
+  (ref) => const ExternalUrlOpener(),
+);

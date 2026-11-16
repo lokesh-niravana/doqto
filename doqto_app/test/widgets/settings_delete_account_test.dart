@@ -3,9 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:doqto_app/core/di/providers.dart';
-import 'package:doqto_app/data/api/api_client.dart';
-import 'package:doqto_app/data/models/billing.dart';
-import 'package:doqto_app/data/repositories/billing_repository.dart';
 import 'package:doqto_app/data/repositories/user_repository.dart';
 import 'package:doqto_app/ui/screens/settings/settings_screen.dart';
 
@@ -22,41 +19,36 @@ class _SpyUserRepo implements UserRepository {
       throw UnimplementedError('${invocation.memberName} not stubbed');
 }
 
-/// Settings shows the subscription row; keep it off the network.
-class _Billing extends BillingRepository {
-  _Billing() : super(ApiClient());
-  @override
-  Future<Billing> status() async => const Billing(
-        entitled: true,
-        reason: 'trial',
-        monthlyCents: 899,
-        yearlyCents: 8000,
-      );
-}
 
 late _SpyUserRepo _repo;
 
 Widget _app() => ProviderScope(
       overrides: [
         userRepositoryProvider.overrideWithValue(_repo),
-        billingRepositoryProvider.overrideWithValue(_Billing()),
       ],
       child: const MaterialApp(home: SettingsScreen()),
     );
+
+/// Settings is a lazy list taller than the test screen: scroll to the end.
+Future<void> _open(WidgetTester tester) async {
+  await tester.pumpWidget(_app());
+  await tester.pumpAndSettle();
+  await tester.scrollUntilVisible(find.text('Delete account'), 200);
+  // Rows that entered during the scroll finish their staggered fade-in.
+  await tester.pumpAndSettle();
+}
 
 void main() {
   setUp(() => _repo = _SpyUserRepo());
 
   testWidgets('Delete account is reachable from Settings', (tester) async {
-    await tester.pumpWidget(_app());
-    await tester.pumpAndSettle();
+    await _open(tester);
     expect(find.text('Delete account'), findsOneWidget);
   });
 
   testWidgets('confirm stays disabled until DELETE is typed exactly',
       (tester) async {
-    await tester.pumpWidget(_app());
-    await tester.pumpAndSettle();
+    await _open(tester);
     await tester.tap(find.text('Delete account'));
     await tester.pumpAndSettle();
 
@@ -75,8 +67,7 @@ void main() {
   });
 
   testWidgets('cancelling never calls the API', (tester) async {
-    await tester.pumpWidget(_app());
-    await tester.pumpAndSettle();
+    await _open(tester);
     await tester.tap(find.text('Delete account'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'DELETE');

@@ -7,6 +7,12 @@ def presence_key(user_id: UUID | str) -> str:
     return f"presence:{user_id}"
 
 
+def last_seen_throttle_key(user_id: UUID | str) -> str:
+    """SET NX + TTL gate so users.last_seen_at is written at most once per
+    LAST_SEEN_WRITE_INTERVAL_SECONDS while a socket is alive."""
+    return f"presence:lastseen:{user_id}"
+
+
 
 
 
@@ -52,6 +58,11 @@ def org_policy_key(org_id: UUID | str) -> str:
 WS_EVENTS_CHANNEL = "ws:events"
 
 
+def link_preview_key(url_hash: str) -> str:
+    """Cached link preview (JSON), keyed by sha256(url) — batch 4."""
+    return f"link_preview:{url_hash}"
+
+
 def purge_lock_key() -> str:
     """Singleton lock so only one replica runs the disappearing-message purge."""
     return "lock:purge_expired"
@@ -60,3 +71,13 @@ def purge_lock_key() -> str:
 def scheduled_send_lock_key() -> str:
     """Singleton lock so only one replica delivers due scheduled messages."""
     return "lock:scheduled_send"
+
+
+def pin_verify_attempts_key(user_id: UUID | str) -> str:
+    """Wrong-PIN attempt counter (batch 6), windowed."""
+    return f"pin:attempts:{user_id}"
+
+
+def settings_jobs_lock_key() -> str:
+    """Singleton lock for the status-expiry / PIN-reset pass (batch 6)."""
+    return "lock:settings_jobs"

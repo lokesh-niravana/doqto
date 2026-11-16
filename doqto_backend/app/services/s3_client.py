@@ -94,6 +94,18 @@ class RealS3Client:
         )
         log.info("[S3] uploaded %d bytes to %s", len(data), key)
 
+    async def copy_object(self, *, src_key: str, dst_key: str) -> None:
+        """Server-side copy (forwarding): the copy gets its own key and its own
+        SSE, so deleting either message never strands the other."""
+        bucket = settings.AWS_S3_BUCKET_NAME
+        _get_client().copy_object(
+            Bucket=bucket,
+            Key=dst_key,
+            CopySource={"Bucket": bucket, "Key": src_key},
+            ServerSideEncryption="AES256",
+        )
+        log.info("[S3] copied %s -> %s", src_key, dst_key)
+
     async def delete_object(self, *, key: str) -> None:
         """Disposal (§164.310(d)(2)(i)): remove media for purged/deleted content."""
         _get_client().delete_object(Bucket=settings.AWS_S3_BUCKET_NAME, Key=key)
@@ -106,3 +118,75 @@ class RealS3Client:
             ExpiresIn=expires_in,
         )
         return url
+
+    # --- Presigned uploads (batch 5) ---------------------------------------- #
+    # The client PUTs bytes straight to S3 (one PUT, or N multipart parts) so a
+    # 100 MB video never passes through the API container. SSE is the bucket
+    # default (see _ensure_bucket), so the presigned PUTs need no header.
+
+    async def presigned_put(self, *, key: str, content_type: str, expires_in: int) -> str:
+        return _get_client().generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": settings.AWS_S3_BUCKET_NAME,
+                "Key": key,
+                "ContentType": content_type,
+            },
+            ExpiresIn=expires_in,
+        )
+
+    async def create_multipart_upload(self, *, key: str, content_type: str) -> str:
+        resp = _get_client().create_multipart_upload(
+            Bucket=settings.AWS_S3_BUCKET_NAME,
+            Key=key,
+            ContentType=content_type,
+            ServerSideEncryption="AES256",
+        )
+        return resp["UploadId"]
+
+    async def presigned_upload_part(
+        self, *, key: str, upload_id: str, part_number: int, expires_in: int
+    ) -> str:
+        return _get_client().generate_presigned_url(
+            "upload_part",
+            Params={
+                "Bucket": settings.AWS_S3_BUCKET_NAME,
+                "Key": key,
+                "UploadId": upload_id,
+                "PartNumber": part_number,
+            },
+            ExpiresIn=expires_in,
+        )
+
+    async def complete_multipart_upload(
+        self, *, key: str, upload_id: str, parts: list[tuple[int, str]]
+    ) -> None:
+        _get_client().complete_multipart_upload(
+            Bucket=settings.AWS_S3_BUCKET_NAME,
+            Key=key,
+            UploadId=upload_id,
+            MultipartUpload={
+                "Parts": [{"PartNumber": n, "ETag": etag} for n, etag in sorted(parts)]
+            },
+        )
+        log.info("[S3] completed multipart %s (%d parts)", key, len(parts))
+
+    async def abort_multipart_upload(self, *, key: str, upload_id: str) -> None:
+        _get_client().abort_multipart_upload(
+            Bucket=settings.AWS_S3_BUCKET_NAME, Key=key, UploadId=upload_id
+        )
+        log.info("[S3] aborted multipart %s", key)
+
+    async def head_object(self, *, key: str) -> dict | None:
+        """{size, content_type} or None when the object does not exist."""
+        try:
+            resp = _get_client().head_object(Bucket=settings.AWS_S3_BUCKET_NAME, Key=key)
+        except ClientError as e:
+            if str(e.response.get("Error", {}).get("Code", "")) in ("404", "NoSuchKey", "NotFound"):
+                return None
+            raise
+        return {"size": int(resp["ContentLength"]), "content_type": resp.get("ContentType")}
+
+    async def get_object(self, *, key: str) -> bytes:
+        resp = _get_client().get_object(Bucket=settings.AWS_S3_BUCKET_NAME, Key=key)
+        return resp["Body"].read()

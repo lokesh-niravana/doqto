@@ -34,6 +34,35 @@ class NetworkRepository {
     return _page(j, PersonCard.fromJson);
   }
 
+  // --- Invite a colleague ---
+
+  Future<List<NpiHit>> npiLookup(String q, {String? state}) async {
+    final j = await _api.getList(ApiRoutes.npiLookup, query: {
+      'q': q,
+      if (state != null && state.isNotEmpty) 'state': state,
+    });
+    return j
+        .map((e) => NpiHit.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Remembered so they're connected to us when they register with this NPI.
+  Future<void> recordInvite(String npi) =>
+      _api.post(ApiRoutes.appInvites, body: {'npi': npi});
+
+  // --- Recommended for you ---
+
+  Future<CursorPage<PersonCard>> suggestions({String? cursor, int? limit}) async {
+    final j = await _api.get(ApiRoutes.suggestions, query: {
+      'cursor': ?cursor,
+      'limit': ?limit,
+    });
+    return _page(j, PersonCard.fromJson);
+  }
+
+  Future<void> dismissSuggestion(String userId) =>
+      _api.post(ApiRoutes.suggestionDismiss(userId));
+
   // --- Invitations ---
 
   Future<Invitation> sendInvitation(String recipientId, {String? message}) async {
@@ -93,6 +122,19 @@ class NetworkRepository {
 
   Future<void> unblock(String userId) => _api.delete(ApiRoutes.block(userId));
 
+  /// People I muted (no pushes or banners from them). Ids only.
+  Future<List<String>> listMutes() async {
+    final list = await _api.getList(ApiRoutes.mutes);
+    return [
+      for (final e in list)
+        if ((e as Map)['muted_user_id'] is String) e['muted_user_id'] as String,
+    ];
+  }
+
+  Future<void> mute(String userId) => _api.post(ApiRoutes.mute(userId));
+
+  Future<void> unmute(String userId) => _api.delete(ApiRoutes.mute(userId));
+
   Future<CursorPage<PersonCard>> listBlocks({String? cursor}) async {
     final j = await _api.get(ApiRoutes.blocks, query: {
       'cursor': ?cursor,
@@ -100,15 +142,23 @@ class NetworkRepository {
     return _page(j, PersonCard.fromJson);
   }
 
+  /// Report a person (default) or, with [subjectType] `message`, a message —
+  /// then [contextMessageIds] carries the last few ids in the thread (ids
+  /// only, never bodies).
   Future<void> report({
     required String subjectId,
     required String reason,
     String? details,
+    String subjectType = 'user',
+    List<String>? contextMessageIds,
   }) =>
       _api.post(ApiRoutes.reports, body: {
+        'subject_type': subjectType,
         'subject_id': subjectId,
         'reason': reason,
         if (details != null && details.isNotEmpty) 'details': details,
+        if (contextMessageIds != null && contextMessageIds.isNotEmpty)
+          'context_message_ids': contextMessageIds,
       });
 
   // --- Privacy settings ---
@@ -120,6 +170,13 @@ class NetworkRepository {
 
   Future<PrivacySettings> updatePrivacy(PrivacySettings settings) async {
     final j = await _api.patch(ApiRoutes.usersMePrivacy, body: settings.toJson());
+    return PrivacySettings.fromJson(j);
+  }
+
+  /// PATCH only the fields that changed — the house style for the privacy
+  /// screen, so one toggle never re-sends (and never clobbers) the rest.
+  Future<PrivacySettings> patchPrivacy(Map<String, dynamic> patch) async {
+    final j = await _api.patch(ApiRoutes.usersMePrivacy, body: patch);
     return PrivacySettings.fromJson(j);
   }
 

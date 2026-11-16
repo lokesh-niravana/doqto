@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -10,8 +11,11 @@ import '../core/enums/app_enums.dart';
 import '../core/router/app_router.dart';
 import '../data/models/conversation.dart';
 import '../data/services/notification_service.dart';
+import '../data/services/tone_player.dart';
 import 'auth_state.dart';
 import 'chat_state.dart';
+import 'network_state.dart';
+import 'notification_settings_state.dart';
 
 final notificationServiceProvider = Provider<NotificationService>(
   (ref) => NotificationService(),
@@ -29,7 +33,12 @@ final activeConversationProvider = StateProvider<String?>((ref) => null);
 /// fall back to treating the payload as a conversation id.
 String routePathForPayload(String payload) {
   final uri = Uri.tryParse(payload);
-  if (uri != null && (uri.scheme == 'doqto' || payload.startsWith('/'))) {
+  // `doqto://` scheme, a bare path, or a universal link on our domains.
+  const linkHosts = {'api.doqto.ai', 'doqto.ai', 'www.doqto.ai'};
+  if (uri != null &&
+      (uri.scheme == 'doqto' ||
+          payload.startsWith('/') ||
+          (uri.scheme == 'https' && linkHosts.contains(uri.host)))) {
     final segs = uri.pathSegments;
     if (segs.length >= 2) {
       switch (segs[0]) {
@@ -37,6 +46,22 @@ String routePathForPayload(String payload) {
           return AppRoutes.person(segs[1]);
         case 'chat':
           return AppRoutes.chat(segs[1]);
+        case 'groups':
+          // `/groups/{id}` opens the group (chat, or info for an invitee);
+          // `/groups/{id}/info` lands on Group info directly.
+          return segs.length >= 3 && segs[2] == 'info'
+              ? AppRoutes.groupInfo(segs[1])
+              : AppRoutes.group(segs[1]);
+        case 'g':
+          return AppRoutes.groupInviteLink(segs[1]);
+        // Universal-link paths (batch 7): /c/<conversation>, /u/<user>.
+        case 'c':
+          return AppRoutes.chat(segs[1]);
+        case 'u':
+          return AppRoutes.person(segs[1]);
+        case 'settings':
+          // `/settings/devices` from the "New sign-in" banner (batch 6).
+          if (segs[1] == 'devices') return AppRoutes.linkedDevices;
       }
     }
   }
@@ -45,12 +70,27 @@ String routePathForPayload(String payload) {
 }
 
 /// FCM data payload → route. The backend sends only ids (PHI-free):
-/// `conversation_id` for messages/requests, `type` for invitations.
+/// `conversation_id` for messages/requests, `type` for invitations, and
+/// `group_id` for a group invite (lands on Group info, where Accept lives).
 String? routePathForPushData(Map<String, dynamic> data) {
   final conv = data['conversation_id'] as String?;
   if (conv != null && conv.isNotEmpty) return AppRoutes.chat(conv);
   return switch (data['type']) {
+    'group_invite' => switch (data['group_id']) {
+        final String id when id.isNotEmpty => AppRoutes.groupInfo(id),
+        _ => AppRoutes.groups,
+      },
     'invitation_received' || 'invitation_accepted' => AppRoutes.network,
+    // Break-glass (batch 7): "needs your review" / "was decided" both land
+    // on the list, which refetches on open.
+    'access_request' => AppRoutes.myOrgAccessRequests,
+    // Another device signed in to this account (batch 6).
+    'new_sign_in' => AppRoutes.linkedDevices,
+    // Someone we invited joined and is now connected: open their profile.
+    'invite_joined' => switch (data['user_id']) {
+        final String id when id.isNotEmpty => AppRoutes.person(id),
+        _ => AppRoutes.network,
+      },
     _ => null,
   };
 }
@@ -95,6 +135,43 @@ Future<void> _notifyInvitationAccepted(
       );
 }
 
+/// "New sign-in on iPhone 16" (batch 6) — from the `session_created` WS
+/// event, skipped for this device's own session. Tap opens Linked devices.
+Future<void> _notifyNewSignIn(Ref ref, Map<String, dynamic> data) async {
+  final sessionId = data['session_id'] as String?;
+  if (sessionId == null || sessionId == ref.read(authProvider.notifier).sessionId) {
+    return;
+  }
+  final device = (data['device_name'] as String?)?.trim();
+  await ref.read(notificationServiceProvider).showNetworkEvent(
+        tag: 'sign-in:$sessionId',
+        title: 'New sign-in',
+        body: (device == null || device.isEmpty)
+            ? 'A new device signed in to your account'
+            : 'New sign-in on $device',
+        route: 'doqto:///settings/devices',
+      );
+}
+
+/// "Dr X invited you to {group}" — banner + a tap that lands on Group info,
+/// where Accept / Decline live. From the `group_invite_received` WS event
+/// (names only, not PHI).
+Future<void> _notifyGroupInvite(Ref ref, Map<String, dynamic> data) async {
+  final groupId = data['group_id'] as String?;
+  if (groupId == null) return;
+  final name = (data['inviter_name'] as String?)?.trim();
+  final group = (data['group_name'] as String?)?.trim();
+  await ref.read(notificationServiceProvider).showNetworkEvent(
+        // One banner per group: a re-sent invite replaces, never stacks.
+        tag: 'group-invite:$groupId',
+        title: Strings.groupInviteNotificationTitle,
+        body: (name == null || name.isEmpty || group == null || group.isEmpty)
+            ? Strings.groupInviteNotificationBodyGeneric
+            : Strings.groupInviteNotificationBody(name, group),
+        route: 'doqto:///groups/$groupId/info',
+      );
+}
+
 final notificationListenerProvider = Provider<void>((ref) {
   final service = ref.watch(notificationServiceProvider);
   service.init(
@@ -125,6 +202,14 @@ final notificationListenerProvider = Provider<void>((ref) {
     }
     if (event.type == WsEventServer.invitationAccepted) {
       await _notifyInvitationAccepted(ref, event.data);
+      return;
+    }
+    if (event.type == WsEventServer.groupInviteReceived) {
+      await _notifyGroupInvite(ref, event.data);
+      return;
+    }
+    if (event.type == WsEventServer.sessionCreated) {
+      await _notifyNewSignIn(ref, event.data);
       return;
     }
     if (event.type != WsEventServer.newMessage) return;
@@ -171,6 +256,9 @@ final notificationListenerProvider = Provider<void>((ref) {
       }
     }
     if (conv == null) return;
+    // Muted chat, or a muted person (batch 3): the message lands silently.
+    if (conv.prefs.isMuted()) return;
+    if (ref.read(mutedUsersProvider).value?.contains(senderId) ?? false) return;
 
     final title = conv.displayName ?? conv.name ?? 'New message';
     // H3: previews are acceptable only because these banners are
@@ -186,9 +274,33 @@ final notificationListenerProvider = Provider<void>((ref) {
             MessageType.file => '📎 File',
             _ => (event.data['content'] as String?) ?? 'New message',
           };
-    await ref
-        .read(notificationServiceProvider)
-        .showMessage(conversationId: conversationId, title: title, body: body);
+    // Batch 6 notification settings: groups land on their own channel, and a
+    // kind with "Show preview" off gets the generic body. Settings not loaded
+    // yet (or never initialised — the sync provider owns that) → behave as
+    // before (preview per AppConstants); never trigger a fetch from here.
+    final isGroup = conv.type == ConversationType.group;
+    final settings = ref.exists(notificationSettingsProvider)
+        ? ref.read(notificationSettingsProvider).asData?.value
+        : null;
+    final showPreview = settings == null
+        ? true
+        : (isGroup ? settings.groupsShowPreview : settings.messagesShowPreview);
+    await ref.read(notificationServiceProvider).showMessage(
+          conversationId: conversationId,
+          title: title,
+          body: body,
+          channelId: isGroup ? 'groups' : 'messages',
+          showPreview: showPreview,
+        );
+    // In-app receive feedback while the app is in front.
+    if (settings != null && appActive) {
+      if (settings.conversationTones) {
+        ref.read(tonePlayerProvider).play('pop').catchError((_) {});
+      }
+      if (settings.haptics) {
+        HapticFeedback.lightImpact().catchError((_) {});
+      }
+    }
   });
   ref.onDispose(sub.cancel);
 });

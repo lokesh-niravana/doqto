@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import os
 
-TEST_DATABASE_URL = "postgresql+asyncpg://doqto:doqto@localhost:5432/doqto_test"
+TEST_DB_NAME = os.environ.get("DOQTO_TEST_DB", "doqto_test")
+TEST_DATABASE_URL = f"postgresql+asyncpg://doqto:doqto@localhost:5432/{TEST_DB_NAME}"
 # Env vars beat .env in pydantic-settings — repoint the whole app at test infra.
 # ENVIRONMENT must be explicit: the code default is the fail-safe "production".
 os.environ["ENVIRONMENT"] = "local"
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
-os.environ["REDIS_URL"] = "redis://:doqto-dev@localhost:6379/1"
+os.environ["REDIS_URL"] = os.environ.get("DOQTO_TEST_REDIS_URL", "redis://:doqto-dev@localhost:6379/1")
 
 import asyncio  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
@@ -58,15 +59,19 @@ def _test_database():
             user="doqto", password="doqto", database="doqto", host="localhost", port=5432
         )
         exists = await conn.fetchval(
-            "SELECT 1 FROM pg_database WHERE datname = 'doqto_test'"
+            f"SELECT 1 FROM pg_database WHERE datname = '{TEST_DB_NAME}'"
         )
         if not exists:
-            await conn.execute("CREATE DATABASE doqto_test")
+            await conn.execute(f"CREATE DATABASE {TEST_DB_NAME}")
         await conn.close()
 
         engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
         async with engine.begin() as c:
-            await c.run_sync(Base.metadata.drop_all)
+            # DROP SCHEMA … CASCADE instead of drop_all: drop_all assumes the
+            # DB matches the current models (it ALTERs away use_alter FKs
+            # first) and breaks on a test DB left by an older schema.
+            await c.execute(sa.text("DROP SCHEMA public CASCADE"))
+            await c.execute(sa.text("CREATE SCHEMA public"))
             await c.run_sync(Base.metadata.create_all)
             # Indexes that live only in migrations (0007, 0009).
             await c.execute(
@@ -96,6 +101,17 @@ async def _clean():
     redis = await get_redis()
     await redis.flushdb()
     yield
+    # Fire-and-forget work (push dispatch after a send, invite fan-out) opens
+    # its own DB session. Left pending when the loop closes, its connection
+    # sits idle-in-transaction and the next test's TRUNCATE waits forever.
+    # Let it finish; cancel anything that is still running after a grace.
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    if pending:
+        _, still = await asyncio.wait(pending, timeout=5)
+        for t in still:
+            t.cancel()
+        if still:
+            await asyncio.gather(*still, return_exceptions=True)
     try:
         await close_redis()
     except Exception:
@@ -221,3 +237,137 @@ def stripe_gateway(monkeypatch):
     yield fake
     app.dependency_overrides.pop(get_stripe, None)
     app.dependency_overrides.pop(get_optional_stripe, None)
+
+
+class FakeApple:
+    """Stands in for Apple's signature checks. The JWS strings in tests are
+    keys into `transactions`; anything else is a bad signature."""
+
+    def __init__(self) -> None:
+        self.transactions: dict = {}
+
+    def transaction(self, signed_transaction: str):
+        from app.services.apple_store import AppleSignatureError
+
+        if signed_transaction not in self.transactions:
+            raise AppleSignatureError("INVALID_CHAIN")
+        return self.transactions[signed_transaction]
+
+    def notification(self, signed_payload: str):
+        return self.transaction(signed_payload)
+
+
+@pytest.fixture
+def apple_gateway():
+    from app.services.apple_store import get_apple
+
+    fake = FakeApple()
+    app.dependency_overrides[get_apple] = lambda: fake
+    yield fake
+    app.dependency_overrides.pop(get_apple, None)
+
+
+class FakeS3:
+    """In-memory stand-in for the S3 calls FileService makes (batch 5 adds
+    the presigned multipart flow). Tests play the client: `put()` writes the
+    bytes a presigned PUT / part upload would have delivered."""
+
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+        self.sizes: dict[str, int] = {}  # declared size override (head_object)
+        self.content_types: dict[str, str] = {}
+        self.multipart: dict[str, dict] = {}  # upload_id -> {key, content_type, parts}
+        self.aborted: list[str] = []
+        self.deleted: list[str] = []
+        self.copied: list[tuple[str, str]] = []
+        self.uploads: list[str] = []
+
+    # --- test-side helpers --------------------------------------------- #
+    def put(self, key: str, data: bytes, *, size: int | None = None) -> None:
+        self.objects[key] = data
+        if size is not None:
+            self.sizes[key] = size
+
+    def put_part(self, upload_id: str, part_number: int, data: bytes) -> str:
+        self.multipart[upload_id]["parts"][part_number] = data
+        return f'"etag-{part_number}"'
+
+    def size_of(self, key: str) -> int:
+        return self.sizes.get(key, len(self.objects[key]))
+
+    # --- FileService surface -------------------------------------------- #
+    async def upload_bytes(self, *, key, data, content_type):
+        self.objects[key] = data
+        self.sizes.pop(key, None)
+        self.content_types[key] = content_type
+        self.uploads.append(key)
+        return key
+
+    async def copy_object(self, *, src_key, dst_key):
+        self.copied.append((src_key, dst_key))
+        if src_key in self.objects:
+            self.objects[dst_key] = self.objects[src_key]
+
+    async def delete_object(self, *, key):
+        self.deleted.append(key)
+        self.objects.pop(key, None)
+        self.sizes.pop(key, None)
+
+    async def presigned_url(self, *, key, expires_in=300):
+        return f"https://s3.test/{key}?get"
+
+    async def presigned_put(self, *, key, content_type, expires_in=3600):
+        self.content_types[key] = content_type
+        return f"https://s3.test/{key}?put"
+
+    async def create_multipart_upload(self, *, key, content_type):
+        upload_id = f"mpu-{len(self.multipart) + 1}"
+        self.multipart[upload_id] = {"key": key, "content_type": content_type, "parts": {}}
+        return upload_id
+
+    async def presigned_upload_part(self, *, key, upload_id, part_number, expires_in=3600):
+        return f"https://s3.test/{key}?uploadId={upload_id}&partNumber={part_number}"
+
+    async def complete_multipart_upload(self, *, key, upload_id, parts):
+        mpu = self.multipart[upload_id]
+        assert mpu["key"] == key
+        for n, etag in parts:
+            assert n in mpu["parts"], f"part {n} never uploaded"
+            assert etag == f'"etag-{n}"', f"bad etag for part {n}"
+        self.objects[key] = b"".join(mpu["parts"][n] for n in sorted(mpu["parts"]))
+        self.content_types[key] = mpu["content_type"]
+        del self.multipart[upload_id]
+
+    async def abort_multipart_upload(self, *, key, upload_id):
+        self.aborted.append(upload_id)
+        self.multipart.pop(upload_id, None)
+
+    async def head_object(self, *, key):
+        if key not in self.objects:
+            return None
+        return {"size": self.size_of(key), "content_type": self.content_types.get(key)}
+
+    async def get_object(self, *, key):
+        return self.objects[key]
+
+
+@pytest.fixture
+def fake_s3(monkeypatch):
+    from app.services.file_service import FileService
+
+    fake = FakeS3()
+    for name in (
+        "upload_bytes",
+        "copy_object",
+        "delete_object",
+        "presigned_url",
+        "presigned_put",
+        "create_multipart_upload",
+        "presigned_upload_part",
+        "complete_multipart_upload",
+        "abort_multipart_upload",
+        "head_object",
+        "get_object",
+    ):
+        monkeypatch.setattr(FileService, name, getattr(fake, name))
+    return fake

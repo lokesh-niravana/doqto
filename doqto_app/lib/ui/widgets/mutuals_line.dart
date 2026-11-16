@@ -125,7 +125,7 @@ class _AvatarStack extends StatelessWidget {
                   width: size,
                   height: size,
                   alignment: Alignment.center,
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     color: AppColors.gray100,
                     shape: BoxShape.circle,
                   ),

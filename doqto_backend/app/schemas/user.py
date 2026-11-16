@@ -17,8 +17,9 @@ from app.core.constants import (
     YEARS_OF_EXPERIENCE_MAX,
     YEARS_OF_EXPERIENCE_MIN,
 )
-from app.core.enums import UserRole
+from app.core.enums import StatusPreset, UserRole
 from app.schemas.common import ORMModel
+from app.schemas.settings import split_status
 
 
 class UserOut(ORMModel):
@@ -41,6 +42,12 @@ class UserOut(ORMModel):
     skills: list[str] = []
     last_seen_at: datetime | None
     created_at: datetime
+    # Settings (batch 6)
+    status_preset: StatusPreset | None = None
+    status_text: str | None = None
+    status_expires_at: datetime | None = None
+    pin_enabled: bool = False
+    pin_clears_at: datetime | None = None
 
 
 class UserPatch(BaseModel):
@@ -81,9 +88,28 @@ class UserPatch(BaseModel):
         return cleaned
 
 
+def pin_clears_at(user) -> datetime | None:  # type: ignore[no-untyped-def]
+    """End of a running forgot-PIN cooldown, or None."""
+    if user.pin_hash is None or user.pin_reset_at is None:
+        return None
+    from datetime import timedelta
+
+    from app.core.constants import PIN_RESET_COOLDOWN_SEC
+
+    return user.pin_reset_at + timedelta(seconds=PIN_RESET_COOLDOWN_SEC)
+
+
 async def build_user_out(user) -> UserOut:  # type: ignore[no-untyped-def]
     """Serialize a User ORM row into UserOut, embedding a fresh presigned avatar URL."""
-    out = UserOut.model_validate(user)
+    preset, text = split_status(user.status_text)
+    out = UserOut.model_validate(user).model_copy(
+        update={
+            "status_preset": preset,
+            "status_text": text,
+            "pin_enabled": user.pin_hash is not None,
+            "pin_clears_at": pin_clears_at(user),
+        }
+    )
     if user.avatar_url:
         from app.services.file_service import FileService
 

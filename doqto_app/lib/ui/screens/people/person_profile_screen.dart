@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
@@ -18,7 +17,10 @@ import '../../widgets/connect_button.dart';
 import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
+import '../../widgets/inline_banner.dart';
 import '../../widgets/section_card.dart';
+import '../settings/blocked_list_screen.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 /// Self-loading person profile addressed by user id. Reachable via
 /// `/people/:userId` and the `doqto:///people/<id>` deep link. Sections render
@@ -46,7 +48,11 @@ class PersonProfileScreen extends ConsumerWidget {
       body: async.when(
         loading: () => const _ProfileSkeleton(),
         error: (e, _) => _Unavailable(error: e),
-        data: (p) => _ProfileBody(profile: p, onMessage: () => _startChat(context, ref)),
+        data: (p) => _ProfileBody(
+          profile: p,
+          onMessage: () => _startChat(context, ref),
+          onUnblock: () => _confirmUnblock(context, ref),
+        ),
       ),
     );
   }
@@ -70,12 +76,29 @@ class PersonProfileScreen extends ConsumerWidget {
   }
 
   void _openMenu(BuildContext context, WidgetRef ref) {
+    final blocked = ref.read(relationshipProvider(userId)).valueOrNull?.relationship
+            .connectionState ==
+        RelationshipState.blocked;
+    final muted = ref.read(mutedUsersProvider).value?.contains(userId) ?? false;
     showModalBottomSheet<void>(
       context: context,
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            ListTile(
+              key: const ValueKey('profile-mute'),
+              leading: Icon(
+                muted ? Icons.notifications_active_outlined : Icons.notifications_off_outlined,
+              ),
+              title: Text(
+                muted ? Strings.profileUnmuteNotifications : Strings.profileMuteNotifications,
+              ),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _toggleMute(context, ref, !muted);
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.flag_outlined),
               title: const Text(Strings.netReport),
@@ -84,18 +107,71 @@ class PersonProfileScreen extends ConsumerWidget {
                 _report(context, ref);
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.block, color: AppColors.red),
-              title: const Text(Strings.netBlock),
-              onTap: () {
-                Navigator.of(ctx).pop();
-                _confirmBlock(context, ref);
-              },
-            ),
+            if (blocked)
+              ListTile(
+                key: const ValueKey('profile-unblock'),
+                leading: const Icon(Icons.lock_open_outlined),
+                title: const Text(Strings.netUnblock),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _confirmUnblock(context, ref);
+                },
+              )
+            else
+              ListTile(
+                key: const ValueKey('profile-block'),
+                leading: const Icon(Icons.block, color: AppColors.red),
+                title: const Text(Strings.netBlock),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _confirmBlock(context, ref);
+                },
+              ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _confirmUnblock(BuildContext context, WidgetRef ref) async {
+    final profile = ref.read(relationshipProvider(userId)).valueOrNull;
+    if (profile == null) return;
+    final card = PersonCard(
+      id: profile.id,
+      fullName: profile.fullName,
+      headline: profile.headline,
+      specialty: profile.specialty,
+      locationLabel: profile.locationLabel,
+      avatarColor: profile.avatarColor,
+      avatarUrl: profile.avatarUrl,
+      avatarPresignedUrl: profile.avatarPresignedUrl,
+      degree: ConnectionDegree.out,
+      mutualCount: 0,
+    );
+    // One dialog + one wording, shared with the blocked list. The list
+    // notifier does the call; the profile just mirrors the new state.
+    final done = await BlockedListScreen.confirmUnblock(context, ref, card);
+    if (done && ref.exists(relationshipProvider(userId))) {
+      ref.read(relationshipProvider(userId).notifier).refresh();
+    }
+  }
+
+  /// Mute a person (M1 `mutes`): no pushes or in-app banners from them in
+  /// any chat. Nothing else changes — they can still message and see me.
+  Future<void> _toggleMute(BuildContext context, WidgetRef ref, bool mute) async {
+    try {
+      await ref.read(mutedUsersProvider.notifier).setMuted(userId, mute);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(mute ? Strings.profileMutedToast : Strings.profileUnmutedToast),
+      ));
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(ErrorMessages.forApi(e)),
+        backgroundColor: AppColors.red,
+      ));
+    }
   }
 
   Future<void> _report(BuildContext context, WidgetRef ref) async {
@@ -138,12 +214,12 @@ class PersonProfileScreen extends ConsumerWidget {
     );
     if (confirmed != true || !context.mounted) return;
     try {
-      await ref.read(networkRepositoryProvider).block(userId);
+      await ref.read(connectionsProvider.notifier).block(userId);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text(Strings.netBlockedToast)),
       );
-      if (context.mounted) context.pop();
+      // Stay: the profile now shows the blocked banner with Unblock.
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -157,14 +233,21 @@ class PersonProfileScreen extends ConsumerWidget {
 class _ProfileBody extends ConsumerWidget {
   final NetworkProfile profile;
   final VoidCallback onMessage;
-  const _ProfileBody({required this.profile, required this.onMessage});
+  final VoidCallback onUnblock;
+  const _ProfileBody({
+    required this.profile,
+    required this.onMessage,
+    required this.onUnblock,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final rel = profile.relationship;
+    final blocked = rel.connectionState == RelationshipState.blocked;
     // ConnectButton already IS the message button when connected, and for an
     // unconnected colleague — don't double up in either case.
-    final showMessageButton = rel.connectionState != RelationshipState.connected &&
+    final showMessageButton = !blocked &&
+        rel.connectionState != RelationshipState.connected &&
         rel.canMessage != CanMessage.denied &&
         !(rel.connectionState == RelationshipState.none && rel.isColleague);
 
@@ -178,12 +261,17 @@ class _ProfileBody extends ConsumerWidget {
               initials: profile.initials,
               colorIndex: profile.avatarIndex,
               size: AvatarSize.xxl,
-              imageUrl: profile.avatarPresignedUrl,
+              imageUrl: userAvatarUrl(profile.id, profile.avatarUrl),
               heroTag: 'member-avatar-${profile.id}',
             ),
             const SizedBox(height: AppSpacing.md),
             Text(profile.fullName,
                 style: AppText.display, textAlign: TextAlign.center),
+            if (profile.statusLabel() case final status?) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(status, key: const ValueKey('person-status'),
+                  style: AppText.body, textAlign: TextAlign.center),
+            ],
             if (_notEmpty(profile.headline)) ...[
               const SizedBox(height: AppSpacing.xs),
               Padding(
@@ -215,16 +303,37 @@ class _ProfileBody extends ConsumerWidget {
         const SizedBox(height: AppSpacing.lg),
 
         // Primary connection control + optional secondary Message button.
+        // A doctor I blocked gets a banner and Unblock instead.
+        if (blocked)
+          const Padding(
+            padding: EdgeInsets.only(bottom: AppSpacing.sm),
+            child: InlineBanner(
+              key: ValueKey('profile-blocked-banner'),
+              tone: BannerTone.neutral,
+              icon: Icons.block,
+              text: Strings.privacyBlockedBanner,
+            ),
+          ),
         Padding(
           padding:
               const EdgeInsets.symmetric(horizontal: AppSpacing.screenHorizontal),
           child: Column(
             children: [
-              ConnectButton(
-                userId: profile.id,
-                onMessage: onMessage,
-                expand: true,
-              ),
+              if (blocked)
+                AppButton(
+                  key: const ValueKey('profile-unblock-button'),
+                  label: Strings.netUnblock,
+                  icon: Icons.lock_open_outlined,
+                  variant: AppButtonVariant.secondary,
+                  expand: true,
+                  onPressed: onUnblock,
+                )
+              else
+                ConnectButton(
+                  userId: profile.id,
+                  onMessage: onMessage,
+                  expand: true,
+                ),
               if (showMessageButton) ...[
                 const SizedBox(height: AppSpacing.sm),
                 AppButton(

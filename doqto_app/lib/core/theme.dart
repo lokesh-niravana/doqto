@@ -7,26 +7,43 @@ import 'tokens/radii.dart';
 import 'tokens/spacing.dart';
 import 'tokens/typography.dart';
 
-/// Composes tokens into a single ThemeData. Light theme only (design.md — no dark mode).
+/// Composes tokens into ThemeData. Light only: Doqto has one palette
+/// ([DoqtoPalette.light]; docs/design.md says "No dark mode").
 class AppTheme {
   AppTheme._();
 
-  static ThemeData light() {
+  static ThemeData light() => _compose(DoqtoPalette.light);
+
+  static ThemeData _compose(DoqtoPalette p) {
     final scheme = ColorScheme.fromSeed(
       seedColor: AppColors.medBlue,
       primary: AppColors.medBlue,
       onPrimary: AppColors.onPrimary,
       surface: AppColors.surface,
       onSurface: AppColors.textPrimary,
-      brightness: Brightness.light,
+      brightness: p.brightness,
       error: AppColors.red,
     );
 
     return ThemeData(
       useMaterial3: true,
+      brightness: p.brightness,
       colorScheme: scheme,
+      extensions: [DoqtoColors(p)],
       scaffoldBackgroundColor: AppColors.appBg,
-      textTheme: GoogleFonts.dmSansTextTheme().apply(
+      canvasColor: AppColors.surface,
+      dialogTheme: DialogThemeData(backgroundColor: AppColors.surface),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: AppColors.surface,
+        surfaceTintColor: Colors.transparent,
+      ),
+      listTileTheme: ListTileThemeData(
+        textColor: AppColors.textPrimary,
+        iconColor: AppColors.textSecondary,
+      ),
+      textTheme: GoogleFonts.dmSansTextTheme(
+        ThemeData.light().textTheme,
+      ).apply(
         bodyColor: AppColors.textPrimary,
         displayColor: AppColors.textDisplay,
       ),
@@ -49,11 +66,11 @@ class AppTheme {
         ),
         border: OutlineInputBorder(
           borderRadius: AppRadii.rMd,
-          borderSide: const BorderSide(color: AppColors.gray200, width: 1.5),
+          borderSide: BorderSide(color: AppColors.gray200, width: 1.5),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: AppRadii.rMd,
-          borderSide: const BorderSide(color: AppColors.gray200, width: 1.5),
+          borderSide: BorderSide(color: AppColors.gray200, width: 1.5),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: AppRadii.rMd,
@@ -84,7 +101,7 @@ class AppTheme {
           shape: RoundedRectangleBorder(borderRadius: AppRadii.rFull),
         ),
       ),
-      dividerTheme: const DividerThemeData(
+      dividerTheme: DividerThemeData(
         color: AppColors.gray100,
         thickness: 1,
         space: 1,

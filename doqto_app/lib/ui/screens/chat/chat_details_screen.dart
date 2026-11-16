@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
@@ -18,6 +19,7 @@ import '../../widgets/app_pressable.dart';
 import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '_conversation_display.dart';
+import '../../../core/utils/avatar_urls.dart';
 
 /// Timer options — mirror of DISAPPEAR_OPTIONS_SEC on the backend.
 const Map<int?, String> kDisappearOptions = {
@@ -76,7 +78,7 @@ class ChatDetailsScreen extends ConsumerWidget {
                   DoctorAvatar(
                     initials: display.initials,
                     size: AvatarSize.xxl,
-                    imageUrl: display.otherUser?.avatarPresignedUrl,
+                    imageUrl: userAvatarUrl(display.otherUser?.id, display.otherUser?.avatarUrl),
                   ),
                   const SizedBox(height: AppSpacing.md),
                   Text(
@@ -96,6 +98,71 @@ class ChatDetailsScreen extends ConsumerWidget {
           const SizedBox(height: AppSpacing.lg),
           FadeSlideIn.staggered(
             1,
+            _Section(
+              title: 'Messages',
+              child: Column(
+                children: [
+                  AppPressable(
+                    key: const ValueKey('details-media'),
+                    onTap: () => context.push(AppRoutes.mediaGallery(conv.id)),
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.perm_media_outlined, color: AppColors.medBlue),
+                      title: Text(Strings.mediaGalleryTitle, style: AppText.bodyPrimary),
+                      trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+                    ),
+                  ),
+                  AppPressable(
+                    key: const ValueKey('details-starred'),
+                    onTap: () => context.push(AppRoutes.starredIn(conv.id)),
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.star_outline_rounded, color: AppColors.medBlue),
+                      title: Text(Strings.chatStarredMessages, style: AppText.bodyPrimary),
+                      trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Batch 6: per-chat colour theme, wallpaper and notifications.
+          FadeSlideIn.staggered(
+            2,
+            _Section(
+              title: 'Personalise',
+              child: Column(
+                children: [
+                  ListTile(
+                    key: const ValueKey('details-chat-theme'),
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.palette_outlined, color: AppColors.medBlue),
+                    title: Text('Chat colour', style: AppText.bodyPrimary),
+                    trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+                    onTap: () => context.push(AppRoutes.chatThemeFor(conv.id)),
+                  ),
+                  ListTile(
+                    key: const ValueKey('details-wallpaper'),
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.wallpaper_rounded, color: AppColors.medBlue),
+                    title: Text('Wallpaper', style: AppText.bodyPrimary),
+                    trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+                    onTap: () => context.push(AppRoutes.wallpaperFor(conv.id)),
+                  ),
+                  ListTile(
+                    key: const ValueKey('details-custom-notifications'),
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.notifications_none_rounded, color: AppColors.medBlue),
+                    title: Text('Custom notifications', style: AppText.bodyPrimary),
+                    trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
+                    onTap: () => context.push(AppRoutes.chatNotifications(conv.id)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          FadeSlideIn.staggered(
+            3,
             _Section(
               title: 'Chat settings',
               child: AppPressable(

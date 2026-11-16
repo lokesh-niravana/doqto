@@ -1,27 +1,28 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/painting.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/di/providers.dart';
 import '../core/enums/app_enums.dart';
+import '../data/api/api_client.dart';
 import '../data/models/user.dart';
 import '../data/services/auth_broker.dart';
+import '../data/services/push_token_provider.dart';
 import '../data/repositories/user_repository.dart';
-import 'billing_state.dart';
 import 'org_state.dart';
+import 'settings_state.dart';
 
 enum AuthStage {
   unknown,
   signedOut,
+
+  /// Batch 6: tokens issued, but this new device owes the two-step PIN.
+  /// Every route but `/auth/pin/*` answers 403 until it is entered.
+  pinRequired,
   needsRegistration,
-  /// Straight after registration: pick a plan. Only ever set by
-  /// [AuthNotifier.completeRegistration] — there is no server-side record of a
-  /// plan yet, so a returning user is never sent back here.
-  needsPayment,
-  /// The trial is over and there is no live subscription. The server decides
-  /// this (`GET /billing`); the app never infers it from dates.
-  needsSubscription,
   needsOrg,
   pendingVerification,
   signedIn,
@@ -31,22 +32,33 @@ class AuthState {
   final AuthStage stage;
   final User? user;
 
-  /// On the paywall, the doctor chose "Read my messages": the router lets
-  /// them past it, since reading never needs a subscription. The next 402
-  /// clears it. Deliberately not persisted — a restart shows the paywall.
-  final bool readOnly;
-  const AuthState(this.stage, this.user, {this.readOnly = false});
+  /// When a forgot-PIN wait is running: the instant the PIN clears.
+  final DateTime? pinClearsAt;
+  const AuthState(this.stage, this.user, {this.pinClearsAt});
 
-  AuthState copyWith({AuthStage? stage, User? user, bool? readOnly}) => AuthState(
-        stage ?? this.stage,
-        user ?? this.user,
-        readOnly: readOnly ?? this.readOnly,
-      );
+  AuthState copyWith({AuthStage? stage, User? user, DateTime? pinClearsAt}) =>
+      AuthState(stage ?? this.stage, user ?? this.user,
+          pinClearsAt: pinClearsAt ?? this.pinClearsAt);
 }
 
 class AuthNotifier extends Notifier<AuthState> {
   StreamSubscription<String>? _tokenRefreshSub;
-  Future<void>? _billingRefresh;
+
+  /// Waits between push-registration attempts when no token is available yet
+  /// or the API call fails. Tests shrink these.
+  @visibleForTesting
+  static List<Duration> pushRetryDelays = const [
+    Duration(seconds: 5),
+    Duration(seconds: 30),
+    Duration(minutes: 2),
+  ];
+
+  /// After a success, an app resume re-registers at most this often (keeps
+  /// last_seen fresh and heals a row the server pruned).
+  static const pushResyncInterval = Duration(hours: 6);
+
+  DateTime? _pushSyncedAt;
+  bool _pushSyncing = false;
 
   @override
   AuthState build() {
@@ -55,14 +67,45 @@ class AuthNotifier extends Notifier<AuthState> {
     // token expired, revoked, or backend returns session_revoked), drop
     // straight to signedOut. The router redirect fires automatically.
     ref.read(apiClientProvider).onSessionEnded = _onSessionEnded;
-    // A 402 means the server thinks the subscription lapsed: re-check and let
-    // the router move the doctor to the paywall. Read-only ends here too: they
-    // tried something that needs paying for.
-    ref.read(apiClientProvider).onPaymentRequired = () {
-      if (state.readOnly) state = state.copyWith(readOnly: false);
-      unawaited(refreshBilling());
-    };
+    ref.read(apiClientProvider).onPinRequired = _onPinRequired;
     return const AuthState(AuthStage.unknown, null);
+  }
+
+  /// The server said this device still owes its PIN (a gate opened while we
+  /// were signed in — the owner set a PIN on another device). Park on the
+  /// gate without dropping the session.
+  void _onPinRequired() {
+    if (state.stage == AuthStage.pinRequired ||
+        state.stage == AuthStage.signedOut) {
+      return;
+    }
+    Future.microtask(() {
+      if (state.stage == AuthStage.signedOut) return;
+      state = AuthState(AuthStage.pinRequired, state.user);
+    });
+  }
+
+  /// This device's linked-devices session id (null before batch 6 sign-ins).
+  String? get sessionId {
+    try {
+      return ref.read(settingsStoreProvider).sessionId;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _rememberSession(String? sessionId) async {
+    try {
+      await ref.read(settingsStoreProvider).setSessionId(sessionId);
+    } catch (_) {}
+  }
+
+  /// WS `session_revoked` for MY session: the server already refuses the
+  /// tokens, so wipe and return to login at once (docs/settings.md).
+  void onSessionRevokedEvent(String? revokedSessionId) {
+    if (revokedSessionId == null || revokedSessionId != sessionId) return;
+    unawaited(ref.read(tokenStorageProvider).clear());
+    _onSessionEnded();
   }
 
   void _onSessionEnded() {
@@ -87,6 +130,21 @@ class AuthNotifier extends Notifier<AuthState> {
     try {
       await ref.read(outboxMediaStoreProvider).deleteAll();
     } catch (_) {}
+    // Chat photos kept on the phone (and, in production, whatever older
+    // builds cached by URL in the shared default cache).
+    try {
+      await ref.read(chatMediaCacheProvider).clear();
+    } catch (_) {}
+    // Chat documents kept on the phone.
+    try {
+      await ref.read(chatDocumentStoreProvider).clear();
+    } catch (_) {}
+    // Decoded bitmaps held in memory.
+    try {
+      PaintingBinding.instance.imageCache
+        ..clear()
+        ..clearLiveImages();
+    } catch (_) {}
   }
 
   Future<void> bootstrap() async {
@@ -109,41 +167,64 @@ class AuthNotifier extends Notifier<AuthState> {
         return;
       }
       state = AuthState(await _resolveStageForRegisteredUser(), me);
+    } on ApiException catch (e) {
+      if (e.status == 403 && e.detail == 'pin_required') {
+        // Tokens are good; the device owes its PIN. Keep them.
+        state = const AuthState(AuthStage.pinRequired, null);
+        return;
+      }
+      await tokens.clear();
+      state = const AuthState(AuthStage.signedOut, null);
     } catch (_) {
       await tokens.clear();
       state = const AuthState(AuthStage.signedOut, null);
     }
   }
 
+  /// Two-step PIN gate (batch 6): verify for this session, then continue the
+  /// normal sign-in resolution. Throws `pin_invalid` /
+  /// `pin_too_many_attempts` as [ApiException].
+  Future<void> verifyPin(String pin) async {
+    await ref.read(settingsRepositoryProvider).verifyPin(pin);
+    await _afterTokens();
+  }
+
+  /// Forgot PIN: start the 7-day wait. Returns when the PIN clears.
+  Future<DateTime?> requestPinReset() async {
+    final r = await ref.read(settingsRepositoryProvider).requestPinReset();
+    state = state.copyWith(pinClearsAt: r.clearsAt);
+    return r.clearsAt;
+  }
+
   /// For a fully-registered user, decide if they need onboarding (no orgs)
   /// or can go straight to chats. Also hydrates [orgProvider] as a side effect
   /// so downstream screens have the active org available.
   Future<AuthStage> _resolveStageForRegisteredUser() async {
-    // The server is the authority. A failed check lets the user in: the
-    // endpoints still return 402, so failing open costs nothing and avoids
-    // locking someone out over a flaky network.
-    final billing = await ref.read(billingProvider.notifier).refresh();
-    if (billing != null && !billing.entitled) return AuthStage.needsSubscription;
+    // Fire-and-forget: push registration must never block sign-in. It runs
+    // for every registered doctor, org or not, and before the org lookup so a
+    // failure there cannot skip it.
+    unawaited(syncPushToken());
     try {
       final orgs = await ref.read(orgRepositoryProvider).listMine();
-      // No org is no longer a blocker: onboarding ends at the plan picker and
-      // chats loads without one. Joining an org later comes back through here
-      // and connects the socket then.
+      // No org is no longer a blocker: onboarding ends at registration and
+      // chats loads without one. The realtime socket is owned by
+      // realtimeSessionProvider, keyed on the auth stage, so it is live here
+      // too (it used to open only inside the org branch below).
       if (orgs.isEmpty) return AuthStage.signedIn;
-      // Pick the most recently created org as "current". Users with multiple
-      // orgs can switch in a later release.
-      final org = orgs.first;
+      // An org adds to an account; it never gates it. A pending org (just
+      // created, waiting for review) shows as pending on My Org, and chats
+      // and connections keep working. Current org: the newest verified one,
+      // else the newest pending one. Users with several orgs can switch in a
+      // later release.
+      final org = orgs.firstWhere(
+        (o) => o.status == OrgStatus.active,
+        orElse: () => orgs.firstWhere(
+          (o) => o.status == OrgStatus.pending,
+          orElse: () => orgs.first,
+        ),
+      );
       ref.read(orgProvider.notifier).setCurrent(org);
-      final stage = switch (org.status) {
-        OrgStatus.active => AuthStage.signedIn,
-        OrgStatus.pending || OrgStatus.suspended => AuthStage.pendingVerification,
-      };
-      if (stage == AuthStage.signedIn) {
-        await _connectWs(org.id);
-        // Fire-and-forget: push registration must never block sign-in.
-        unawaited(_syncPushToken());
-      }
-      return stage;
+      return AuthStage.signedIn;
     } catch (_) {
       // If we can't reach the backend right now, assume needs-org so the user
       // isn't stuck on a broken chats screen.
@@ -158,49 +239,78 @@ class AuthNotifier extends Notifier<AuthState> {
     final user = state.user;
     if (user == null) return;
     final nextStage = await _resolveStageForRegisteredUser();
-    // Same guard as [_refreshBilling]: a sign-out (or another doctor signing
-    // in) while this was in flight wins.
+    // A sign-out (or another doctor signing in) while this was in flight
+    // wins.
     if (state.user?.id != user.id || state.stage == AuthStage.signedOut) return;
     state = AuthState(nextStage, user);
-  }
-
-  /// Open the realtime socket for the signed-in user's org. Drives instant
-  /// message delivery, read receipts, and typing indicators.
-  Future<void> _connectWs(String orgId) async {
-    // Token is read per reconnect attempt, so a token refreshed by the Dio
-    // interceptor is picked up automatically instead of fail-looping.
-    await ref.read(websocketClientProvider).connect(
-          orgId: orgId,
-          tokenProvider: () => ref.read(tokenStorageProvider).accessToken,
-        );
   }
 
   DevicePlatform get _devicePlatform =>
       Platform.isIOS ? DevicePlatform.ios : DevicePlatform.android;
 
-  /// Register this device's push token (no-op while the provider is stubbed)
-  /// and keep it registered across platform token rotations. Called after
-  /// login and on every authed app start; the backend upsert is idempotent.
-  Future<void> _syncPushToken() async {
-    final provider = ref.read(pushTokenProviderProvider);
+  /// Register this device's push token and keep it registered across
+  /// platform token rotations. Runs after sign-in, on every authed app start,
+  /// and on resume (see [onAppResumed]); the backend upsert is idempotent.
+  ///
+  /// A miss is retried on [pushRetryDelays]: on iOS the token is often not
+  /// ready in the first seconds after launch. Errors are logged, never thrown.
+  Future<void> syncPushToken() async {
+    if (_pushSyncing) return;
+    _pushSyncing = true;
     try {
-      final token = await provider.getToken();
-      if (token != null && token.isNotEmpty) {
-        await ref
-            .read(userRepositoryProvider)
-            .registerPushToken(token: token, platform: _devicePlatform);
-      }
-    } catch (_) {
-      // Best-effort — retried on next app start / login.
-    }
-    await _tokenRefreshSub?.cancel();
-    _tokenRefreshSub = provider.onTokenRefresh.listen((token) async {
+      final PushTokenProvider provider;
       try {
-        await ref
-            .read(userRepositoryProvider)
-            .registerPushToken(token: token, platform: _devicePlatform);
+        provider = ref.read(pushTokenProviderProvider);
+      } catch (_) {
+        return; // no Firebase binding (tests, a broken plugin)
+      }
+      final waits = [Duration.zero, ...pushRetryDelays];
+      for (var i = 0; i < waits.length; i++) {
+        if (waits[i] > Duration.zero) await Future<void>.delayed(waits[i]);
+        if (state.stage == AuthStage.signedOut) return;
+        try {
+          final token = await provider.getToken();
+          if (token != null && token.isNotEmpty) {
+            await ref
+                .read(userRepositoryProvider)
+                .registerPushToken(token: token, platform: _devicePlatform);
+            _pushSyncedAt = DateTime.now();
+            break;
+          }
+          debugPrint('push: no device token yet (attempt ${i + 1})');
+        } catch (e) {
+          debugPrint('push: registration failed (attempt ${i + 1}): $e');
+        }
+      }
+      await _tokenRefreshSub?.cancel();
+      try {
+        _tokenRefreshSub = provider.onTokenRefresh.listen((token) async {
+          try {
+            await ref
+                .read(userRepositoryProvider)
+                .registerPushToken(token: token, platform: _devicePlatform);
+            _pushSyncedAt = DateTime.now();
+          } catch (e) {
+            debugPrint('push: re-registration after rotation failed: $e');
+          }
+        });
       } catch (_) {}
-    });
+    } finally {
+      _pushSyncing = false;
+    }
+  }
+
+  /// App came to the foreground: if this device is not known to be
+  /// registered (or it has been a while), register again. This is what heals
+  /// a phone that missed registration, without waiting for a cold start.
+  void onAppResumed() {
+    if (state.user == null || state.stage == AuthStage.signedOut) return;
+    if (state.stage == AuthStage.needsRegistration) return;
+    final last = _pushSyncedAt;
+    if (last != null && DateTime.now().difference(last) < pushResyncInterval) {
+      return;
+    }
+    unawaited(syncPushToken());
   }
 
   /// Start phone verification. Firebase sends the SMS; the returned challenge
@@ -225,9 +335,29 @@ class AuthNotifier extends Notifier<AuthState> {
   /// The one place a Firebase ID token becomes a Doqto session. Every sign-in
   /// method funnels through here, so the stage machine has a single entry.
   Future<void> _exchange(String idToken) async {
-    final pair = await ref.read(authRepositoryProvider).signInWithFirebase(idToken);
+    Map<String, dynamic> device = const {};
+    try {
+      device = (await ref.read(deviceInfoProvider).describe()).toJson();
+    } catch (_) {}
+    final pair = await ref
+        .read(authRepositoryProvider)
+        .signInWithFirebase(idToken, device: device);
+    await _rememberSession(pair.sessionId);
+    if (pair.pinRequired) {
+      // Nothing but /auth/pin/* works until the PIN is entered; /users/me
+      // would 403. The gate screen calls [verifyPin].
+      state = AuthState(AuthStage.pinRequired, null, pinClearsAt: pair.pinClearsAt);
+      return;
+    }
+    await _afterTokens();
+  }
+
+  /// Tokens are usable: load me and resolve the stage.
+  Future<void> _afterTokens() async {
     final me = await ref.read(authRepositoryProvider).me();
-    if (!pair.isRegistered) {
+    final registered =
+        me.fullName.isNotEmpty && !me.npiNumber.startsWith('PENDING');
+    if (!registered) {
       state = AuthState(AuthStage.needsRegistration, me);
       return;
     }
@@ -258,59 +388,7 @@ class AuthNotifier extends Notifier<AuthState> {
             .updateMe(UserPatchBody(city: city, state: practiceState));
       } catch (_) {}
     }
-    // Details are in — next stop is the plan picker.
-    state = AuthState(AuthStage.needsPayment, user);
-  }
-
-  /// Leaves the plan picker, whether they chose a plan or skipped. Nothing is
-  /// charged or persisted yet — see docs/payments.md.
-  Future<void> completePayment() async {
-    final user = state.user;
-    if (user == null) return;
     state = AuthState(await _resolveStageForRegisteredUser(), user);
-  }
-
-  /// "Read my messages" on the paywall. Only there: everyone else can already
-  /// read.
-  void enterReadOnly() {
-    if (state.stage != AuthStage.needsSubscription) return;
-    state = state.copyWith(readOnly: true);
-  }
-
-  /// Re-checks billing (and everything after it) once the doctor says they
-  /// have paid. Leaves the paywall only when the server agrees.
-  Future<void> recheckSubscription() => refreshOrgStatus();
-
-  /// Re-checks billing on resume (the browser may have taken a payment) and
-  /// on a 402. Re-resolves the stage only when the answer disagrees with where
-  /// the doctor is: entitled on the paywall, or lapsed anywhere past it.
-  ///
-  /// One at a time: a burst of 402s shares the re-check already in flight.
-  Future<void> refreshBilling() => _billingRefresh ??=
-      _refreshBilling().whenComplete(() => _billingRefresh = null);
-
-  static const _billingGated = {
-    AuthStage.needsSubscription,
-    AuthStage.needsOrg,
-    AuthStage.pendingVerification,
-    AuthStage.signedIn,
-  };
-
-  Future<void> _refreshBilling() async {
-    final user = state.user;
-    if (user == null || !_billingGated.contains(state.stage)) return;
-    // After every await: if the doctor signed out (or someone else signed in)
-    // meanwhile, this answer belongs to a session that no longer exists.
-    bool stale() =>
-        state.user?.id != user.id || !_billingGated.contains(state.stage);
-    final billing = await ref.read(billingProvider.notifier).refresh();
-    // Unreachable server: fail open, change nothing.
-    if (billing == null || stale()) return;
-    final onPaywall = state.stage == AuthStage.needsSubscription;
-    if (billing.entitled != onPaywall) return;
-    final next = await _resolveStageForRegisteredUser();
-    if (stale()) return;
-    state = AuthState(next, state.user);
   }
 
   /// Replace the cached user (e.g. after a profile update). Keeps the current
@@ -325,9 +403,16 @@ class AuthNotifier extends Notifier<AuthState> {
     await _tokenRefreshSub?.cancel();
     _tokenRefreshSub = null;
     try {
-      final token = await ref.read(pushTokenProviderProvider).getToken();
+      // FCM can stall (simulators, no APNs); never let it hold sign-out.
+      final token = await ref
+          .read(pushTokenProviderProvider)
+          .getToken()
+          .timeout(const Duration(seconds: 3));
       if (token != null && token.isNotEmpty) {
-        await ref.read(userRepositoryProvider).unregisterPushToken(token: token);
+        await ref
+            .read(userRepositoryProvider)
+            .unregisterPushToken(token: token)
+            .timeout(const Duration(seconds: 5));
       }
     } catch (_) {}
     await ref.read(authRepositoryProvider).logout();
@@ -336,11 +421,10 @@ class AuthNotifier extends Notifier<AuthState> {
     try {
       await ref.read(authBrokerProvider).signOut();
     } catch (_) {}
-    await ref.read(websocketClientProvider).close();
     await _wipeLocalPhi();
+    await _rememberSession(null);
     ref.read(orgProvider.notifier).clear();
-    // The next doctor on this device must never see this one's subscription.
-    ref.read(billingProvider.notifier).reset();
+    // realtimeSessionProvider closes the socket on this transition.
     state = const AuthState(AuthStage.signedOut, null);
   }
 }

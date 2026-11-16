@@ -33,7 +33,7 @@ export default function TestimonialsSection() {
   }, []);
 
   return (
-    <section ref={sectionRef} id={SECTION_IDS.testimonials} className="py-28 sm:py-36 bg-cream">
+    <section ref={sectionRef} id={SECTION_IDS.testimonials} className="py-28 sm:py-36">
       <div className="max-w-6xl mx-auto px-6 sm:px-8">
         <p className="testimonial-reveal text-sm uppercase tracking-[0.2em] text-ink-soft text-center mb-16">
           From early-access teams

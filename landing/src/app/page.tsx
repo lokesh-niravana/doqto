@@ -8,12 +8,14 @@ import AudienceSection from "@/components/sections/AudienceSection";
 import TestimonialsSection from "@/components/sections/TestimonialsSection";
 import FinalCTASection from "@/components/sections/FinalCTASection";
 import Footer from "@/components/layout/Footer";
+import ParticleField from "@/components/effects/ParticleField";
 
 export default function Home() {
   return (
     <>
+      <ParticleField />
       <Navbar />
-      <main>
+      <main className="relative z-10">
         <HeroSection />
         <ProblemSection />
         <FeaturesSection />

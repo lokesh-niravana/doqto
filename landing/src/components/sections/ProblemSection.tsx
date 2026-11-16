@@ -70,7 +70,7 @@ export default function ProblemSection() {
   }, []);
 
   return (
-    <section ref={sectionRef} id={SECTION_IDS.problem} className="py-28 sm:py-36 bg-cream">
+    <section ref={sectionRef} id={SECTION_IDS.problem} className="py-28 sm:py-36">
       <div className="max-w-5xl mx-auto px-6 sm:px-8">
         <p className="problem-reveal text-sm uppercase tracking-[0.2em] text-ink-soft text-center mb-6">
           The problem

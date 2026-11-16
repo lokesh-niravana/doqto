@@ -34,7 +34,9 @@ export default function SecuritySection() {
   }, []);
 
   return (
-    <section ref={sectionRef} id={SECTION_IDS.security} className="relative py-28 sm:py-36 bg-cream overflow-hidden">
+    <section ref={sectionRef} id={SECTION_IDS.security} className="relative py-28 sm:py-36 overflow-hidden">
+      <div className="orb w-[26rem] h-[26rem] bg-primary/20 top-1/3 -left-24" />
+      <div className="orb w-[22rem] h-[22rem] bg-sky/45 bottom-10 -right-20 [animation-delay:-8s]" />
       {/* Halftone texture — Neko pattern */}
       <div className="halftone absolute inset-x-0 top-0 h-64 opacity-40 pointer-events-none [mask-image:linear-gradient(to_bottom,black,transparent)]" />
 
@@ -51,7 +53,7 @@ export default function SecuritySection() {
         </div>
 
         {/* Checklist card — Neko pattern */}
-        <div className="security-reveal mx-auto max-w-3xl rounded-[1.75rem] bg-card border border-line p-8 sm:p-12">
+        <div className="security-reveal glass relative mx-auto max-w-3xl rounded-[1.75rem] p-8 sm:p-12">
           <ul className="grid sm:grid-cols-2 gap-x-10 gap-y-7">
             {SECURITY_FEATURES.map((item) => (
               <li key={item.title} className="flex items-start gap-4">

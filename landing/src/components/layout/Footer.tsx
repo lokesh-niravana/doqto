@@ -74,6 +74,22 @@ export default function Footer() {
                 <path d="M17.5 6.5h.01" />
               </svg>
             </a>
+            <a
+              href="https://www.facebook.com/profile.php?id=61596756242591"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Doqto on Facebook"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-line text-ink-soft hover:text-primary hover:border-primary transition-colors duration-300"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="h-4 w-4"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M13.5 22v-8.2h2.77l.41-3.2H13.5V8.55c0-.93.26-1.56 1.59-1.56h1.7V4.13A22.6 22.6 0 0 0 14.31 4C11.86 4 10.18 5.5 10.18 8.24v2.36H7.4v3.2h2.78V22h3.32z" />
+              </svg>
+            </a>
             </div>
           </div>
 

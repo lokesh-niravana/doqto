@@ -105,6 +105,8 @@ class KmsKeyWrapper:
         self._client = client
 
     def _kms(self):
+        if self._client is None and _kms_client_override is not None:
+            self._client = _kms_client_override
         if self._client is None:
             import boto3
 
@@ -128,6 +130,14 @@ class KmsKeyWrapper:
 
 
 _wrapper: KeyWrapper | None = None
+# Tests: the client every KmsKeyWrapper built internally (see _wrapper_for)
+# talks to, instead of boto3.
+_kms_client_override = None
+
+
+def set_kms_client(client) -> None:
+    global _kms_client_override
+    _kms_client_override = client
 
 
 def get_wrapper() -> KeyWrapper:
@@ -168,11 +178,26 @@ def reset_cache() -> None:
         _active.clear()
 
 
+def _wrapper_for(row) -> KeyWrapper:
+    """A data key is unwrapped by the wrapper that sealed it (`data_keys.wrapper`),
+    not by whatever the current setting is. That is what lets AWS_KMS_KEY_ID be
+    switched on (or off) in prod without a flag day: static-wrapped keys keep
+    unwrapping after the move to KMS, KMS-wrapped ones after a rollback."""
+    current = get_wrapper()
+    if row.wrapper == current.name:
+        return current
+    if row.wrapper == WRAPPER_STATIC:
+        return StaticKeyWrapper()
+    if row.wrapper == WRAPPER_KMS:
+        return KmsKeyWrapper(row.kms_key_id or settings.AWS_KMS_KEY_ID)
+    raise CryptoError(f"key_version {row.version} has unknown wrapper {row.wrapper!r}")
+
+
 def _remember(row) -> LoadedKey:
     loaded = LoadedKey(
         version=row.version,
         scope=row.scope,
-        key=get_wrapper().unwrap(wrapped=row.wrapped_key, scope=row.scope),
+        key=_wrapper_for(row).unwrap(wrapped=row.wrapped_key, scope=row.scope),
     )
     with _lock:
         _keys[row.version] = loaded

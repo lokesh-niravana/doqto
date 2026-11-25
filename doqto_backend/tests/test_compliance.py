@@ -693,6 +693,54 @@ async def test_kms_wrapper_is_used_when_configured(client, chat, db, fresh_crypt
     assert ("decrypt", {"scope": f"org:{chat.org.id}"}) in fake.calls
 
 
+async def test_switching_to_kms_keeps_static_wrapped_keys_readable(client, chat, db, fresh_crypto):
+    """Prod 2026-11-25: AWS_KMS_KEY_ID was switched on with every existing data
+    key still static-wrapped. Those keys must unwrap with the static wrapper
+    even though new keys go through KMS, and the other way round after a
+    rollback. Before the fix every unwrap used the *current* wrapper and KMS
+    answered InvalidCiphertextException for the static blobs."""
+    before = await _send(client, chat.conv.id, chat.alice_headers, "static era")
+    static_row = await db.get(Message, uuid.UUID(before["id"]))
+    assert (await db.get(DataKey, static_row.key_version)).wrapper == "static"
+
+    fake = FakeKms()
+    crypto.set_wrapper(crypto.KmsKeyWrapper("arn:aws:kms:us-east-1:1:key/abc", client=fake))
+    # Rotate the org onto a KMS-wrapped key, as scripts/rotate_keys.py does.
+    scope = f"org:{chat.org.id}"
+    spec = importlib.util.spec_from_file_location(
+        "rotate_keys", os.path.join(os.path.dirname(__file__), "..", "scripts", "rotate_keys.py")
+    )
+    rotate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rotate)
+    await rotate.cmd_rotate(db, [scope])
+    after = await _send(client, chat.conv.id, chat.alice_headers, "kms era")
+    kms_row = await db.get(Message, uuid.UUID(after["id"]))
+    assert (await db.get(DataKey, kms_row.key_version)).wrapper == "kms"
+    assert kms_row.key_version != static_row.key_version
+
+    # Cold cache under KMS: both eras read, the old one without touching KMS.
+    crypto.reset_cache()
+    fake.calls.clear()
+    r = await client.get(f"{CONVS}/{chat.conv.id}/messages", headers=chat.bob_headers)
+    bodies = [m["content"] for m in r.json()]
+    assert "static era" in bodies and "kms era" in bodies
+    assert ("decrypt", {"scope": scope}) in fake.calls
+    assert crypto.decrypt(static_row.content_encrypted, static_row.key_version) == "static era"
+
+    # Rewrap moves the old row under the KMS key.
+    assert crypto.reencrypt(static_row.content_encrypted, static_row.key_version, kms_row.key_version)
+
+    # Rollback to the static wrapper: the KMS-wrapped key is still unwrapped
+    # through KMS (from the row's own wrapper), so nothing becomes unreadable.
+    crypto.set_wrapper(crypto.StaticKeyWrapper())
+    crypto.reset_cache()
+    crypto.set_kms_client(fake)
+    try:
+        assert crypto.decrypt(kms_row.content_encrypted, kms_row.key_version) == "kms era"
+    finally:
+        crypto.set_kms_client(None)
+
+
 async def test_rotation_and_rewrap(client, chat, db, fresh_crypto):
     first = await _send(client, chat.conv.id, chat.alice_headers, "before rotation")
     v1 = (await db.get(Message, uuid.UUID(first["id"]))).key_version

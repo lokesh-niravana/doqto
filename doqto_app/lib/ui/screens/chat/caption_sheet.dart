@@ -11,6 +11,7 @@ import '../../../data/models/message.dart';
 import '../../widgets/app_pressable.dart';
 import '../../widgets/app_text_field.dart';
 import '../media/image_crop_screen.dart';
+import '../media/image_markup_screen.dart';
 
 /// Something the user is about to send, shown above the caption field.
 class CaptionPreview {
@@ -83,13 +84,19 @@ class _CaptionSheetState extends State<CaptionSheet> {
 
   /// Crop one photo in place; the preview and the file that gets sent both
   /// move to the cropped JPEG. Cancel leaves it as it was.
-  Future<void> _crop(int i) async {
+  Future<void> _crop(int i) => _replaceWith(i, (f) => showImageCrop(context, f));
+
+  /// Markup (draw, highlight, text, block out) — same contract as crop: the
+  /// edited JPEG replaces the file that gets sent, the original is not.
+  Future<void> _edit(int i) => _replaceWith(i, (f) => showImageMarkup(context, f));
+
+  Future<void> _replaceWith(int i, Future<File?> Function(File) step) async {
     final path = _previews[i].imagePath;
     if (path == null || _cropping) return;
     setState(() => _cropping = true);
     FocusScope.of(context).unfocus();
     try {
-      final out = await showImageCrop(context, File(path));
+      final out = await step(File(path));
       if (out != null && mounted) {
         setState(() => _previews[i] = _previews[i].withImagePath(out.path));
       }
@@ -148,6 +155,26 @@ class _CaptionSheetState extends State<CaptionSheet> {
                               children: [
                                 Image.file(File(p.imagePath!), key: ValueKey('caption-image-$i-${p.imagePath}'), fit: BoxFit.cover,
                                     errorBuilder: (_, _, _) => Icon(p.icon, color: AppColors.gray400, size: 40)),
+                                Positioned(
+                                  right: 40,
+                                  bottom: 4,
+                                  child: Material(
+                                    color: AppColors.gray900.withValues(alpha: 0.65),
+                                    shape: const CircleBorder(),
+                                    child: InkWell(
+                                      key: ValueKey('caption-edit-$i'),
+                                      customBorder: const CircleBorder(),
+                                      onTap: _cropping ? null : () => _edit(i),
+                                      child: Tooltip(
+                                        message: Strings.captionEdit,
+                                        child: const Padding(
+                                          padding: EdgeInsets.all(6),
+                                          child: Icon(Icons.edit_rounded, size: 18, color: AppColors.white),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                                 Positioned(
                                   right: 4,
                                   bottom: 4,

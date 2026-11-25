@@ -58,6 +58,17 @@ they reach S3 (`app/services/image_service.py`): JPEG and PNG losslessly by
 dropping the metadata segments/chunks, other formats re-encoded through Pillow.
 The client strips too; this is defence in depth.
 
+Client-side, before upload, the caption sheet offers two pure-Dart edits per
+photo, each producing a fresh JPEG (quality 85, metadata stripped) that
+replaces the picked file: **Crop** (`image_crop_screen.dart`) and **Edit**
+(`image_markup_screen.dart`: pen, highlighter, text, block-out, pixelate).
+Block-out and pixelate are flattened into the pixels — the painter that draws
+the preview is the one that renders the output at full resolution, so what
+the user covered is exactly what is gone; the original is never sent.
+Pixelate samples a ~40-cell-wide downscale, so nothing under it is
+recoverable. Guarded by `test/widgets/image_markup_screen_test.dart`, which
+checks the output pixels.
+
 `POST /messages/voice-notes/{conversation_id}` additionally takes `waveform`
 (base64 of ≤ 64 bytes, 422 `waveform_invalid`) and `caption`.
 

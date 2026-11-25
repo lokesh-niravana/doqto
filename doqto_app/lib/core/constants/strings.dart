@@ -750,4 +750,20 @@ class Strings {
   static const String cropAspectFree = 'Free';
   static const String cropFailed = "Couldn't crop that photo";
   static const String captionCrop = 'Crop';
+  static const String captionEdit = 'Edit';
+
+  // Image markup (draw / highlight / text / block out before a photo is sent)
+  static const String markupTitle = 'Edit photo';
+  static const String markupDone = 'Done';
+  static const String markupCancel = 'Cancel';
+  static const String markupUndo = 'Undo';
+  static const String markupPen = 'Draw';
+  static const String markupHighlight = 'Highlight';
+  static const String markupText = 'Text';
+  static const String markupBlock = 'Block out';
+  static const String markupPixelate = 'Pixelate';
+  static const String markupTextTitle = 'Add text';
+  static const String markupTextHint = 'Type here';
+  static const String markupAdd = 'Add';
+  static const String markupFailed = "Couldn't edit that photo";
 }

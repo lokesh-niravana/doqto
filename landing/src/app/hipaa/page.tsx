@@ -5,9 +5,12 @@ import Footer from "@/components/layout/Footer";
 export const metadata: Metadata = {
   title: "HIPAA Compliance | Doqto",
   description:
-    "Learn how Doqto maintains HIPAA compliance through administrative, physical, and technical safeguards, E2E encryption, and rigorous security practices.",
+    "How Doqto protects Protected Health Information: encryption, access controls, audit trails, Business Associate Agreements and what is still in progress.",
 };
 
+// Every statement on this page is checked against docs/security.md and
+// compliance/README.md. Say what is in place today; label what is in
+// progress. Never add a control here before it exists.
 export default function HIPAAPage() {
   return (
     <>
@@ -17,68 +20,83 @@ export default function HIPAAPage() {
           <h1 className="text-4xl sm:text-5xl font-bold text-ink mb-4">
             HIPAA Compliance
           </h1>
-          <p className="text-ink-soft mb-12">Last updated: March 2026</p>
+          <p className="text-ink-soft mb-12">Last updated: November 2026</p>
 
           {/* 1 */}
           <section className="mb-10">
             <h2 className="text-xl font-semibold text-ink mb-4">
-              <span className="text-primary mr-2">1.</span>Our Commitment to
-              HIPAA
+              <span className="text-primary mr-2">1.</span>Our Role and
+              Commitment
             </h2>
+            <p className="text-ink-soft leading-relaxed mb-4">
+              Doqto is secure messaging for clinicians. When a practice or
+              hospital uses Doqto to discuss patient care, DOQTO LLC acts as a
+              Business Associate under HIPAA and is responsible for safeguarding
+              the Protected Health Information (PHI) that passes through the
+              service. The platform is built around the HIPAA Privacy Rule,
+              Security Rule and Breach Notification Rule.
+            </p>
             <p className="text-ink-soft leading-relaxed">
-              At Doqto, HIPAA compliance is not an afterthought — it is
-              foundational to everything we build. As a Business Associate under
-              HIPAA, we are committed to protecting the privacy and security of
-              Protected Health Information (PHI) entrusted to us by healthcare
-              organizations and professionals. Our platform is designed from the
-              ground up with the HIPAA Privacy Rule, Security Rule, and Breach
-              Notification Rule in mind, ensuring that every feature, process,
-              and infrastructure component meets or exceeds regulatory
-              requirements.
+              This page describes the safeguards that are in place today and,
+              in plain terms, the parts of our compliance programme that are
+              still being completed. We would rather tell you what is in
+              progress than overstate it.
             </p>
           </section>
 
           {/* 2 */}
           <section className="mb-10">
             <h2 className="text-xl font-semibold text-ink mb-4">
-              <span className="text-primary mr-2">2.</span>Administrative
-              Safeguards
+              <span className="text-primary mr-2">2.</span>Technical Safeguards
             </h2>
-            <p className="text-ink-soft leading-relaxed mb-4">
-              We maintain comprehensive administrative safeguards including:
-            </p>
             <ul className="list-disc list-inside text-ink-soft space-y-3 ml-4">
               <li>
-                <span className="text-ink">Security Officer:</span> A
-                designated Security Officer responsible for the development and
-                implementation of our security policies and procedures
+                <span className="text-ink">Encryption at rest:</span> message
+                text, captions, voice-note transcripts, polls and drafts are
+                encrypted with AES-256-GCM before they are written to the
+                database, using a separate data key for every organisation
+                (envelope encryption). Keys can be rotated without downtime.
+                Databases, caches and file storage are additionally encrypted
+                at the storage layer.
               </li>
               <li>
-                <span className="text-ink">Privacy Officer:</span> A
-                designated Privacy Officer responsible for the development and
-                implementation of our privacy policies and procedures
+                <span className="text-ink">Encryption in transit:</span> TLS 1.2
+                or newer for every connection, with certificate pinning in the
+                mobile apps.
               </li>
               <li>
-                <span className="text-ink">Workforce Training:</span> All
-                employees and contractors undergo comprehensive HIPAA training
-                upon hiring and annually thereafter, with additional training
-                for any significant policy changes
+                <span className="text-ink">Access controls:</span> every user is
+                individually identified; sign-in is verified by phone, Apple or
+                Google identity; the app can be locked behind the device&apos;s
+                biometrics; sessions can be reviewed and signed out remotely,
+                and a lost device can be wiped from another one.
               </li>
               <li>
-                <span className="text-ink">Access Management:</span>{" "}
-                Role-based access controls ensure that workforce members only
-                have access to the minimum PHI necessary to perform their job
-                functions
+                <span className="text-ink">Audit controls:</span> sign-ins,
+                reads, administrative actions and key rotations are written to
+                a tamper-evident audit log in which each entry is
+                cryptographically chained to the one before it. Audit records
+                are retained for at least six years.
               </li>
               <li>
-                <span className="text-ink">Sanction Policy:</span> Clear
-                policies and procedures for addressing workforce members who
-                violate security or privacy policies
+                <span className="text-ink">Minimum necessary by design:</span>{" "}
+                push notifications never contain message content; voice-note
+                transcription runs on the phone itself, never on a third-party
+                speech service; the apps contain no analytics or
+                crash-reporting SDKs; screenshots are blocked on Android and
+                detected and audited on iOS.
               </li>
               <li>
-                <span className="text-ink">Risk Analysis:</span> Regular and
-                comprehensive risk analyses to identify potential threats and
-                vulnerabilities to ePHI
+                <span className="text-ink">Retention and deletion:</span>{" "}
+                organisations can set message retention periods and legal
+                holds; users can delete their account, after which their
+                content is shredded and only the audit trail remains.
+              </li>
+              <li>
+                <span className="text-ink">Administrative access to PHI:</span>{" "}
+                Doqto staff cannot read conversations in normal operation.
+                Emergency (&quot;break-glass&quot;) access requires a recorded
+                justification and is itself audited.
               </li>
             </ul>
           </section>
@@ -90,27 +108,16 @@ export default function HIPAAPage() {
             </h2>
             <ul className="list-disc list-inside text-ink-soft space-y-3 ml-4">
               <li>
-                <span className="text-ink">Facility Access Controls:</span>{" "}
-                Our infrastructure is hosted in SOC 2 Type II certified data
-                centers with 24/7 physical security, biometric access controls,
-                and video surveillance
+                <span className="text-ink">Hosting:</span> all PHI is processed
+                and stored in Amazon Web Services (US East), under a Business
+                Associate Addendum with AWS and using only AWS services that
+                are eligible for HIPAA workloads. AWS maintains the physical
+                security, SOC and ISO certifications of its data centres.
               </li>
               <li>
-                <span className="text-ink">Workstation Security:</span> All
-                employee workstations are encrypted, require strong
-                authentication, and are configured with automatic screen locks
-                and remote wipe capabilities
-              </li>
-              <li>
-                <span className="text-ink">Device Controls:</span> Strict
-                policies govern the use of removable media and mobile devices.
-                All company devices are managed through a Mobile Device
-                Management (MDM) solution
-              </li>
-              <li>
-                <span className="text-ink">Media Disposal:</span> Electronic
-                media containing ePHI is securely wiped or physically destroyed
-                before disposal or re-use, following NIST SP 800-88 guidelines
+                <span className="text-ink">Workstations:</span> PHI is never
+                stored on Doqto company devices; the service is designed so
+                that staff do not need to see message content to operate it.
               </li>
             </ul>
           </section>
@@ -118,38 +125,26 @@ export default function HIPAAPage() {
           {/* 4 */}
           <section className="mb-10">
             <h2 className="text-xl font-semibold text-ink mb-4">
-              <span className="text-primary mr-2">4.</span>Technical Safeguards
+              <span className="text-primary mr-2">4.</span>Administrative
+              Safeguards
             </h2>
             <ul className="list-disc list-inside text-ink-soft space-y-3 ml-4">
               <li>
-                <span className="text-ink">End-to-End Encryption:</span>{" "}
-                AES-256 encryption ensures that only the sender and intended
-                recipients can read message content
+                <span className="text-ink">Role-based access:</span>{" "}
+                organisation administrators control membership, retention and
+                access requests for their own organisation only.
               </li>
               <li>
-                <span className="text-ink">Access Controls:</span> Unique
-                user identification, automatic logoff, role-based permissions,
-                and multi-factor authentication
+                <span className="text-ink">Workforce:</span> everyone who works
+                on Doqto is bound by confidentiality obligations.
               </li>
               <li>
-                <span className="text-ink">Audit Controls:</span>{" "}
-                Comprehensive logging of all system activity, including user
-                authentication, data access, and administrative actions
-              </li>
-              <li>
-                <span className="text-ink">Integrity Controls:</span>{" "}
-                Mechanisms to verify that ePHI has not been improperly altered
-                or destroyed, including checksums and digital signatures
-              </li>
-              <li>
-                <span className="text-ink">Transmission Security:</span> TLS
-                1.3 for all data in transit, with certificate pinning for mobile
-                applications
-              </li>
-              <li>
-                <span className="text-ink">Encryption at Rest:</span> All
-                stored data is encrypted using AES-256 with regularly rotated
-                keys
+                <span className="text-ink">In progress:</span> formal
+                designation of our Security and Privacy Officers, a documented
+                risk analysis, a published policy set and recorded HIPAA
+                training for every team member are being completed now. We
+                will update this page as each is finished, and customers can
+                ask us for the current status at any time.
               </li>
             </ul>
           </section>
@@ -157,75 +152,66 @@ export default function HIPAAPage() {
           {/* 5 */}
           <section className="mb-10">
             <h2 className="text-xl font-semibold text-ink mb-4">
-              <span className="text-primary mr-2">5.</span>End-to-End Encryption
-              Details
+              <span className="text-primary mr-2">5.</span>Business Associate
+              Agreements
             </h2>
             <p className="text-ink-soft leading-relaxed mb-4">
-              Our end-to-end encryption implementation ensures the highest level
-              of data protection:
+              DOQTO LLC signs a Business Associate Agreement with every Covered
+              Entity before PHI is exchanged through the service. Our standard
+              terms are on the{" "}
+              <a href="/baa" className="text-primary hover:underline">
+                BAA page
+              </a>
+              .
+            </p>
+            <p className="text-ink-soft leading-relaxed mb-4">
+              We hold agreements with the subcontractors that touch PHI on our
+              behalf:
             </p>
             <ul className="list-disc list-inside text-ink-soft space-y-3 ml-4">
               <li>
-                <span className="text-ink">Algorithm:</span> AES-256-GCM for
-                symmetric encryption of message content and file transfers
+                <span className="text-ink">Amazon Web Services:</span> hosting,
+                databases, storage and key management (AWS Business Associate
+                Addendum).
               </li>
               <li>
-                <span className="text-ink">Key Exchange:</span> Secure key
-                exchange using modern asymmetric cryptography protocols
-              </li>
-              <li>
-                <span className="text-ink">Key Management:</span> Encryption
-                keys are generated on-device and never leave the user&apos;s
-                device. Keys are stored in the device&apos;s secure enclave or
-                keystore
-              </li>
-              <li>
-                <span className="text-ink">Perfect Forward Secrecy:</span>{" "}
-                Session keys are regularly rotated so that compromise of a
-                single key does not affect past or future communications
-              </li>
-              <li>
-                <span className="text-ink">Zero-Knowledge Architecture:</span>{" "}
-                Doqto servers never have access to encryption keys or
-                plaintext message content. Even in the event of a server
-                compromise, data remains encrypted and unreadable
+                <span className="text-ink">Google Cloud:</span> sign-in identity
+                only; no message content (Google Cloud HIPAA Business Associate
+                Addendum).
               </li>
             </ul>
+            <p className="text-ink-soft leading-relaxed mt-4">
+              Push delivery through Apple and Google carries no PHI, so no
+              agreement is needed with those services.
+            </p>
           </section>
 
           {/* 6 */}
           <section className="mb-10">
             <h2 className="text-xl font-semibold text-ink mb-4">
               <span className="text-primary mr-2">6.</span>Breach Notification
-              Procedures
             </h2>
             <p className="text-ink-soft leading-relaxed mb-4">
               In the event of a breach of unsecured PHI, Doqto will:
             </p>
             <ul className="list-decimal list-inside text-ink-soft space-y-3 ml-4">
-              <li>
-                Investigate and contain the breach immediately upon discovery
-              </li>
+              <li>Investigate and contain the incident on discovery</li>
               <li>
                 Notify affected Covered Entities without unreasonable delay and
                 no later than sixty (60) days after discovery
               </li>
               <li>
-                Provide all information required under 45 CFR § 164.410,
-                including the nature of the breach, types of PHI involved, and
-                steps taken to mitigate harm
+                Provide the information required under 45 CFR § 164.410: the
+                nature of the breach, the PHI involved and the steps taken to
+                mitigate harm
               </li>
               <li>
-                Cooperate with Covered Entities in their notification
-                obligations to affected individuals and the HHS Secretary
+                Cooperate with Covered Entities in their notifications to
+                affected individuals and to the HHS Secretary
               </li>
               <li>
-                Conduct a thorough post-incident review and implement
-                corrective actions to prevent recurrence
-              </li>
-              <li>
-                Document all aspects of the breach, investigation, and response
-                for a minimum of six (6) years
+                Record the incident, the investigation and the corrective
+                actions, and keep that record for at least six (6) years
               </li>
             </ul>
           </section>
@@ -233,47 +219,42 @@ export default function HIPAAPage() {
           {/* 7 */}
           <section className="mb-10">
             <h2 className="text-xl font-semibold text-ink mb-4">
-              <span className="text-primary mr-2">7.</span>Business Associate
-              Agreements
+              <span className="text-primary mr-2">7.</span>Backup and Recovery
             </h2>
-            <p className="text-ink-soft leading-relaxed">
-              Doqto enters into Business Associate Agreements (BAAs) with all
-              Covered Entities that use our platform. We also maintain BAAs with
-              our own subcontractors and service providers who may have access to
-              PHI. Our BAA outlines the permitted uses and disclosures of PHI,
-              our security obligations, breach notification procedures, and
-              termination provisions. You can review our standard BAA on the{" "}
-              <a href="/baa" className="text-primary hover:underline">
-                BAA page
-              </a>
-              .
-            </p>
+            <ul className="list-disc list-inside text-ink-soft space-y-3 ml-4">
+              <li>
+                Automated, encrypted database backups with point-in-time
+                recovery over the previous seven days
+              </li>
+              <li>
+                Encrypted file storage with versioning, independent of the
+                application servers
+              </li>
+              <li>
+                Infrastructure defined as code, so the environment can be
+                rebuilt from source
+              </li>
+            </ul>
           </section>
 
           {/* 8 */}
           <section className="mb-10">
             <h2 className="text-xl font-semibold text-ink mb-4">
-              <span className="text-primary mr-2">8.</span>Employee Training &
-              Awareness
+              <span className="text-primary mr-2">8.</span>Testing and
+              Independent Review
             </h2>
             <ul className="list-disc list-inside text-ink-soft space-y-3 ml-4">
               <li>
-                All employees complete comprehensive HIPAA training within 30
-                days of hiring
+                Automated tests cover the security controls above (encryption,
+                audit chaining, retention, key rotation, keyboard and screen
+                privacy in the apps) and run on every change
               </li>
+              <li>Dependencies are kept current and reviewed for advisories</li>
               <li>
-                Annual refresher training is mandatory for all team members
-              </li>
-              <li>
-                Role-specific training is provided for employees with access to
-                PHI or critical systems
-              </li>
-              <li>
-                Regular phishing simulations and security awareness campaigns
-              </li>
-              <li>
-                Documented training records maintained for a minimum of six (6)
-                years
+                <span className="text-ink">Planned:</span> an independent
+                penetration test before our first hospital deployment. We do not
+                currently hold a SOC 2 or HITRUST certification and will not
+                claim one until we do.
               </li>
             </ul>
           </section>
@@ -281,77 +262,16 @@ export default function HIPAAPage() {
           {/* 9 */}
           <section className="mb-10">
             <h2 className="text-xl font-semibold text-ink mb-4">
-              <span className="text-primary mr-2">9.</span>Regular Audits &
-              Risk Assessments
-            </h2>
-            <ul className="list-disc list-inside text-ink-soft space-y-3 ml-4">
-              <li>
-                Annual comprehensive risk assessments in accordance with NIST
-                Cybersecurity Framework
-              </li>
-              <li>
-                Regular internal security audits and code reviews
-              </li>
-              <li>
-                Annual third-party penetration testing by qualified security
-                firms
-              </li>
-              <li>
-                Continuous vulnerability scanning and patch management
-              </li>
-              <li>
-                Periodic review and update of all security policies and
-                procedures
-              </li>
-              <li>
-                SOC 2 Type II certification maintained and audited annually
-              </li>
-            </ul>
-          </section>
-
-          {/* 10 */}
-          <section className="mb-10">
-            <h2 className="text-xl font-semibold text-ink mb-4">
-              <span className="text-primary mr-2">10.</span>Data Backup &
-              Disaster Recovery
-            </h2>
-            <ul className="list-disc list-inside text-ink-soft space-y-3 ml-4">
-              <li>
-                Automated, encrypted backups performed daily with geographically
-                distributed storage
-              </li>
-              <li>
-                Recovery Point Objective (RPO) of less than 24 hours and
-                Recovery Time Objective (RTO) of less than 4 hours
-              </li>
-              <li>
-                Disaster recovery plan tested and validated at least twice
-                annually
-              </li>
-              <li>
-                Multi-region infrastructure with automatic failover capabilities
-              </li>
-              <li>
-                Business continuity plan reviewed and updated annually
-              </li>
-            </ul>
-          </section>
-
-          {/* 11 */}
-          <section className="mb-10">
-            <h2 className="text-xl font-semibold text-ink mb-4">
-              <span className="text-primary mr-2">11.</span>Contact Information
+              <span className="text-primary mr-2">9.</span>Contact
             </h2>
             <p className="text-ink-soft leading-relaxed">
-              For questions about our HIPAA compliance practices or to report a
-              potential security concern:
+              Questions about our HIPAA posture, requests for our BAA, or a
+              security concern to report:
             </p>
             <div className="mt-4 text-ink-soft">
-              <p className="text-ink font-medium">
-                Doqto, Inc. — Compliance Officer
-              </p>
+              <p className="text-ink font-medium">DOQTO LLC</p>
               <p>
-                Email:{" "}
+                Compliance:{" "}
                 <a
                   href="mailto:compliance@doqto.ai"
                   className="text-primary hover:underline"

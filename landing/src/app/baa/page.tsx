@@ -17,7 +17,7 @@ export default function BAAPage() {
           <h1 className="text-4xl sm:text-5xl font-bold text-ink mb-4">
             Business Associate Agreement
           </h1>
-          <p className="text-ink-soft mb-12">Last updated: March 2026</p>
+          <p className="text-ink-soft mb-12">Last updated: November 2026</p>
 
           <div className="bg-card border border-line rounded-xl p-6 mb-12">
             <p className="text-ink-soft leading-relaxed text-sm">
@@ -48,7 +48,7 @@ export default function BAAPage() {
               </li>
               <li>
                 <span className="text-ink">Business Associate:</span>{" "}
-                Doqto, Inc., which creates, receives, maintains, or transmits
+                DOQTO LLC, which creates, receives, maintains, or transmits
                 Protected Health Information on behalf of the Covered Entity
               </li>
               <li>
@@ -387,7 +387,7 @@ export default function BAAPage() {
             </p>
             <div className="mt-4 text-ink-soft">
               <p className="text-ink font-medium">
-                Doqto, Inc. — Privacy Officer
+                DOQTO LLC — Privacy Officer
               </p>
               <p>
                 Email:{" "}

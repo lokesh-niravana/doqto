@@ -17,7 +17,7 @@ export default function PrivacyPage() {
           <h1 className="text-4xl sm:text-5xl font-bold text-ink mb-4">
             Privacy Policy
           </h1>
-          <p className="text-ink-soft mb-12">Last updated: March 2026</p>
+          <p className="text-ink-soft mb-12">Last updated: November 2026</p>
 
           {/* 1 */}
           <section className="mb-10">
@@ -25,7 +25,7 @@ export default function PrivacyPage() {
               <span className="text-primary mr-2">1.</span>Introduction
             </h2>
             <p className="text-ink-soft leading-relaxed">
-              Doqto, Inc. (&quot;Company,&quot; &quot;we,&quot; &quot;us,&quot;
+              DOQTO LLC (&quot;Company,&quot; &quot;we,&quot; &quot;us,&quot;
               or &quot;our&quot;) is committed to protecting the privacy and
               security of your personal information and any Protected Health
               Information (PHI) processed through our platform. This Privacy
@@ -349,7 +349,7 @@ export default function PrivacyPage() {
             </p>
             <div className="mt-4 text-ink-soft">
               <p className="text-ink font-medium">
-                Doqto, Inc. — Data Protection Officer
+                DOQTO LLC — Data Protection Officer
               </p>
               <p>
                 Email:{" "}

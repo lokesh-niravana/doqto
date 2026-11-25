@@ -17,7 +17,7 @@ export default function TermsPage() {
           <h1 className="text-4xl sm:text-5xl font-bold text-ink mb-4">
             Terms of Service
           </h1>
-          <p className="text-ink-soft mb-12">Last updated: March 2026</p>
+          <p className="text-ink-soft mb-12">Last updated: November 2026</p>
 
           {/* 1 */}
           <section className="mb-10">
@@ -29,7 +29,7 @@ export default function TermsPage() {
               you agree to be bound by these Terms of Service
               (&quot;Terms&quot;). If you do not agree to all of these Terms, do
               not use the Service. These Terms constitute a legally binding
-              agreement between you and Doqto, Inc. (&quot;Company,&quot;
+              agreement between you and DOQTO LLC (&quot;Company,&quot;
               &quot;we,&quot; &quot;us,&quot; or &quot;our&quot;). Your continued
               use of the Service following any modifications to these Terms
               constitutes acceptance of those changes.
@@ -181,7 +181,7 @@ export default function TermsPage() {
             <p className="text-ink-soft leading-relaxed">
               All rights, title, and interest in the Service, including but not
               limited to software, design, text, graphics, logos, and
-              trademarks, are owned by Doqto, Inc. or its licensors. You are
+              trademarks, are owned by DOQTO LLC or its licensors. You are
               granted a limited, non-exclusive, non-transferable, revocable
               license to use the Service in accordance with these Terms. You may
               not copy, modify, distribute, sell, or lease any part of the
@@ -216,7 +216,7 @@ export default function TermsPage() {
               Liability
             </h2>
             <p className="text-ink-soft leading-relaxed">
-              To the maximum extent permitted by applicable law, Doqto, Inc.,
+              To the maximum extent permitted by applicable law, DOQTO LLC,
               its officers, directors, employees, and agents shall not be liable
               for any indirect, incidental, special, consequential, or punitive
               damages, including but not limited to loss of profits, data, or
@@ -235,7 +235,7 @@ export default function TermsPage() {
               <span className="text-primary mr-2">10.</span>Indemnification
             </h2>
             <p className="text-ink-soft leading-relaxed">
-              You agree to indemnify, defend, and hold harmless Doqto, Inc.
+              You agree to indemnify, defend, and hold harmless DOQTO LLC
               and its affiliates, officers, directors, employees, and agents
               from and against any and all claims, liabilities, damages, losses,
               costs, and expenses (including reasonable attorneys&apos; fees)
@@ -302,7 +302,7 @@ export default function TermsPage() {
               If you have any questions about these Terms, please contact us at:
             </p>
             <div className="mt-4 text-ink-soft">
-              <p className="text-ink font-medium">Doqto, Inc.</p>
+              <p className="text-ink font-medium">DOQTO LLC</p>
               <p>
                 Email:{" "}
                 <a

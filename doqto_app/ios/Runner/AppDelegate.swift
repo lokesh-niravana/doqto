@@ -3,6 +3,7 @@ import Flutter
 import Network
 import Photos
 import QuickLook
+import Speech
 import UIKit
 import UniformTypeIdentifiers
 import UserNotifications
@@ -31,6 +32,7 @@ import VisionKit
     registerClipboardChannel()
     registerMediaChannel()
     registerDeviceChannel()
+    registerSpeechChannel()
     registerScreenshotChannel()
     // Required by flutter_local_notifications so foreground banners and
     // notification taps are routed to the plugin.
@@ -338,6 +340,28 @@ import VisionKit
       }
       let device = UIDevice.current
       result("\(device.model) (\(device.systemName) \(device.systemVersion))")
+    }
+  }
+
+  /// Voice-note transcription (lib/data/services/on_device_speech.dart): the
+  /// recogniser may only run on the device, never on Apple's servers (no
+  /// BAA). speech_to_text sets requiresOnDeviceRecognition when asked, but
+  /// the app checks support itself so an unsupported device records without
+  /// a transcript instead of erroring mid-recording.
+  private func registerSpeechChannel() {
+    guard let registrar = self.registrar(forPlugin: "DoqtoSpeech") else { return }
+    let channel = FlutterMethodChannel(
+      name: "doqto/speech", binaryMessenger: registrar.messenger())
+    channel.setMethodCallHandler { call, result in
+      guard call.method == "onDeviceAvailable" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard let recognizer = SFSpeechRecognizer() else {
+        result(false)
+        return
+      }
+      result(recognizer.supportsOnDeviceRecognition)
     }
   }
 

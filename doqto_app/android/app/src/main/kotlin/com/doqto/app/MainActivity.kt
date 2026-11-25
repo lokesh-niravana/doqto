@@ -20,6 +20,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
+import android.speech.SpeechRecognizer
 import android.webkit.MimeTypeMap
 import android.view.WindowManager
 import androidx.core.content.FileProvider
@@ -70,6 +71,20 @@ class MainActivity : FlutterActivity() {
                         val name = if (model.startsWith(make, ignoreCase = true)) model else "$make $model"
                         result.success("$name (Android ${Build.VERSION.RELEASE})")
                     }
+                    else -> result.notImplemented()
+                }
+            }
+        // Voice-note transcription (lib/data/services/on_device_speech.dart):
+        // the recogniser may only run on the device. speech_to_text's
+        // onDevice flag is just EXTRA_PREFER_OFFLINE on Android, so the app
+        // asks the OS first and skips the transcript when it cannot.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "doqto/speech")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "onDeviceAvailable" -> result.success(
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                            SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
+                    )
                     else -> result.notImplemented()
                 }
             }

@@ -18,6 +18,7 @@ import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../core/utils/waveform.dart';
 import '../../../data/models/media.dart';
+import '../../../data/services/on_device_speech.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
 import '../../../state/settings_state.dart';
@@ -163,8 +164,12 @@ class VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
     // while; a slide-to-cancel (or the panel going away) in the meantime
     // must not leave a recorder running with nobody to stop it.
     if (!mounted || _stopping) return;
-    // Live transcript can be switched off (batch 6, Settings → Chats).
-    final transcribe = ref.read(appSettingsProvider).voiceTranscript;
+    // Live transcript can be switched off (batch 6, Settings → Chats) and
+    // only ever runs on the device: no BAA exists with Apple's or Google's
+    // speech servers, so when the OS cannot recognise locally there is no
+    // transcript (on_device_speech.dart).
+    final transcribe = ref.read(appSettingsProvider).voiceTranscript &&
+        await OnDeviceSpeech.available();
     if (transcribe) {
       try {
         await _stt.initialize();
@@ -199,9 +204,7 @@ class VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
         onResult: (result) {
           if (mounted) setState(() => _transcript = result.recognizedWords);
         },
-        listenOptions: SpeechListenOptions(
-          listenMode: ListenMode.dictation,
-        ),
+        listenOptions: OnDeviceSpeech.listenOptions(),
       );
     }
 

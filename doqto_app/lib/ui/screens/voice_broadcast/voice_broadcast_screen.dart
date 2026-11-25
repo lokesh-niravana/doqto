@@ -19,7 +19,9 @@ import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
+import '../../../data/services/on_device_speech.dart';
 import '../../../state/chat_state.dart';
+import '../../../state/settings_state.dart';
 import '../../../state/network_state.dart';
 import '../../widgets/app_skeleton.dart';
 import '../../widgets/doctor_avatar.dart';
@@ -137,7 +139,18 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
       if (mounted) setState(() => _phase = _Phase.pick);
       return;
     }
-    await _stt.initialize();
+    // Same rule as the chat recorder: transcript only on the device, and
+    // only when the user has it on (Settings → Chats).
+    final transcribe = ref.read(appSettingsProvider).voiceTranscript &&
+        await OnDeviceSpeech.available();
+    if (transcribe) {
+      try {
+        await _stt.initialize();
+      } catch (_) {
+        // Best-effort; the broadcast still records.
+      }
+    }
+    if (!mounted) return;
     final dir = await getTemporaryDirectory();
     final path =
         '${dir.path}/broadcast_${DateTime.now().millisecondsSinceEpoch}.wav';
@@ -149,12 +162,14 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
       ),
       path: path,
     );
-    _stt.listen(
-      onResult: (result) {
-        if (mounted) setState(() => _transcript = result.recognizedWords);
-      },
-      listenOptions: SpeechListenOptions(listenMode: ListenMode.dictation),
-    );
+    if (transcribe) {
+      _stt.listen(
+        onResult: (result) {
+          if (mounted) setState(() => _transcript = result.recognizedWords);
+        },
+        listenOptions: OnDeviceSpeech.listenOptions(),
+      );
+    }
     final stopwatch = Stopwatch()..start();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _durationSec = stopwatch.elapsed.inSeconds);

@@ -97,8 +97,26 @@ resource "random_bytes" "message_key" {
   length = 32
 }
 
+# ---------- KMS: master key for message data keys ----------
+# Envelope encryption (docs/security.md): per-org data keys are wrapped by
+# this key once AWS_KMS_KEY_ID is set. MESSAGE_ENCRYPTION_KEY stays in SSM so
+# data keys wrapped before the switch keep unwrapping; `rotate_keys.py rotate`
+# then `rewrap` move everything under KMS-wrapped keys.
+resource "aws_kms_key" "messages" {
+  description             = "${local.name}: wraps per-organisation message data keys"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+}
+
+resource "aws_kms_alias" "messages" {
+  name          = "alias/${local.name}-messages"
+  target_key_id = aws_kms_key.messages.key_id
+}
+
 locals {
-  database_url = "postgresql+asyncpg://doqto:${random_password.db.result}@${aws_db_instance.db.address}:5432/doqto"
+  # ssl=require: asyncpg's default is "prefer", which would silently fall back
+  # to plaintext if TLS ever failed. PG15 on RDS does not force SSL itself.
+  database_url = "postgresql+asyncpg://doqto:${random_password.db.result}@${aws_db_instance.db.address}:5432/doqto?ssl=require"
   redis_url    = "rediss://:${random_password.redis.result}@${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379/0"
   secrets = {
     DATABASE_URL             = local.database_url
@@ -383,6 +401,11 @@ resource "aws_iam_role_policy" "task" {
         Effect   = "Allow"
         Action   = ["transcribe:StartMedicalTranscriptionJob", "transcribe:GetMedicalTranscriptionJob", "transcribe:StartTranscriptionJob", "transcribe:GetTranscriptionJob"]
         Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = aws_kms_key.messages.arn
       }
     ]
   })
@@ -411,6 +434,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "ENVIRONMENT", value = "production" },
       { name = "AWS_REGION", value = "us-east-1" },
       { name = "AWS_S3_BUCKET_NAME", value = aws_s3_bucket.media.bucket },
+      { name = "AWS_KMS_KEY_ID", value = aws_kms_key.messages.arn },
       { name = "ALLOWED_ORIGINS", value = "https://doqto.ai,https://www.doqto.ai" },
       { name = "NETWORK_DM_ENABLED", value = "true" },
       { name = "PUSH_PROVIDER", value = var.fcm_service_account_json == "" ? "log" : "fcm" },

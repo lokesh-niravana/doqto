@@ -21,12 +21,18 @@ shared drive as well.
 | MongoDB Atlas | Landing-page waitlist emails | Not required (no PHI) | n/a | | | |
 | Customer organizations (practices, hospitals) | Covered Entities; DOQTO LLC is their Business Associate | Doqto customer BAA | **Not started** | | | Template at doqto.ai/baa names "Doqto, Inc." and needs the entity corrected to DOQTO LLC plus attorney review; no signing flow yet |
 
+## Done
+
+- 2026-11-26: on-device-only voice transcription enforced in the app (build
+  47, `docs/security.md` "Voice transcripts never leave the phone").
+- 2026-11-26: legal pages name DOQTO LLC; the HIPAA page states only the
+  controls that exist and labels the rest "in progress".
+
 ## Open items
 
-- Enforce on-device speech recognition in the app before voice notes are
-  transcribed (no BAA is possible with Apple or Google speech services).
-- Enable KMS wrapping for message keys in production (`docs/security.md`,
-  "Going to KMS in prod").
+- Enable KMS wrapping for message keys in production: Terraform is in place
+  (`infra/backend/main.tf`); apply, then run `rotate_keys.py rotate` and
+  `rewrap`, and record the date here.
 - Customer BAA: attorney review, entity fix, click-to-accept at
   organization creation with the acceptance recorded in the audit log.
 - Policy set, risk analysis, officer designations, workforce training

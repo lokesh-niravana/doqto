@@ -30,15 +30,31 @@ Since batch 7 this is **envelope encryption** (`app/core/crypto.py`):
   within 60 s; old versions stay readable. `rewrap` then re-encrypts rows in
   batches; `status` reports versions and how many rows are still on version 0;
   `to-legacy` is the escape hatch before an Alembic downgrade.
-* **Going to KMS in prod** (ops, not yet done): create a symmetric CMK, grant
-  the ECS task role `kms:Encrypt`, `kms:Decrypt`, `kms:GenerateDataKey`, set
-  `AWS_KMS_KEY_ID`, deploy, run `rotate` (new keys are KMS-wrapped; each
-  `data_keys` row remembers its wrapper, so static-wrapped keys keep working)
-  and `rewrap`. Nothing in code needs KMS to run — local, CI and tests use the
-  static wrapper (a fake KMS client is exercised in `tests/test_compliance.py`).
+* **KMS in prod**: `infra/backend/main.tf` creates the symmetric CMK
+  (`alias/doqto-backend-messages`, yearly AWS rotation), grants the ECS task
+  role `kms:Encrypt`, `kms:Decrypt`, `kms:GenerateDataKey` on it and sets
+  `AWS_KMS_KEY_ID` to its ARN. After each deploy that changes the wrapper run
+  `rotate` (new keys are KMS-wrapped; each `data_keys` row remembers its
+  wrapper, so static-wrapped keys keep working) and `rewrap`. Nothing in code
+  needs KMS to run — local, CI and tests use the static wrapper (a fake KMS
+  client is exercised in `tests/test_compliance.py`). The switch-over date is
+  in `compliance/README.md`.
 * One org's key compromise cannot expose another org's rows. The WebSocket
   pub/sub envelope (transient, Redis) still uses the static key.
 * S3 objects: bucket SSE plus `ServerSideEncryption=AES256` on every put.
+
+## Voice transcripts never leave the phone
+
+Live transcription of voice notes and broadcasts uses the OS recogniser with
+`onDevice: true` **and** a native pre-check (`doqto/speech` channel:
+`SFSpeechRecognizer.supportsOnDeviceRecognition` on iOS,
+`SpeechRecognizer.isOnDeviceRecognitionAvailable` on Android 12+). When the
+OS cannot recognise locally there is simply no transcript — the audio is
+never sent to Apple's or Google's speech servers, with which no BAA exists.
+`lib/data/services/on_device_speech.dart` is the only place that builds
+`SpeechListenOptions`; `test/on_device_speech_test.dart` guards that. The
+server-side `transcription_service.py` is a stub outside local and sends
+nothing anywhere.
 
 ## Audit trail — durable and tamper-evident
 

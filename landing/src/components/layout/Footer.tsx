@@ -16,7 +16,7 @@ const footerLinks = {
   ],
   contact: [
     { label: "lokesh@doqto.ai", href: "mailto:lokesh@doqto.ai" },
-    { label: "Support", href: "#" },
+    { label: "Support", href: "/support" },
   ],
 };
 

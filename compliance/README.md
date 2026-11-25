@@ -28,11 +28,15 @@ shared drive as well.
 - 2026-11-26: legal pages name DOQTO LLC; the HIPAA page states only the
   controls that exist and labels the rest "in progress".
 
+- 2026-11-25: message data keys wrapped by AWS KMS in production
+  (`alias/doqto-backend-messages`, key 0a5b03bf-8f34-41be-bced-21b590628117,
+  yearly rotation). All scopes rotated, 142 rows rewrapped, 0 rows left on
+  the legacy static key. Postgres connection now `ssl=require`, verified
+  TLS 1.2. The static `MESSAGE_ENCRYPTION_KEY` remains only to unwrap the
+  retired network key v1 and to protect the transient WebSocket envelope.
+
 ## Open items
 
-- Enable KMS wrapping for message keys in production: Terraform is in place
-  (`infra/backend/main.tf`); apply, then run `rotate_keys.py rotate` and
-  `rewrap`, and record the date here.
 - Customer BAA: attorney review, entity fix, click-to-accept at
   organization creation with the acceptance recorded in the audit log.
 - Policy set, risk analysis, officer designations, workforce training

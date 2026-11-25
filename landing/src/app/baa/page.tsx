@@ -23,8 +23,8 @@ export default function BAAPage() {
             <p className="text-ink-soft leading-relaxed text-sm">
               This Business Associate Agreement (&quot;BAA&quot;) is entered
               into by and between the healthcare organization or provider using
-              the Doqto platform (&quot;Covered Entity&quot;) and Doqto,
-              Inc. (&quot;Business Associate&quot;). This BAA supplements and is
+              the Doqto platform (&quot;Covered Entity&quot;) and DOQTO LLC
+              (&quot;Business Associate&quot;). This BAA supplements and is
               made part of the Terms of Service between the parties.
             </p>
           </div>

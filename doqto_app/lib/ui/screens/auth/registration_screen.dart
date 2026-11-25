@@ -19,6 +19,7 @@ import '../../../state/auth_state.dart';
 import '../../widgets/app_text_field.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/inline_error.dart';
+import '../../widgets/legal_footer.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/phone_field.dart';
 import '../../widgets/specialty_field.dart';
@@ -394,6 +395,8 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
             ],
             InlineError(_submitError),
             const SizedBox(height: AppSpacing.xl),
+            const LegalFooter(),
+            const SizedBox(height: AppSpacing.md),
             FadeSlideIn.staggered(
               4,
               AppButton(

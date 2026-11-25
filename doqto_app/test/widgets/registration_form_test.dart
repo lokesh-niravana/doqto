@@ -14,6 +14,7 @@ import 'package:doqto_app/data/services/auth_broker.dart';
 import 'package:doqto_app/data/services/npi_lookup.dart';
 import 'package:doqto_app/state/auth_state.dart';
 import 'package:doqto_app/ui/screens/auth/registration_screen.dart';
+import 'package:doqto_app/ui/widgets/legal_footer.dart';
 import 'package:doqto_app/ui/widgets/primary_button.dart';
 
 // Your details, after the sign-up rework:
@@ -191,6 +192,18 @@ void main() {
   });
 
   group('labels', () {
+    testWidgets('the agreement line sits right above Continue', (tester) async {
+      await pump(tester);
+      final footer = find.byType(LegalFooter);
+      expect(footer, findsOneWidget);
+      await tester.ensureVisible(footer);
+      await tester.pumpAndSettle();
+      expect(
+        tester.getBottomLeft(footer).dy,
+        lessThanOrEqualTo(tester.getTopLeft(continueButton).dy),
+      );
+    });
+
     testWidgets('required fields carry a *, and there are no helper texts',
         (tester) async {
       await pump(tester, phone: '');

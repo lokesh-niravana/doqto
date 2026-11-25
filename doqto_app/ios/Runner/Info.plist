@@ -54,7 +54,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Doqto needs access to your camera so you can take a profile photo.</string>
+	<string>Doqto uses the camera to take a profile photo and to shoot photos and videos you send in chats.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Doqto uses Face ID to unlock the app and protect your messages.</string>
 	<key>NSMicrophoneUsageDescription</key>

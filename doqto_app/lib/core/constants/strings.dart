@@ -23,6 +23,13 @@ class Strings {
   static const String loginFacebook = 'Continue with Facebook';
   static const String loginApple = 'Continue with Apple';
 
+  // Legal footer on login and registration
+  static const String legalByContinuing = 'By continuing you agree to the ';
+  static const String legalTerms = 'Terms of Service';
+  static const String legalAnd = ' and ';
+  static const String legalPrivacy = 'Privacy Policy';
+  static const String legalOpenFailed = "Couldn't open the page. Visit doqto.ai instead.";
+
   // Registration
   static const String regFirstName = 'First name';
   static const String regLastName = 'Last name';

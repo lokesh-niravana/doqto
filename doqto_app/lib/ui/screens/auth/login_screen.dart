@@ -14,6 +14,7 @@ import '../../../data/services/auth_broker.dart';
 import '../../../state/auth_state.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/inline_error.dart';
+import '../../widgets/legal_footer.dart';
 import '../../widgets/phone_field.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/social_button.dart';
@@ -169,6 +170,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                     ),
                   ],
+                  const SizedBox(height: AppSpacing.xl),
+                  FadeSlideIn.staggered(7, const LegalFooter()),
                 ],
               ),
             ),

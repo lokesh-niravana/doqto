@@ -179,8 +179,7 @@ import VisionKit
       case "videoPoster":
         guard let path = args["path"] as? String else { result(FlutterMethodNotImplemented); return }
         let maxSide = args["maxSide"] as? Int ?? 720
-        DispatchQueue.global(qos: .userInitiated).async {
-          let poster = self.videoPoster(path: path, maxSide: maxSide)
+        self.videoPoster(path: path, maxSide: maxSide) { poster in
           DispatchQueue.main.async { result(poster) }
         }
       case "saveToPhotos":
@@ -189,6 +188,10 @@ import VisionKit
       case "scanDocument":
         guard let out = args["path"] as? String else { result(FlutterMethodNotImplemented); return }
         self.scanDocument(outputPath: out, result: result)
+      case "cameraAccessDenied":
+        // Status only; the scanner itself raises the prompt the first time.
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        result(status == .denied || status == .restricted)
       case "networkType":
         self.networkType(result: result)
       case "setEarpiece":
@@ -208,26 +211,39 @@ import VisionKit
 
   /// First frame of a clip as JPEG, longest side ≤ maxSide, plus the
   /// dimensions of that frame and the clip length. Nil when AVFoundation
-  /// cannot read the file.
-  private func videoPoster(path: String, maxSide: Int) -> [String: Any]? {
+  /// cannot read the file. Asynchronous throughout: the synchronous
+  /// AVAsset.duration and copyCGImage(at:actualTime:) are deprecated because
+  /// they block the calling thread. `completion` may run on any queue.
+  private func videoPoster(
+    path: String, maxSide: Int, completion: @escaping ([String: Any]?) -> Void
+  ) {
     let asset = AVURLAsset(url: URL(fileURLWithPath: path))
-    let generator = AVAssetImageGenerator(asset: asset)
-    generator.appliesPreferredTrackTransform = true
-    generator.maximumSize = CGSize(width: maxSide, height: maxSide)
-    generator.requestedTimeToleranceBefore = .zero
-    generator.requestedTimeToleranceAfter = CMTime(seconds: 1, preferredTimescale: 600)
-    let durationSec = CMTimeGetSeconds(asset.duration)
-    // A hair past zero: the very first frame of many camera clips is black.
-    let at = CMTime(seconds: min(0.1, max(0, durationSec / 2)), preferredTimescale: 600)
-    guard let cg = try? generator.copyCGImage(at: at, actualTime: nil) else { return nil }
-    let image = UIImage(cgImage: cg)
-    guard let jpeg = image.jpegData(compressionQuality: 0.8) else { return nil }
-    return [
-      "jpeg": FlutterStandardTypedData(bytes: jpeg),
-      "width": Int(image.size.width),
-      "height": Int(image.size.height),
-      "durationMs": Int((durationSec.isFinite ? durationSec : 0) * 1000),
-    ]
+    Task.detached(priority: .userInitiated) {
+      let loaded = (try? await asset.load(.duration)) ?? .zero
+      let seconds = CMTimeGetSeconds(loaded)
+      let durationSec = seconds.isFinite ? max(0, seconds) : 0
+      let generator = AVAssetImageGenerator(asset: asset)
+      generator.appliesPreferredTrackTransform = true
+      generator.maximumSize = CGSize(width: maxSide, height: maxSide)
+      generator.requestedTimeToleranceBefore = .zero
+      generator.requestedTimeToleranceAfter = CMTime(seconds: 1, preferredTimescale: 600)
+      // A hair past zero: the very first frame of many camera clips is black.
+      let at = CMTime(seconds: min(0.1, durationSec / 2), preferredTimescale: 600)
+      // The handler keeps the generator alive until the frame is delivered.
+      generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: at)]) {
+        [generator] _, cg, _, _, _ in
+        _ = generator
+        guard let cg = cg else { completion(nil); return }
+        let image = UIImage(cgImage: cg)
+        guard let jpeg = image.jpegData(compressionQuality: 0.8) else { completion(nil); return }
+        completion([
+          "jpeg": FlutterStandardTypedData(bytes: jpeg),
+          "width": Int(image.size.width),
+          "height": Int(image.size.height),
+          "durationMs": Int(durationSec * 1000),
+        ])
+      }
+    }
   }
 
   /// PHPhotoLibrary add-only: the app never reads the library here.
@@ -239,7 +255,11 @@ import VisionKit
     }()
     PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
       guard status == .authorized || status == .limited else {
-        DispatchQueue.main.async { result(false) }
+        // Refused or restricted: reported apart from a failed write, so the
+        // app can point the user at Settings.
+        DispatchQueue.main.async {
+          result(FlutterError(code: "photo_access_denied", message: "Photo library access is off", details: nil))
+        }
         return
       }
       PHPhotoLibrary.shared().performChanges({
@@ -299,7 +319,7 @@ import VisionKit
     let session = AVAudioSession.sharedInstance()
     do {
       if earpiece {
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth])
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
         try session.overrideOutputAudioPort(.none)
       } else {
         try session.setCategory(.playback, mode: .default, options: [])
@@ -403,6 +423,12 @@ import VisionKit
     let blur = UIVisualEffectView(effect: UIBlurEffect(style: .regular))
     blur.frame = window.bounds
     blur.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    // The cover is on screen while the app is inactive but visible (Control
+    // Center, an incoming call banner). VoiceOver should say what it is, not
+    // read the hidden chat underneath.
+    blur.isAccessibilityElement = true
+    blur.accessibilityLabel = "Doqto. Content hidden."
+    blur.accessibilityViewIsModal = true
     window.addSubview(blur)
     privacyOverlay = blur
   }

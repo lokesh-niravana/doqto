@@ -16,11 +16,10 @@ class Strings {
   static const String authVerify = 'Verify';
   static const String authResend = 'Resend code';
 
-  // Login — one screen, four ways in
+  // Login — one screen, three ways in
   static const String loginPhoneHelper = 'Tap the flag to change country';
   static const String loginDividerOr = 'or continue with';
   static const String loginGoogle = 'Continue with Google';
-  static const String loginFacebook = 'Continue with Facebook';
   static const String loginApple = 'Continue with Apple';
 
   // Legal footer on login and registration
@@ -52,6 +51,7 @@ class Strings {
   static const String regContinue = 'Continue';
   static String regSignedInAs(String who) => 'Signed in as $who';
   static const String regSignOut = 'Not you? Sign out';
+  static const String regDeleteAccount = 'Delete account';
   static const String regApplePrivateEmail = 'your Apple ID (email hidden)';
 
   // Org
@@ -117,6 +117,7 @@ class Strings {
   static const String netBlock = 'Block';
   static const String netUnblock = 'Unblock';
   static const String netReport = 'Report';
+  static const String netReportPersonTitle = 'Report this person';
   // -- Labels
   static const String netTabNetwork = 'Network';
   static const String netTabGroups = 'Groups';
@@ -661,7 +662,7 @@ class Strings {
   static const String orgPolicyMediaExport = 'Save and share media';
   static const String orgPolicyMediaExportHint = 'Save to Photos and Share on photos, videos and documents';
   static const String orgPolicyBlockScreenshots = 'Block screenshots';
-  static const String orgPolicyBlockScreenshotsHint = 'Android blanks organisation chats in screenshots; iOS screenshots are audited';
+  static const String orgPolicyBlockScreenshotsHint = 'Organisation chats are blanked in screenshots where the device allows it; otherwise each screenshot is audited';
   static const String orgPolicyPreviewDefault = 'Message previews in banners';
   static const String orgPolicyPreviewDefaultHint = 'Members who have not chosen see message text in notifications';
   static const String orgPolicyDefaultDisappear = 'Default disappearing timer';
@@ -692,12 +693,12 @@ class Strings {
       'Emergency access to a conversation needs a written reason and a second admin\'s approval. Every read is audited and the members are told.';
   static const String accessRequestNew = 'Request access';
   static const String accessRequestConversation = 'Conversation';
-  static const String accessRequestConversationHint = 'Conversation ID';
+  static const String accessRequestConversationHint = 'Choose a chat';
   static const String accessRequestPickConversation = 'Choose from my chats';
   static const String accessRequestReason = 'Reason';
   static const String accessRequestReasonHint = 'Why you need to read this conversation';
   static const String accessRequestReasonRequired = 'A reason is required';
-  static const String accessRequestConversationRequired = 'Choose or paste a conversation';
+  static const String accessRequestConversationRequired = 'Choose a conversation';
   static const String accessRequestSubmit = 'Send request';
   static const String accessRequestCreated = 'Request sent. Another admin must approve it.';
   static const String accessRequestApprove = 'Approve';
@@ -773,4 +774,227 @@ class Strings {
   static const String markupTextHint = 'Type here';
   static const String markupAdd = 'Add';
   static const String markupFailed = "Couldn't edit that photo";
+
+  // Accessibility: names for icon-only controls and state that is otherwise
+  // only drawn (VoiceOver / tooltips).
+  static const String a11yClose = 'Close';
+  static const String a11ySelected = 'Selected';
+  static const String a11yOnline = 'Online';
+  static const String chatSelectionClear = 'Clear selection';
+  static const String chatSearchClose = 'Close search';
+  static const String chatAttach = 'Attach';
+  static const String chatSend = 'Send';
+  static const String chatSaveEdit = 'Save edit';
+  static const String chatCancelEdit = 'Cancel edit';
+  static const String chatCancelReply = 'Cancel reply';
+  static const String chatRemoveLinkPreview = 'Remove link preview';
+  static const String chatJumpToLatest = 'Jump to latest message';
+  static String chatJumpToLatestUnread(int n) =>
+      'Jump to latest message, $n unread';
+  static const String chatEditedShowHistory = 'Edited. Show edit history';
+  static const String searchClear = 'Clear search';
+  static const String tickSending = 'Sending';
+  static const String tickSent = 'Sent';
+  static const String tickDelivered = 'Delivered';
+  static const String tickRead = 'Read';
+  static const String tickFailed = 'Not sent';
+  static const String voicePlay = 'Play voice note';
+  static const String voicePause = 'Pause voice note';
+  static const String voiceLoading = 'Loading voice note';
+  static const String voicePosition = 'Voice note position';
+  static String voicePositionValue(String elapsed, String total) =>
+      '$elapsed of $total';
+  static const String voiceStopRecording = 'Stop recording';
+  static const String voicePreviewPlay = 'Play recording';
+  static const String voicePreviewPause = 'Pause recording';
+  static const String mediaPhotoRetry = "Photo couldn't load. Retry";
+  static const String pollRemoveOption = 'Remove option';
+
+  // Chat thread: load failure, empty conversation
+  static const String chatLoadFailedTitle = "Couldn't load messages";
+  static const String chatEmptyThread = 'No messages yet. Say hello.';
+
+  // Camera / photo library access turned off in Settings
+  static const String cameraAccessOffTitle = 'Camera access is off';
+  static const String cameraAccessOffBody =
+      'Doqto can\'t use the camera until you allow it. '
+      'Tap "Open Settings" to turn it on.';
+  static const String photoAccessOffTitle = 'Photo access is off';
+  static const String photoAccessOffBody =
+      'Doqto can\'t open your photo library until you allow it. '
+      'Tap "Open Settings" to turn it on.';
+  static const String openSettings = 'Open Settings';
+
+  // Cancelling a scheduled message asks first
+  static const String scheduledCancelConfirmTitle = 'Cancel scheduled message?';
+  static const String scheduledCancelConfirmBody =
+      'It won\'t be sent. This can\'t be undone.';
+  static const String scheduledCancelKeep = 'Keep';
+  static const String scheduledCancelConfirm = 'Cancel message';
+
+  // Accessibility pass: names for image-only controls, clearer confirmations
+  static String mediaItemOf(String kind, int index, int total) =>
+      '$kind $index of $total';
+  static String mediaMoreCount(int n) => '$n more';
+  static const List<String> wallpaperSolidNames = [
+    'Pale teal',
+    'Pale blue',
+    'Pale green',
+    'Peach',
+    'Lavender',
+    'Pink',
+    'Light gray',
+    'Sand',
+  ];
+  static String wallpaperSolidName(int index) =>
+      index < wallpaperSolidNames.length
+          ? wallpaperSolidNames[index]
+          : 'Colour ${index + 1}';
+  static String mediaDeleteForMeBody(int n) => n == 1
+      ? 'Delete 1 item from this device? Others in the chat keep it.'
+      : 'Delete $n items from this device? Others in the chat keep them.';
+
+  // HIG round 3 (chat + shared widgets)
+  static const String a11yAway = 'Away';
+  static String voiceSpeedLabel(String speed) => 'Playback speed $speed';
+  static const String chatUnpinConfirmTitle = 'Unpin this message?';
+  static const String chatUnpinConfirmBody =
+      'It comes down from the top of the chat for everyone.';
+
+  // HIG round 4
+  static const String tryAgain = 'Try again';
+  static const String mediaPhotoLoadFailed = "This photo couldn't be loaded.";
+  static const String mediaVideoLoadFailed = "This video couldn't be loaded.";
+  static const String photoSaveAccessOffBody =
+      'Doqto can\'t save to Photos until you allow it. '
+      'Tap "Open Settings" to turn it on.';
+  static String chatsDeleted(int deleted, int attempted) => deleted == attempted
+      ? 'Deleted $deleted chat${deleted == 1 ? '' : 's'}.'
+      : 'Deleted $deleted of $attempted chats.';
+  static String groupInvitesNotSent(int n) => n == 1
+      ? "1 invite couldn't be sent. Try again from the group's info."
+      : "$n invites couldn't be sent. Try again from the group's info.";
+  static String groupDeclineConfirm(String group) =>
+      'Decline the invite to $group? You\'ll need a new invite to join later.';
+  // Accessibility names for state that is otherwise only drawn.
+  static const String a11yStarred = 'Starred';
+  static const String a11yMuted = 'Muted';
+  static const String a11yPinned = 'Pinned';
+  static const String a11yUnread = 'Unread';
+  static String a11ySelectedCount(int n) => '$n selected';
+  static String a11yStep(int step, int total, String title) =>
+      'Step $step of $total: $title';
+  static const String chatMessageGone = 'That message is no longer available';
+  static const String pollDiscardTitle = 'Discard this poll?';
+  static const String pollDiscardBody = 'Your question and options will be lost.';
+  static const String keepEditing = 'Keep editing';
+  static const String discard = 'Discard';
+
+  // HIG round 6
+  static const String conversationNotMine = "A conversation you're not in";
+  static const String conversationUnnamed = 'Unnamed conversation';
+  static const String formerMember = 'A former member';
+  static const String outsideOrgPerson = 'Someone outside your organization';
+  static const String namePlaceholder = '\u2026';
+  static const String videoPositionLabel = 'Video position';
+  static const String connectionMore = 'More options';
+  static String pinInvalid(int length) => 'Enter your $length-digit PIN.';
+  static const String profileRefreshFailed =
+      "Couldn't refresh your profile. Check your connection and try again.";
+
+  // HIG round 7
+  static const String groupInviteKeep = 'Keep invite';
+  static const String groupInviteLinksFailed =
+      "Couldn't load invite links. Check your connection and try again.";
+  static const String groupPendingInvitesFailed =
+      "Couldn't load pending invites. Check your connection and try again.";
+  static const String scheduleMessageMenu = 'Schedule message\u2026';
+  static String a11yUnreadCount(int n) => '$n unread';
+  static const String mediaSelectItems = 'Select items';
+  static const String mediaTapToRetry = 'Tap to retry';
+  static String phoneInvalidFor(String country) =>
+      "That doesn't look like a valid phone number for $country.";
+  static const String exportRequestFailed =
+      "Couldn't prepare your account export. Check your connection and try again.";
+  static const String exportOpenFailed =
+      "Couldn't open your export file. Request it again.";
+
+  // HIG round 7
+  static const String accessRequestNoChats =
+      'You have no chats to choose from. To ask for a conversation you\'re not in, open Reports and use Request access on its report.';
+  static const String accessRequestReportedConversation = 'The reported conversation';
+
+  // HIG round 9
+  static const String reactionIncludingYours = 'including yours';
+  static const String recordStartFailed =
+      "Couldn't start recording. Check that nothing else is using the microphone and try again.";
+  static const String appLockFailed =
+      "Couldn't confirm it's you. Try again, or sign out and sign back in.";
+  static const String appLockUnavailable =
+      "This phone has no Face ID, Touch ID or passcode set up, so Doqto can't be unlocked. Set one up in the phone's settings and try again, or sign out and sign back in.";
+
+  // Failure states that used to read as "nothing there"
+  static const String splashUnreachable =
+      "Can't reach Doqto. Check your connection and try again.";
+  static const String chatOlderLoadFailed = "Couldn't load earlier messages";
+  static const String orgTypeRequired = 'Choose a practice type.';
+
+  // Accessible names for fields that have no visible label
+  static const String a11yVerificationCode = 'Verification code';
+  static const String a11yPin = 'PIN';
+  static const String a11yCaption = 'Caption';
+  static String a11yPollOption(int n) => 'Option $n';
+  static const String a11ySearchEmoji = 'Search emoji';
+  static const String a11yDeleteConfirmField = 'Type DELETE to confirm';
+  static const String a11yMarkupText = 'Text to add to the photo';
+  static const String a11ySkillField = 'Skill';
+  static const String a11yMessageField = 'Message';
+
+  // Failures and dead ends that used to be silent
+  static const String voiceLoadFailed = "Couldn't load. Tap to retry";
+  static const String voiceRetry = 'Retry loading voice note';
+  static const String chatSearchLoadFailed = "Couldn't load search results";
+  static const String groupInvitesLoadFailed =
+      "Couldn't load your group invitations.";
+  static const String chatUnavailable = 'This chat is no longer available';
+  static const String chatUnavailableBack = 'Back to chats';
+  static const String chatDetailsActions = 'Chat';
+  static const String chatLeaveGroup = 'Leave group';
+  static const String pollLabel = 'Poll';
+  static const String profileDiscardTitle = 'Discard changes?';
+  static const String profileDiscardBody =
+      "Your edits to your profile won't be saved.";
+
+  // Progress, names and failures added in the accessibility pass
+  static String inviteStateValue(String state) => 'State: $state';
+  static const String a11yTimeZone = 'Time zone';
+  static const String chatNotSentRetry = 'Not sent. Tap to retry.';
+  static const String storeOpenFailed = "Couldn't open the App Store.";
+  static const String playStoreOpenFailed = "Couldn't open Google Play.";
+  static const String profileNameRequired = 'Enter your full name.';
+  static const String chatsLoadFailed = "Couldn't load your chats.";
+
+  // Outcomes that were reported wrongly or not at all
+  static const String chatMarkedUnreadToast = 'Marked as unread';
+  static const String chatMarkedReadToast = 'Marked as read';
+  static const String signOutConfirmBody = "You'll need to sign in again.";
+  static const String orgReportsEmptyFiltered = 'No reports with this status';
+  static const String storageClearFailed =
+      "Couldn't clear this storage. Please try again.";
+  static String a11yTabUnread(String tab, int count) => '$tab, $count unread';
+  static String a11yTabPendingInvitations(String tab, int count) =>
+      '$tab, $count pending ${count == 1 ? 'invitation' : 'invitations'}';
+
+  // Actions that ended without saying why
+  static const String profileEmailCannotClear =
+      "Your account has no phone number, so the email can't be removed.";
+  static const String chatAttachmentGone =
+      'This attachment is no longer on this phone. Delete the message and '
+      'send it again.';
+  static const String linkOpenFailed = "Couldn't open the link.";
+  static const String callOpenFailed = "Couldn't start the call.";
+  static String a11ySearchHit(int index, int total) => '$index of $total';
+  static const String forwardNoChatsYet = 'No chats yet';
+  static const String forwardNoMatch = 'No chats match.';
+  static const String voiceMaxReached = 'Maximum length reached';
 }

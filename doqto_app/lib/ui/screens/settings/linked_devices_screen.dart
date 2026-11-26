@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/constants/strings.dart';
 import '../../../core/enums/app_enums.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/spacing.dart';
@@ -13,6 +14,8 @@ import '../../widgets/app_skeleton.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/settings_rows.dart';
+import '../../widgets/root_back_button.dart';
+import '../../../core/utils/async_retry.dart';
 
 /// Settings → Linked devices (batch 6): this device, then every other live
 /// session with a per-row sign out, and "Sign out of all other devices".
@@ -25,8 +28,12 @@ class LinkedDevicesScreen extends ConsumerWidget {
     final async = ref.watch(sessionsProvider);
     return Scaffold(
       backgroundColor: AppColors.appBg,
-      appBar: AppBar(title: Text(l.settingsLinkedDevices)),
-      body: async.when(
+      appBar: AppBar(
+        // `/settings/devices` is a link target (the new sign-in banner).
+        leading: const RootBackButton(),
+        title: Text(l.settingsLinkedDevices),
+      ),
+      body: async.whenRetrying(
         loading: () => const _Skeleton(),
         error: (e, _) => Center(
           child: Padding(
@@ -34,7 +41,11 @@ class LinkedDevicesScreen extends ConsumerWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(ErrorMessages.forApi(e), style: AppText.body, textAlign: TextAlign.center),
+                Semantics(
+                  container: true,
+                  liveRegion: true,
+                  child: Text(ErrorMessages.forApi(e), style: AppText.body, textAlign: TextAlign.center),
+                ),
                 const SizedBox(height: AppSpacing.lg),
                 AppButton(
                   label: l.commonRetry,
@@ -67,6 +78,9 @@ class _Body extends ConsumerWidget {
           TextButton(
             key: const ValueKey('devices-confirm'),
             onPressed: () => Navigator.of(ctx).pop(true),
+            // Signing a device out is destructive: red, like every other
+            // destructive confirm.
+            style: TextButton.styleFrom(foregroundColor: AppColors.red),
             child: Text(action),
           ),
         ],
@@ -110,7 +124,12 @@ class _Body extends ConsumerWidget {
     final others = [for (final s in sessions) if (!s.current) s];
     return ListView(
       key: const ValueKey('devices-list'),
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+      // Explicit padding drops the automatic safe-area inset; add it back so
+      // the last row clears the home indicator.
+      padding: EdgeInsets.only(
+        top: AppSpacing.lg,
+        bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom,
+      ),
       children: [
         if (current != null)
           FadeSlideIn.staggered(
@@ -185,6 +204,16 @@ class _SessionRow extends StatelessWidget {
       if (s.appVersion != null) 'Doqto ${s.appVersion}',
       s.current ? l.devicesActiveNow : formatLastActive(s.lastSeenAt),
     ].join(' · ');
+    final revoke = onRevoke == null
+        ? null
+        : TextButton(
+            key: ValueKey('devices-revoke-${s.id}'),
+            onPressed: onRevoke,
+            child: Text(l.devicesSignOut, style: TextStyle(color: AppColors.red)),
+          );
+    // Past 1.5x the trailing action ("Cerrar sesión") squeezed the device
+    // name: it moves to a line of its own under the row.
+    final large = MediaQuery.textScalerOf(context).scale(100) / 100 > 1.5;
     return Column(
       children: [
         ListTile(
@@ -192,14 +221,16 @@ class _SessionRow extends StatelessWidget {
           leading: Icon(icon, color: AppColors.medBlue),
           title: Text(s.title, style: AppText.bodyPrimary),
           subtitle: Text(meta, style: AppText.caption),
-          trailing: onRevoke == null
-              ? null
-              : TextButton(
-                  key: ValueKey('devices-revoke-${s.id}'),
-                  onPressed: onRevoke,
-                  child: Text(l.devicesSignOut, style: TextStyle(color: AppColors.red)),
-                ),
+          trailing: large ? null : revoke,
         ),
+        if (large && revoke != null)
+          Align(
+            alignment: AlignmentDirectional.centerEnd,
+            child: Padding(
+              padding: const EdgeInsetsDirectional.only(end: AppSpacing.sm),
+              child: revoke,
+            ),
+          ),
         if (!last) const Divider(height: 1, indent: AppSpacing.lg),
       ],
     );
@@ -211,21 +242,29 @@ class _Skeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.screenHorizontal,
-        vertical: AppSpacing.xl,
+    // The grey blocks are only drawn; a screen reader hears "Loading" once.
+    return Semantics(
+      container: true,
+      label: Strings.loading,
+      liveRegion: true,
+      child: ExcludeSemantics(
+        child: ListView(
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.screenHorizontal,
+            vertical: AppSpacing.xl,
+          ),
+          children: [
+            AppSkeleton.line(width: 120),
+            const SizedBox(height: AppSpacing.sm),
+            AppSkeleton.block(height: 72),
+            const SizedBox(height: AppSpacing.lg),
+            AppSkeleton.line(width: 96),
+            const SizedBox(height: AppSpacing.sm),
+            AppSkeleton.block(height: 160),
+          ],
+        ),
       ),
-      children: [
-        AppSkeleton.line(width: 120),
-        const SizedBox(height: AppSpacing.sm),
-        AppSkeleton.block(height: 72),
-        const SizedBox(height: AppSpacing.lg),
-        AppSkeleton.line(width: 96),
-        const SizedBox(height: AppSpacing.sm),
-        AppSkeleton.block(height: 160),
-      ],
     );
   }
 }

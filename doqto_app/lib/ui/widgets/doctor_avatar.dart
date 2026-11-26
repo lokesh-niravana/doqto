@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../core/constants/strings.dart';
 import '../../core/enums/app_enums.dart';
 import '../../core/utils/avatar_urls.dart';
 import '../../data/api/token_storage.dart';
@@ -33,6 +34,13 @@ class DoctorAvatar extends StatelessWidget {
     this.heroTag,
   });
 
+  /// Initials colour for an avatar [fill]: white, unless white is under 3:1
+  /// on it (bright teal, amber, any light fill), then near-black.
+  static Color initialsColorOn(Color fill) {
+    final whiteContrast = 1.05 / (fill.computeLuminance() + 0.05);
+    return whiteContrast < 3 ? AppColors.gray900 : AppColors.white;
+  }
+
   @override
   Widget build(BuildContext context) {
     final dim = switch (size) {
@@ -47,7 +55,7 @@ class DoctorAvatar extends StatelessWidget {
       AvatarSize.xl => 16.0,
       AvatarSize.lg => 14.0,
       AvatarSize.md => 12.0,
-      AvatarSize.sm => 10.0,
+      AvatarSize.sm => 11.0,
     };
     final bg = AppColors.avatarColorFor(colorIndex);
     final initialsWidget = Container(
@@ -55,12 +63,25 @@ class DoctorAvatar extends StatelessWidget {
       height: dim,
       alignment: Alignment.center,
       decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
-      child: Text(
-        initials,
-        style: GoogleFonts.sora(
-          fontSize: fontSize,
-          fontWeight: FontWeight.w700,
-          color: AppColors.white,
+      // The circle is a fixed size; at large text sizes the initials scale
+      // down to fit inside it instead of clipping at its edge.
+      padding: EdgeInsets.all(dim * 0.12),
+      // Drawn only. The person's name is beside the avatar (or is the
+      // label of the control wrapping it); read aloud, "PS, Priya Shah" says
+      // the same thing twice, the first time as two letters.
+      child: ExcludeSemantics(
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            initials,
+            maxLines: 1,
+            softWrap: false,
+            style: GoogleFonts.sora(
+              fontSize: fontSize,
+              fontWeight: FontWeight.w700,
+              color: initialsColorOn(bg),
+            ),
+          ),
         ),
       ),
     );
@@ -98,15 +119,18 @@ class DoctorAvatar extends StatelessWidget {
             Positioned(
               top: -2,
               right: -2,
-              child: Container(
-                width: 18,
-                height: 18,
-                decoration: BoxDecoration(
-                  color: AppColors.medBlue,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: AppColors.white, width: 2),
+              child: Semantics(
+                label: Strings.a11ySelected,
+                child: Container(
+                  width: 18,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: AppColors.medBlue,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: AppColors.white, width: 2),
+                  ),
+                  child: const Icon(Icons.check, size: 10, color: AppColors.white),
                 ),
-                child: const Icon(Icons.check, size: 10, color: AppColors.white),
               ),
             )
           else if (presence != null)
@@ -122,10 +146,23 @@ class DoctorAvatar extends StatelessWidget {
 
 class PresenceStatusDot extends StatelessWidget {
   final Color color;
-  const PresenceStatusDot({super.key, required this.color});
 
-  factory PresenceStatusDot.online() => const PresenceStatusDot(color: AppColors.presenceOnline);
-  factory PresenceStatusDot.away() => const PresenceStatusDot(color: AppColors.presenceAway);
+  /// Drawn as a ring (white centre) instead of a filled dot, so "away" differs
+  /// from "online" by shape and not only by hue.
+  final bool hollow;
+
+  /// Spoken state. The two dots that are drawn (online, away) are named;
+  /// offline draws nothing and says nothing, as it does for a doctor who
+  /// hides presence.
+  final String? semanticLabel;
+  const PresenceStatusDot({super.key, required this.color, this.semanticLabel, this.hollow = false});
+
+  // Against the dot's white outer ring: greenDark is 5.02:1 (green was
+  // 2.28:1) and amberText 7.09:1 (amber was 2.15:1).
+  factory PresenceStatusDot.online() =>
+      PresenceStatusDot(color: AppColors.greenDark, semanticLabel: Strings.a11yOnline);
+  factory PresenceStatusDot.away() =>
+      PresenceStatusDot(color: AppColors.amberText, semanticLabel: Strings.a11yAway, hollow: true);
   factory PresenceStatusDot.offline() => PresenceStatusDot(color: AppColors.presenceOffline);
 
   /// WhatsApp-style: a dot only while the doctor is online (green) or just
@@ -139,7 +176,9 @@ class PresenceStatusDot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedContainer(
+    // 10pt overall with a 2pt white outer ring. Online fills the 6pt centre;
+    // away draws a 1.5pt coloured ring around a white 3pt centre.
+    final dot = AnimatedContainer(
       duration: AppMotion.maybe(context, AppMotion.micro),
       curve: AppMotion.standard,
       width: 10,
@@ -149,6 +188,17 @@ class PresenceStatusDot extends StatelessWidget {
         shape: BoxShape.circle,
         border: Border.all(color: AppColors.white, width: 2),
       ),
+      alignment: Alignment.center,
+      child: hollow
+          ? Container(
+              width: 3,
+              height: 3,
+              decoration: const BoxDecoration(color: AppColors.white, shape: BoxShape.circle),
+            )
+          : null,
     );
+    // Give each drawn state a name as well.
+    if (semanticLabel == null) return ExcludeSemantics(child: dot);
+    return Semantics(label: semanticLabel, child: dot);
   }
 }

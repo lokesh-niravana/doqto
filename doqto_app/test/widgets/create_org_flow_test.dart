@@ -65,13 +65,18 @@ const _taken = DirectoryEntry(
 class _FakeOrgs extends OrgRepository {
   _FakeOrgs() : super(ApiClient());
   final created = <(String, PracticeType?, String?, DirectoryEntry?)>[];
+  bool failSearch = false;
+  int searches = 0;
 
   @override
   Future<List<DirectoryEntry>> suggestedDirectory() async => [_mine];
 
   @override
-  Future<List<DirectoryEntry>> searchDirectory(String query, {String? state}) async =>
-      [_mine, _taken];
+  Future<List<DirectoryEntry>> searchDirectory(String query, {String? state}) async {
+    searches++;
+    if (failSearch) throw Exception('offline');
+    return [_mine, _taken];
+  }
 
   @override
   Future<List<Organization>> listMine() async => const [];
@@ -213,6 +218,11 @@ void main() {
       await tester.tap(find.widgetWithText(AppButton, 'Continue').first);
       await tester.pumpAndSettle();
       expect(find.text('Choose a practice type.'), findsOneWidget);
+      // Next to the problem — under the "Practice type *" label and above
+      // the options — not at the end of the form below the fold.
+      final errorY = tester.getTopLeft(find.text('Choose a practice type.')).dy;
+      expect(errorY, greaterThan(tester.getTopLeft(find.text('Practice type *')).dy));
+      expect(errorY, lessThan(tester.getTopLeft(find.text('Independent practice')).dy));
 
       await tester.tap(find.text('Independent practice'));
       await tester.tap(find.widgetWithText(AppButton, 'Continue').first);
@@ -242,6 +252,26 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('JOIN'), findsOneWidget);
       expect(orgs.created, isEmpty);
+    });
+
+    testWidgets('a failed directory search is not "No matches": it offers Retry',
+        (tester) async {
+      await open(tester);
+      orgs.failSearch = true;
+
+      await tester.enterText(find.byType(TextField).first, 'saint lukes');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('create-org-search-failed')), findsOneWidget);
+      expect(find.textContaining('No matches'), findsNothing);
+
+      orgs.failSearch = false;
+      await tester.tap(find.byKey(const ValueKey('load-failed-retry')));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      expect(orgs.searches, 2);
+      expect(find.byKey(const ValueKey('create-org-search-failed')), findsNothing);
+      expect(find.text('On Doqto'), findsOneWidget);
     });
   });
 }

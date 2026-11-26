@@ -10,6 +10,7 @@ import '../../core/tokens/motion.dart';
 import '../../core/tokens/radii.dart';
 import '../../core/tokens/spacing.dart';
 import '../../core/tokens/typography.dart';
+import 'message_bubble.dart' show kOnSentInset;
 
 class InviteCodeCard extends StatefulWidget {
   final String code;
@@ -53,8 +54,7 @@ class _InviteCodeCardState extends State<InviteCodeCard> {
               children: [
                 Text(
                   Strings.orgInviteCodeLabel,
-                  style: AppText.label
-                      .copyWith(color: AppColors.white.withValues(alpha: 0.75)),
+                  style: AppText.label.copyWith(color: AppColors.white),
                 ),
                 const SizedBox(height: 4),
                 Text(
@@ -71,7 +71,9 @@ class _InviteCodeCardState extends State<InviteCodeCard> {
           ),
           TextButton.icon(
             style: TextButton.styleFrom(
-              backgroundColor: AppColors.white.withValues(alpha: 0.15),
+              // A darker inset: white on it is 6.80:1. The white tint this
+              // replaces lightened the teal to 3.77:1.
+              backgroundColor: kOnSentInset,
               foregroundColor: AppColors.white,
             ),
             onPressed: _copy,

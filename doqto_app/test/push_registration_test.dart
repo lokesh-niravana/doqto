@@ -28,6 +28,12 @@ class _Tokens implements PushTokenProvider {
   }
 
   @override
+  Future<bool> permissionDenied() async => false;
+
+  @override
+  Future<String?> existingToken() => getToken();
+
+  @override
   Stream<String> get onTokenRefresh => refresh.stream;
 }
 

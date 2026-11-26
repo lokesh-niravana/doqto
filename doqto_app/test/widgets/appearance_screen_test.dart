@@ -56,7 +56,25 @@ Widget _app() {
       settingsStoreProvider.overrideWithValue(_hive.store),
       chatCacheProvider.overrideWithValue(_cache),
     ],
-    child: MaterialApp.router(routerConfig: router),
+    // The same text-scaler wiring as main.dart: the chosen font size reaches
+    // the preview through MediaQuery, once.
+    child: Consumer(
+      builder: (context, ref, _) => MaterialApp.router(
+        routerConfig: router,
+        builder: (context, child) {
+          final mq = MediaQuery.of(context);
+          return MediaQuery(
+            data: mq.copyWith(
+              textScaler: AppTextScaler(
+                system: mq.textScaler,
+                factor: ref.watch(appSettingsProvider).fontSize.factor,
+              ),
+            ),
+            child: child!,
+          );
+        },
+      ),
+    ),
   );
 }
 
@@ -102,17 +120,20 @@ void main() {
 
   testWidgets('font size sheet scales the preview and persists', (tester) async {
     await _open(tester);
+    // The size the preview is painted at: its style through the app scaler.
     double previewSize() {
-      final text = tester.widget<Text>(find.byKey(const ValueKey('appearance-preview')));
-      return text.style!.fontSize!;
+      final finder = find.byKey(const ValueKey('appearance-preview'));
+      final text = tester.widget<Text>(finder);
+      return MediaQuery.textScalerOf(tester.element(finder)).scale(text.style!.fontSize!);
     }
 
     final medium = previewSize();
     await _pick(tester, 'appearance-row-font_size', 'appearance-opt-font_size-large');
-    expect(previewSize(), greaterThan(medium));
+    // The factor once, not twice (the preview used to multiply it again).
+    expect(previewSize(), closeTo(medium * AppFontSize.large.factor, 1e-6));
     expect(_hive.store.fontSize, 'large');
     await _pick(tester, 'appearance-row-font_size', 'appearance-opt-font_size-small');
-    expect(previewSize(), lessThan(medium));
+    expect(previewSize(), closeTo(medium * AppFontSize.small.factor, 1e-6));
     expect(_hive.store.fontSize, 'small');
   });
 

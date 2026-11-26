@@ -5,10 +5,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/us_states.dart';
+import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/enums/app_enums.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
+import '../../../core/tokens/motion.dart';
 import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
@@ -20,7 +22,13 @@ import '../../../state/org_state.dart';
 import '../../widgets/app_text_field.dart';
 import '../../widgets/inline_error.dart';
 import '../../widgets/invite_code_card.dart';
+import '../../widgets/load_failed.dart';
 import '../../widgets/primary_button.dart';
+
+const _kState = 'State';
+const _kSearchFailed =
+    "Couldn't search the directory. Check your connection and try again, or enter it yourself.";
+const _kJoining = 'Joining…';
 
 enum _Step { find, details, review, created }
 
@@ -44,6 +52,10 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
   List<DirectoryEntry>? _suggested;
   List<DirectoryEntry>? _results;
   bool _searching = false;
+  // A failed lookup is not "no matches": it gets its own line and a Retry.
+  bool _searchFailed = false;
+  // Joining an existing practice is in flight (guards a second tap).
+  bool _joining = false;
 
   // Details
   DirectoryEntry? _from;
@@ -55,6 +67,26 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
 
   bool _loading = false;
   String? _error;
+
+  /// "Choose a practice type." sits under the Practice type label, where the
+  /// problem is, not at the end of the form below the fold.
+  String? _typeError;
+  final _typeErrorKey = GlobalKey();
+  final _detailsErrorKey = GlobalKey();
+  final _reviewErrorKey = GlobalKey();
+
+  /// Scroll an error that was just set into view once it is laid out.
+  void _reveal(GlobalKey key) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = key.currentContext;
+      if (ctx == null || !ctx.mounted) return;
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0.5,
+        duration: AppMotion.maybe(ctx, AppMotion.micro),
+      );
+    });
+  }
   Organization? _created;
 
   @override
@@ -82,10 +114,14 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
   void _onQuery(String q) {
     _debounce?.cancel();
     if (q.trim().length < 2) {
-      setState(() => _results = null);
+      setState(() {
+        _results = null;
+        _searchFailed = false;
+      });
       return;
     }
     _debounce = Timer(const Duration(milliseconds: 300), () async {
+      if (!mounted) return;
       setState(() => _searching = true);
       try {
         final r = await ref
@@ -93,11 +129,20 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
             .searchDirectory(q.trim());
         // Drop answers to a query the user has already typed past.
         if (mounted && _query.text.trim() == q.trim()) {
-          setState(() => _results = r);
+          setState(() {
+            _results = r;
+            _searchFailed = false;
+          });
         }
       } catch (_) {
-        // Lookup is a convenience: "Enter it yourself" still works.
-        if (mounted) setState(() => _results = const []);
+        // Lookup is a convenience: "Enter it yourself" still works. But a
+        // failure must not read as "no matches".
+        if (mounted && _query.text.trim() == q.trim()) {
+          setState(() {
+            _results = const [];
+            _searchFailed = true;
+          });
+        }
       } finally {
         if (mounted) setState(() => _searching = false);
       }
@@ -105,6 +150,7 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
   }
 
   void _pick(DirectoryEntry? e) {
+    if (_joining) return;
     FocusScope.of(context).unfocus();
     if (e != null && e.onDoqto) {
       _showAlreadyOnDoqto(e);
@@ -117,6 +163,7 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
       _state = usStates.contains(e?.state) ? e!.state : null;
       _type = e?.practiceType;
       _error = null;
+      _typeError = null;
       _step = _Step.details;
     });
   }
@@ -125,49 +172,58 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      // Sized to its content and scrollable: at large text the Join button
+      // must stay reachable, not clip under the half-height default.
+      isScrollControlled: true,
+      useSafeArea: true,
       builder: (sheet) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.xl,
-            0,
-            AppSpacing.xl,
-            AppSpacing.xl,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(sheet).height * 0.9,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                '${e.doqtoOrgName ?? e.name} is already on Doqto',
-                style: AppText.heading,
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                e.youAreListed
-                    ? 'Your NPI is listed with this practice, so you can join now.'
-                    : 'Ask a member for the invite code to join.',
-                style: AppText.body,
-              ),
-              const SizedBox(height: AppSpacing.xl),
-              if (e.youAreListed)
-                AppButton(
-                  label: 'Join ${e.doqtoOrgName ?? e.name}',
-                  expand: true,
-                  onPressed: () {
-                    Navigator.of(sheet).pop();
-                    _joinExisting(e);
-                  },
-                )
-              else
-                AppButton(
-                  label: 'Enter an invite code',
-                  expand: true,
-                  onPressed: () {
-                    Navigator.of(sheet).pop();
-                    context.push(AppRoutes.joinOrg);
-                  },
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.xl,
+              0,
+              AppSpacing.xl,
+              AppSpacing.xl,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '${e.doqtoOrgName ?? e.name} is already on Doqto',
+                  style: AppText.heading,
                 ),
-            ],
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  e.youAreListed
+                      ? 'Your NPI is listed with this practice, so you can join now.'
+                      : 'Ask a member for the invite code to join.',
+                  style: AppText.body,
+                ),
+                const SizedBox(height: AppSpacing.xl),
+                if (e.youAreListed)
+                  AppButton(
+                    label: 'Join ${e.doqtoOrgName ?? e.name}',
+                    expand: true,
+                    onPressed: () {
+                      Navigator.of(sheet).pop();
+                      _joinExisting(e);
+                    },
+                  )
+                else
+                  AppButton(
+                    label: 'Enter an invite code',
+                    expand: true,
+                    onPressed: () {
+                      Navigator.of(sheet).pop();
+                      context.push(AppRoutes.joinOrg);
+                    },
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -175,12 +231,15 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
   }
 
   Future<void> _joinExisting(DirectoryEntry e) async {
+    if (_joining) return;
+    setState(() => _joining = true);
     try {
       await ref.read(orgProvider.notifier).joinByDirectory(e);
       await ref.read(authProvider.notifier).refreshOrgStatus();
       if (mounted) context.go(AppRoutes.myOrg);
     } catch (err) {
       if (mounted) {
+        setState(() => _joining = false);
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(ErrorMessages.forApi(err))));
@@ -191,13 +250,15 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
   void _toReview() {
     final nameOk = _nameKey.currentState?.validate() ?? false;
     if (_type == null) {
-      setState(() => _error = 'Choose a practice type.');
+      setState(() => _typeError = Strings.orgTypeRequired);
+      _reveal(_typeErrorKey);
       return;
     }
     if (!nameOk) return;
     FocusScope.of(context).unfocus();
     setState(() {
       _error = null;
+      _typeError = null;
       _step = _Step.review;
     });
   }
@@ -224,7 +285,10 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
         _step = _Step.created;
       });
     } catch (e) {
-      if (mounted) setState(() => _error = ErrorMessages.forApi(e));
+      if (mounted) {
+        setState(() => _error = ErrorMessages.forApi(e));
+        _reveal(_reviewErrorKey);
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -233,6 +297,7 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
   void _back() {
     setState(() {
       _error = null;
+      _typeError = null;
       _step = switch (_step) {
         _Step.review => _Step.details,
         _ => _Step.find,
@@ -260,7 +325,7 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
                     ? null
                     : IconButton(
                         tooltip: 'Back',
-                        icon: const Icon(Icons.arrow_back_rounded),
+                        icon: const BackButtonIcon(),
                         onPressed: _back,
                       ),
               ),
@@ -279,6 +344,38 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
   Widget _findStep() {
     final q = _query.text.trim();
     final showing = q.length >= 2 ? _results : _suggested;
+    final list = _findList(q, showing);
+    if (!_joining) return list;
+    // Joining: the list is inert under a scrim with visible progress.
+    return Stack(
+      children: [
+        ExcludeSemantics(child: AbsorbPointer(child: list)),
+        Positioned.fill(
+          child: ColoredBox(
+            key: const ValueKey('create-org-joining'),
+            color: Theme.of(context)
+                .scaffoldBackgroundColor
+                .withValues(alpha: 0.85),
+            child: Center(
+              child: Semantics(
+                liveRegion: true,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const ExcludeSemantics(child: CircularProgressIndicator()),
+                    const SizedBox(height: AppSpacing.md),
+                    Text(_kJoining, style: AppText.body),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _findList(String q, List<DirectoryEntry>? showing) {
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
       children: [
@@ -300,7 +397,10 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
                   child: SizedBox(
                     width: 16,
                     height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      semanticsLabel: 'Searching',
+                    ),
                   ),
                 )
               : null,
@@ -309,9 +409,18 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
         if (q.length < 2 && (_suggested?.isNotEmpty ?? false))
           Padding(
             padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-            child: Text('SUGGESTED FOR YOU', style: AppText.label),
+            child: Semantics(header: true, child: Text('SUGGESTED FOR YOU', style: AppText.label)),
           ),
-        if (q.length >= 2 && showing != null && showing.isEmpty && !_searching)
+        if (q.length >= 2 && _searchFailed && !_searching)
+          LoadFailed(
+            key: const ValueKey('create-org-search-failed'),
+            message: _kSearchFailed,
+            onRetry: () => _onQuery(_query.text),
+          )
+        else if (q.length >= 2 &&
+            showing != null &&
+            showing.isEmpty &&
+            !_searching)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
             child: Text(
@@ -383,6 +492,7 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
               ),
               const SizedBox(height: AppSpacing.lg),
               Text('Practice type *', style: AppText.subheading),
+              InlineError(_typeError, key: _typeErrorKey),
               const SizedBox(height: AppSpacing.sm),
               for (final (t, label) in const [
                 (PracticeType.independent, 'Independent practice'),
@@ -395,6 +505,7 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
                   onTap: () => setState(() {
                     _type = t;
                     _error = null;
+                    _typeError = null;
                   }),
                 ),
               const SizedBox(height: AppSpacing.md),
@@ -410,23 +521,30 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('State', style: AppText.subheading),
+                        // The visible caption names the control below, so
+                        // it is read once, as the dropdown's name.
+                        ExcludeSemantics(
+                          child: Text(_kState, style: AppText.subheading),
+                        ),
                         const SizedBox(height: AppSpacing.sm),
-                        DropdownButtonFormField<String>(
-                          initialValue: _state,
-                          isExpanded: true,
-                          items: [
-                            for (final s in usStates)
-                              DropdownMenuItem(value: s, child: Text(s)),
-                          ],
-                          onChanged: (s) => setState(() => _state = s),
+                        Semantics(
+                          label: _kState,
+                          child: DropdownButtonFormField<String>(
+                            initialValue: _state,
+                            isExpanded: true,
+                            items: [
+                              for (final s in usStates)
+                                DropdownMenuItem(value: s, child: Text(s)),
+                            ],
+                            onChanged: (s) => setState(() => _state = s),
+                          ),
                         ),
                       ],
                     ),
                   ),
                 ],
               ),
-              InlineError(_error),
+              InlineError(_error, key: _detailsErrorKey),
             ],
           ),
         ),
@@ -505,7 +623,7 @@ class _CreateOrgScreenState extends ConsumerState<CreateOrgScreen> {
                           'groups open once it\'s verified.',
                       warm: true,
                     ),
-              InlineError(_error),
+              InlineError(_error, key: _reviewErrorKey),
             ],
           ),
         ),
@@ -596,46 +714,49 @@ class _EntryTile extends StatelessWidget {
     ].join(' · ');
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-      child: Material(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppRadii.md),
-        child: InkWell(
+      child: Semantics(
+        button: true,
+        child: Material(
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(AppRadii.md),
-          onTap: onTap,
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 60),
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.lg,
-              vertical: AppSpacing.md,
-            ),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(AppRadii.md),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(entry.name, style: AppText.bodyPrimary),
-                      if (sub.isNotEmpty) Text(sub, style: AppText.caption),
-                    ],
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadii.md),
+            onTap: onTap,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 60),
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg,
+                vertical: AppSpacing.md,
+              ),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(AppRadii.md),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(entry.name, style: AppText.bodyPrimary),
+                        if (sub.isNotEmpty) Text(sub, style: AppText.caption),
+                      ],
+                    ),
                   ),
-                ),
-                if (entry.onDoqto)
-                  _Badge(
-                    'On Doqto',
-                    AppColors.medBlueLight,
-                    AppColors.medBlueDark,
-                  )
-                else if (entry.youAreListed)
-                  _Badge(
-                    'You\'re listed',
-                    AppColors.greenLight,
-                    AppColors.greenDark,
-                  ),
-              ],
+                  if (entry.onDoqto)
+                    _Badge(
+                      'On Doqto',
+                      AppColors.medBlueLight,
+                      AppColors.medBlueDark,
+                    )
+                  else if (entry.youAreListed)
+                    _Badge(
+                      'You\'re listed',
+                      AppColors.greenLight,
+                      AppColors.greenDark,
+                    ),
+                ],
+              ),
             ),
           ),
         ),
@@ -677,12 +798,19 @@ class _TypeOption extends StatelessWidget {
     child: Material(
       color: selected ? AppColors.medBlueLight : AppColors.surface,
       borderRadius: BorderRadius.circular(AppRadii.md),
-      child: InkWell(
+      // A drawn radio dot says nothing to VoiceOver; this does.
+      child: Semantics(
+        inMutuallyExclusiveGroup: true,
+        checked: selected,
+        child: InkWell(
         borderRadius: BorderRadius.circular(AppRadii.md),
         onTap: onTap,
         child: Container(
-          height: 52,
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+          constraints: const BoxConstraints(minHeight: 52),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm,
+          ),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(AppRadii.md),
             border: Border.all(
@@ -700,9 +828,15 @@ class _TypeOption extends StatelessWidget {
                 size: 20,
               ),
               const SizedBox(width: AppSpacing.md),
-              Text(label, style: selected ? AppText.bodyPrimary : AppText.body),
+              Expanded(
+                child: Text(
+                  label,
+                  style: selected ? AppText.bodyPrimary : AppText.body,
+                ),
+              ),
             ],
           ),
+        ),
         ),
       ),
     ),

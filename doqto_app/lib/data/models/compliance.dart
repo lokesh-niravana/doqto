@@ -116,6 +116,11 @@ class OrgReport {
   final String reporterId;
   final String subjectType; // user | message
   final String subjectId;
+
+  /// The chat a reported message is in, when the server says. Never shown:
+  /// it only lets an admin ask for access to that chat from the report.
+  /// Null for a report about a person.
+  final String? conversationId;
   final ReportReason reason;
   final String? details;
   final ReportStatus status;
@@ -129,6 +134,7 @@ class OrgReport {
     required this.reporterId,
     required this.subjectType,
     required this.subjectId,
+    this.conversationId,
     required this.reason,
     this.details,
     required this.status,
@@ -143,6 +149,7 @@ class OrgReport {
         reporterId: j['reporter_id'] as String,
         subjectType: (j['subject_type'] as String?) ?? 'user',
         subjectId: j['subject_id'] as String,
+        conversationId: j['conversation_id'] as String?,
         reason: ReportReason.fromWire(j['reason'] as String?),
         details: j['details'] as String?,
         status: ReportStatus.fromWire(j['status'] as String?),
@@ -159,6 +166,7 @@ class OrgReport {
         reporterId: reporterId,
         subjectType: subjectType,
         subjectId: subjectId,
+        conversationId: conversationId,
         reason: reason,
         details: details,
         status: status ?? this.status,

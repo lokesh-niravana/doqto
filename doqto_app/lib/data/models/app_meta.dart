@@ -58,7 +58,7 @@ class LegalLinks {
   /// Mirrors LEGAL_URLS on the backend — shown while the fetch is in flight
   /// or offline.
   static const defaults = LegalLinks(
-    help: 'https://doqto.ai/help',
+    help: 'https://doqto.ai/support',
     contact: 'mailto:support@doqto.ai',
     terms: 'https://doqto.ai/terms',
     privacy: 'https://doqto.ai/privacy',

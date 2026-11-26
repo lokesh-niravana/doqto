@@ -201,6 +201,8 @@
   "helpHipaa": "HIPAA notice",
   "helpLicences": "Open-source licences",
   "helpOpenFailed": "Couldn't open the link.",
+  "helpEmailCopied": "Email address copied: {email}",
+  "@helpEmailCopied": {"placeholders": {"email": {"type": "String"}}},
   "languageFooter": "Changes the language of Doqto only. Messages are never translated.",
   "forceUpdateTitle": "Update Doqto",
   "forceUpdateBody": "This version is no longer supported. Update to keep messaging.",

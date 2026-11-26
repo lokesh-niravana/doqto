@@ -200,6 +200,7 @@
   "helpHipaa": "Aviso HIPAA",
   "helpLicences": "Licencias de código abierto",
   "helpOpenFailed": "No se pudo abrir el enlace.",
+  "helpEmailCopied": "Dirección de correo copiada: {email}",
   "languageFooter": "Cambia solo el idioma de Doqto. Los mensajes nunca se traducen.",
   "forceUpdateTitle": "Actualiza Doqto",
   "forceUpdateBody": "Esta versión ya no es compatible. Actualiza para seguir enviando mensajes.",

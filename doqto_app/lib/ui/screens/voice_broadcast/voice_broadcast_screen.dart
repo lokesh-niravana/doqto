@@ -10,6 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/enums/app_enums.dart';
 import '../../../core/router/app_router.dart';
@@ -28,6 +29,7 @@ import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
 import '../../../core/utils/avatar_urls.dart';
+import '../../../core/utils/async_retry.dart';
 
 enum _Phase { pick, record, preview, sending }
 
@@ -52,9 +54,19 @@ class _PickerMessage extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(title, style: AppText.bodyPrimary, textAlign: TextAlign.center),
-          const SizedBox(height: AppSpacing.sm),
-          Text(body, style: AppText.caption, textAlign: TextAlign.center),
+          // Replaces the loading skeleton: announced, title and body as one.
+          Semantics(
+            container: true,
+            liveRegion: true,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(title, style: AppText.bodyPrimary, textAlign: TextAlign.center),
+                const SizedBox(height: AppSpacing.sm),
+                Text(body, style: AppText.caption, textAlign: TextAlign.center),
+              ],
+            ),
+          ),
           const SizedBox(height: AppSpacing.lg),
           AppButton(label: action, onPressed: onAction),
         ],
@@ -91,6 +103,14 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
   bool _isPlaying = false;
   int _sendProgress = 0;
   int _sendTotal = 0;
+
+  // Send bookkeeping, kept across retries: which conversations already have
+  // the note, the direct conversation resolved for each picked person, and
+  // what to tell the user about the last attempt.
+  final Set<String> _sentConvIds = {};
+  final Map<String, String> _userConvIds = {};
+  String? _sendError;
+  int _failedCount = 0;
 
   @override
   void dispose() {
@@ -151,17 +171,29 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
       }
     }
     if (!mounted) return;
-    final dir = await getTemporaryDirectory();
-    final path =
-        '${dir.path}/broadcast_${DateTime.now().millisecondsSinceEpoch}.wav';
-    await _recorder.start(
-      RecordConfig(
-        encoder: AudioEncoder.wav,
-        sampleRate: 44100,
-        numChannels: 1,
-      ),
-      path: path,
-    );
+    try {
+      final dir = await getTemporaryDirectory();
+      final path =
+          '${dir.path}/broadcast_${DateTime.now().millisecondsSinceEpoch}.wav';
+      await _recorder.start(
+        RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: 44100,
+          numChannels: 1,
+        ),
+        path: path,
+      );
+    } catch (_) {
+      // The microphone is busy (a call, another app) or the session would
+      // not start: say so and go back to the recipient list, instead of a
+      // recorder that sits at 0:00 and records nothing.
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(const SnackBar(content: Text(Strings.recordStartFailed)));
+      setState(() => _phase = _Phase.pick);
+      return;
+    }
+    if (!mounted) return;
     if (transcribe) {
       _stt.listen(
         onResult: (result) {
@@ -217,58 +249,101 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
   }
 
   Future<void> _send() async {
-    if (_filePath == null) return;
-    setState(() => _phase = _Phase.sending);
-    final file = File(_filePath!);
-    final bytes = await file.readAsBytes();
-    final filename = _filePath!.split('/').last;
-    final repo = ref.read(chatRepositoryProvider);
-
-    final targets = <String>[];
-    // Resolve direct conv ids for selected users
-    for (final userId in _selectedUserIds) {
-      try {
-        final conv = await repo.createConversation(
-          type: ConversationType.direct,
-          name: null,
-          memberIds: [userId],
-        );
-        targets.add(conv.id);
-      } catch (_) {}
-    }
-    targets.addAll(_selectedConvIds);
-
+    final path = _filePath;
+    if (path == null || _phase == _Phase.sending) return;
     setState(() {
-      _sendTotal = targets.length;
+      _phase = _Phase.sending;
+      _sendError = null;
       _sendProgress = 0;
+      _sendTotal = _totalSelected - _sentConvIds.length;
     });
+    final file = File(path);
+    final filename = path.split('/').last;
+    final repo = ref.read(chatRepositoryProvider);
+    Object? lastError;
+    var failed = 0;
 
-    int successCount = 0;
-    for (final convId in targets) {
-      try {
-        await repo.uploadVoiceNote(
-          conversationId: convId,
-          bytes: bytes,
-          filename: filename,
-          durationSec: _durationSec,
-          transcript: _transcript.isNotEmpty ? _transcript : null,
-        );
-        successCount++;
-      } catch (_) {}
-      if (mounted) setState(() => _sendProgress++);
+    try {
+      final bytes = await file.readAsBytes();
+
+      // Resolve the direct conversation for each selected person. A retry
+      // reuses what was resolved last time and skips whoever already got it,
+      // so nobody receives the note twice.
+      final targets = <String>{};
+      for (final userId in _selectedUserIds) {
+        var convId = _userConvIds[userId];
+        if (convId == null) {
+          try {
+            final conv = await repo.createConversation(
+              type: ConversationType.direct,
+              name: null,
+              memberIds: [userId],
+            );
+            convId = _userConvIds[userId] = conv.id;
+          } catch (e) {
+            lastError = e;
+            failed++;
+            continue;
+          }
+        }
+        targets.add(convId);
+      }
+      targets.addAll(_selectedConvIds);
+      targets.removeAll(_sentConvIds);
+
+      if (mounted) setState(() => _sendTotal = targets.length + failed);
+
+      for (final convId in targets) {
+        try {
+          await repo.uploadVoiceNote(
+            conversationId: convId,
+            bytes: bytes,
+            filename: filename,
+            durationSec: _durationSec,
+            transcript: _transcript.isNotEmpty ? _transcript : null,
+          );
+          _sentConvIds.add(convId);
+        } catch (e) {
+          lastError = e;
+          failed++;
+        }
+        if (mounted) setState(() => _sendProgress++);
+      }
+    } catch (e) {
+      // The recording itself could not be read.
+      lastError = e;
+      failed = _totalSelected - _sentConvIds.length;
     }
 
-    // M8: uploads carried the bytes — drop the temp .wav recording.
+    final sent = _sentConvIds.length;
+    if (sent > 0) ref.invalidate(conversationsProvider);
+
+    if (failed > 0) {
+      // Keep the recording and stay here: the user can retry the ones that
+      // did not go, or discard.
+      if (!mounted) return;
+      final reason = ErrorMessages.forApi(lastError);
+      setState(() {
+        _phase = _Phase.preview;
+        _failedCount = failed;
+        _sendError = sent == 0
+            ? 'Voice note not sent. $reason Your recording is kept — try again.'
+            : 'Sent to $sent of ${sent + failed}. $failed not sent: $reason '
+                'Your recording is kept — retry to send the rest.';
+      });
+      return;
+    }
+
+    // M8: every upload carried the bytes — drop the temp .wav recording.
     try {
       await file.delete();
     } catch (_) {}
 
-    ref.invalidate(conversationsProvider);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Voice note sent to $successCount conversation${successCount == 1 ? '' : 's'}.',
+          'Voice note sent to $sent conversation${sent == 1 ? '' : 's'}.',
         ),
         backgroundColor: AppColors.medBlue,
       ),
@@ -296,6 +371,7 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
       appBar: AppBar(
         title: Text(_phase == _Phase.pick ? 'Send voice note' : 'Recording'),
         leading: IconButton(
+          tooltip: 'Close',
           icon: const Icon(Icons.close),
           onPressed: _phase == _Phase.sending ? null : () => context.pop(),
         ),
@@ -321,7 +397,7 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
     return Column(
       children: [
         Expanded(
-          child: peopleAsync.when(
+          child: peopleAsync.whenRetrying(
             loading: () => const SkeletonList(),
             error: (e, _) => _PickerMessage(
               title: 'Couldn’t load your contacts',
@@ -351,7 +427,7 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
                         AppSpacing.screenHorizontal,
                         AppSpacing.xs,
                       ),
-                      child: Text('GROUPS', style: AppText.label),
+                      child: Semantics(header: true, child: Text('GROUPS', style: AppText.label)),
                     ),
                     for (final g in groups)
                       CheckboxListTile(
@@ -386,7 +462,7 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
                         AppSpacing.screenHorizontal,
                         AppSpacing.xs,
                       ),
-                      child: Text('PEOPLE', style: AppText.label),
+                      child: Semantics(header: true, child: Text('PEOPLE', style: AppText.label)),
                     ),
                   for (final m in others)
                     CheckboxListTile(
@@ -481,21 +557,25 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
                   ),
                 ),
               const SizedBox(height: AppSpacing.xxl),
-              Material(
-                color: AppColors.medBlue,
-                shape: const CircleBorder(),
-                elevation: 4,
-                child: InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: _stopRecording,
-                  child: Container(
-                    width: 72,
-                    height: 72,
-                    alignment: Alignment.center,
-                    child: const Icon(
-                      Icons.stop,
-                      color: AppColors.white,
-                      size: 36,
+              Semantics(
+                button: true,
+                label: 'Stop recording',
+                child: Material(
+                  color: AppColors.medBlue,
+                  shape: const CircleBorder(),
+                  elevation: 4,
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: _stopRecording,
+                    child: Container(
+                      width: 72,
+                      height: 72,
+                      alignment: Alignment.center,
+                      child: const Icon(
+                        Icons.stop,
+                        color: AppColors.white,
+                        size: 36,
+                      ),
                     ),
                   ),
                 ),
@@ -513,43 +593,78 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
         key: const ValueKey('preview-phase'),
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.xl),
+          // The Discard / Send row is pinned; everything above it scrolls,
+          // so a long error at a large text size can never push it off.
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  IconButton(
-                    onPressed: _togglePlay,
-                    iconSize: 48,
-                    icon: Icon(
-                      _isPlaying
-                          ? Icons.pause_circle_filled
-                          : Icons.play_circle_filled,
-                      color: AppColors.medBlue,
+              Expanded(
+                child: Center(
+                  child: SingleChildScrollView(
+                    key: const ValueKey('broadcast-preview-scroll'),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            IconButton(
+                              tooltip: _isPlaying ? 'Pause' : 'Play',
+                              onPressed: _togglePlay,
+                              iconSize: 48,
+                              icon: Icon(
+                                _isPlaying
+                                    ? Icons.pause_circle_filled
+                                    : Icons.play_circle_filled,
+                                color: AppColors.medBlue,
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.md),
+                            Text(_formatDuration(_durationSec), style: AppText.display),
+                          ],
+                        ),
+                        const SizedBox(height: AppSpacing.lg),
+                        if (_transcript.isNotEmpty)
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(AppSpacing.md),
+                            decoration: BoxDecoration(
+                              color: AppColors.medBlueLight,
+                              borderRadius: AppRadii.rMd,
+                            ),
+                            child: Text(
+                              _transcript,
+                              style: AppText.bodyPrimary,
+                              maxLines: 6,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        if (_sendError != null) ...[
+                          const SizedBox(height: AppSpacing.lg),
+                          Semantics(
+                            liveRegion: true,
+                            child: Row(
+                              key: const ValueKey('broadcast-send-error'),
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(Icons.error_outline_rounded,
+                                    size: 18, color: AppColors.red),
+                                const SizedBox(width: AppSpacing.sm),
+                                Expanded(
+                                  child: Text(
+                                    _sendError!,
+                                    style: AppText.body.copyWith(color: AppColors.red),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
-                  const SizedBox(width: AppSpacing.md),
-                  Text(_formatDuration(_durationSec), style: AppText.display),
-                ],
+                ),
               ),
               const SizedBox(height: AppSpacing.lg),
-              if (_transcript.isNotEmpty)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  decoration: BoxDecoration(
-                    color: AppColors.medBlueLight,
-                    borderRadius: AppRadii.rMd,
-                  ),
-                  child: Text(
-                    _transcript,
-                    style: AppText.bodyPrimary,
-                    maxLines: 6,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              const SizedBox(height: AppSpacing.xxl),
               Row(
                 children: [
                   Expanded(
@@ -563,8 +678,13 @@ class _VoiceBroadcastScreenState extends ConsumerState<VoiceBroadcastScreen> {
                   const SizedBox(width: AppSpacing.md),
                   Expanded(
                     child: AppButton(
-                      label: 'Send to $_totalSelected',
-                      icon: Icons.send,
+                      key: const ValueKey('broadcast-send'),
+                      label: _sendError == null
+                          ? 'Send to $_totalSelected'
+                          : 'Retry $_failedCount',
+                      icon: _sendError == null
+                          ? Icons.send
+                          : Icons.refresh_rounded,
                       onPressed: _send,
                       expand: true,
                     ),

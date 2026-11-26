@@ -26,18 +26,28 @@ class MessageReport {
 
 /// "Report message" (batch 4): a reason picker plus optional details.
 /// Keys: `report-reason-<wire>`, `report-details`, `report-submit`.
-Future<MessageReport?> showReportMessageSheet(BuildContext context) {
+///
+/// The same sheet reports a person: pass [title] (and the caller sends
+/// `subject_type: user`).
+Future<MessageReport?> showReportMessageSheet(
+  BuildContext context, {
+  String title = Strings.chatReportTitle,
+}) {
   return showModalBottomSheet<MessageReport>(
     context: context,
     useRootNavigator: true,
     isScrollControlled: true,
+    // Stays under the status bar when the keyboard pushes the sheet up.
+    useSafeArea: true,
     showDragHandle: true,
-    builder: (ctx) => const _ReportSheet(),
+    builder: (ctx) => _ReportSheet(title: title),
   );
 }
 
 class _ReportSheet extends StatefulWidget {
-  const _ReportSheet();
+  const _ReportSheet({required this.title});
+
+  final String title;
 
   @override
   State<_ReportSheet> createState() => _ReportSheetState();
@@ -67,7 +77,7 @@ class _ReportSheetState extends State<_ReportSheet> {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.xs),
-                child: Text(Strings.chatReportTitle, style: AppText.heading),
+                child: Text(widget.title, style: AppText.heading),
               ),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),

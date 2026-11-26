@@ -1,10 +1,13 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../../core/chat_theme.dart';
+import '../../../core/constants/strings.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/spacing.dart';
@@ -60,17 +63,44 @@ class _WallpaperPickerScreenState extends ConsumerState<WallpaperPickerScreen> {
   }
 
   Future<void> _pickPhoto() async {
-    final store = await ref.read(wallpaperStoreProvider.future);
-    final picked = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1600,
-      maxHeight: 1600,
-      imageQuality: 85,
-    );
-    if (picked == null) return;
-    await store.save(_photoKey, File(picked.path));
-    ref.invalidate(wallpaperPhotoProvider);
-    await _apply(WallpaperSpec.localId);
+    try {
+      final store = await ref.read(wallpaperStoreProvider.future);
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 85,
+      );
+      if (picked == null) return;
+      await store.save(_photoKey, File(picked.path));
+      ref.invalidate(wallpaperPhotoProvider);
+      await _apply(WallpaperSpec.localId);
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      // image_picker's code for photo access turned off in Settings: say so
+      // and offer the way there, instead of a generic failure.
+      final denied = e.code == 'photo_access_denied';
+      ScaffoldMessenger.of(context).showSnackBar(
+        denied
+            ? SnackBar(
+                content: const Text(Strings.photoAccessOffBody),
+                action: SnackBarAction(
+                  label: Strings.openSettings,
+                  onPressed: openAppSettings,
+                ),
+              )
+            : SnackBar(
+                content: Text(ErrorMessages.forApi(e)),
+                backgroundColor: AppColors.red,
+              ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(ErrorMessages.forApi(e)),
+        backgroundColor: AppColors.red,
+      ));
+    }
   }
 
   @override
@@ -96,52 +126,68 @@ class _WallpaperPickerScreenState extends ConsumerState<WallpaperPickerScreen> {
       appBar: AppBar(title: Text(l.wallpaperTitle)),
       body: ListView(
         key: const ValueKey('wallpaper-list'),
-        padding: const EdgeInsets.only(bottom: AppSpacing.xl),
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last row clears the home indicator.
+        padding: EdgeInsets.only(bottom: AppSpacing.xl + MediaQuery.paddingOf(context).bottom),
         children: [
           // Live preview.
           Padding(
             padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
             child: ClipRRect(
               borderRadius: AppRadii.rLg,
-              child: SizedBox(
+              // At least 180pt, taller when the sample bubbles wrap at a
+              // large text size (a fixed height clipped them). The wallpaper
+              // fills whatever height the bubbles end up needing.
+              child: Stack(
                 key: const ValueKey('wallpaper-preview'),
-                height: 180,
-                child: ChatWallpaperBackground(
-                  data: preview,
-                  child: Padding(
-                    padding: const EdgeInsets.all(AppSpacing.md),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: _Bubble(
-                            text: l.chatThemeReceived,
-                            bg: preview.receivedBg,
-                            fg: preview.receivedFg,
-                            radius: AppRadii.bubbleReceived,
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.sm),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: _Bubble(
-                            text: l.chatThemeSent,
-                            bg: preview.sentBg,
-                            fg: preview.sentFg,
-                            radius: AppRadii.bubbleSent,
-                          ),
-                        ),
-                      ],
+                children: [
+                  Positioned.fill(
+                    child: ChatWallpaperBackground(
+                      data: preview,
+                      child: const SizedBox.shrink(),
                     ),
                   ),
-                ),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      minHeight: 180,
+                      minWidth: double.infinity,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: _Bubble(
+                              text: l.chatThemeReceived,
+                              bg: preview.receivedBg,
+                              fg: preview.receivedFg,
+                              radius: AppRadii.bubbleReceived,
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: _Bubble(
+                              text: l.chatThemeSent,
+                              bg: preview.sentBg,
+                              fg: preview.sentFg,
+                              radius: AppRadii.bubbleSent,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
           _Header(l.wallpaperPatterns),
           _Grid(
+            labelled: true,
             children: [
               for (final p in WallpaperPattern.values)
                 _Tile(
@@ -163,6 +209,7 @@ class _WallpaperPickerScreenState extends ConsumerState<WallpaperPickerScreen> {
                 _Tile(
                   key: ValueKey('wallpaper-solid-$i'),
                   selected: currentId == WallpaperSpec.solidId(WallpaperSpec.solids[i]),
+                  semanticLabel: Strings.wallpaperSolidName(i),
                   onTap: () => _apply(WallpaperSpec.solidId(WallpaperSpec.solids[i])),
                   child: ColoredBox(color: WallpaperSpec.solids[i]),
                 ),
@@ -171,6 +218,8 @@ class _WallpaperPickerScreenState extends ConsumerState<WallpaperPickerScreen> {
           const SizedBox(height: AppSpacing.md),
           ListTile(
             key: const ValueKey('wallpaper-photo'),
+            selected: currentId == WallpaperSpec.localId,
+            selectedColor: AppColors.textPrimary,
             leading: Icon(Icons.photo_library_outlined, color: AppColors.medBlue),
             title: Text(l.wallpaperPhoto, style: AppText.bodyPrimary),
             trailing: currentId == WallpaperSpec.localId
@@ -180,6 +229,8 @@ class _WallpaperPickerScreenState extends ConsumerState<WallpaperPickerScreen> {
           ),
           ListTile(
             key: const ValueKey('wallpaper-none'),
+            selected: currentId == null || currentId.isEmpty,
+            selectedColor: AppColors.textPrimary,
             leading: Icon(Icons.hide_image_outlined, color: AppColors.medBlue),
             title: Text(l.wallpaperNone, style: AppText.bodyPrimary),
             trailing: currentId == null || currentId.isEmpty
@@ -204,23 +255,43 @@ class _Header extends StatelessWidget {
           AppSpacing.screenHorizontal,
           AppSpacing.sm,
         ),
-        child: Text(text.toUpperCase(), style: AppText.label),
+        child: Semantics(header: true, child: Text(text.toUpperCase(), style: AppText.label)),
       );
 }
 
 class _Grid extends StatelessWidget {
   final List<Widget> children;
-  const _Grid({required this.children});
+
+  /// Tiles carry a name under the swatch: the row grows by two lines of it
+  /// at the user's text size, so the swatch keeps its size and the name is
+  /// not cut to a few characters.
+  final bool labelled;
+  const _Grid({required this.children, this.labelled = false});
   @override
-  Widget build(BuildContext context) => GridView.count(
-        crossAxisCount: 4,
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.screenHorizontal),
-        mainAxisSpacing: AppSpacing.sm,
-        crossAxisSpacing: AppSpacing.sm,
-        childAspectRatio: 0.8,
-        children: children,
+  Widget build(BuildContext context) => LayoutBuilder(
+        builder: (context, box) {
+          const columns = 4;
+          final tile = (box.maxWidth -
+                  2 * AppSpacing.screenHorizontal -
+                  (columns - 1) * AppSpacing.sm) /
+              columns;
+          // Swatch as before (the tile was 1:1.25 with a one-line name), plus
+          // a second line of the 11pt label when there is one.
+          final extent = tile / 0.8 +
+              (labelled ? MediaQuery.textScalerOf(context).scale(2 * 16) - 16 : 0);
+          return GridView(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              mainAxisSpacing: AppSpacing.sm,
+              crossAxisSpacing: AppSpacing.sm,
+              mainAxisExtent: extent,
+            ),
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.screenHorizontal),
+            children: children,
+          );
+        },
       );
 }
 
@@ -228,6 +299,9 @@ class _Tile extends StatelessWidget {
   final Widget child;
   final bool selected;
   final String? label;
+
+  /// VoiceOver name for a tile with no visible [label] (the solid colours).
+  final String? semanticLabel;
   final VoidCallback onTap;
   const _Tile({
     super.key,
@@ -235,10 +309,16 @@ class _Tile extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.label,
+    this.semanticLabel,
   });
 
   @override
-  Widget build(BuildContext context) => InkWell(
+  Widget build(BuildContext context) => Semantics(
+        container: true,
+        button: true,
+        selected: selected,
+        label: semanticLabel,
+        child: InkWell(
         onTap: onTap,
         borderRadius: AppRadii.rMd,
         child: Column(
@@ -272,9 +352,10 @@ class _Tile extends StatelessWidget {
             ),
             if (label != null) ...[
               const SizedBox(height: 4),
-              Text(label!, style: AppText.timestamp, maxLines: 1, overflow: TextOverflow.ellipsis),
+              Text(label!, style: AppText.timestamp, maxLines: 2, textAlign: TextAlign.center, overflow: TextOverflow.ellipsis),
             ],
           ],
+        ),
         ),
       );
 }

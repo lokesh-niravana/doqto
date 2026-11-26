@@ -43,7 +43,7 @@ class BubbleFooter extends StatelessWidget {
     final timeColor = onMedia
         ? AppColors.white
         : isMine
-            ? sentFg.withValues(alpha: 0.55)
+            ? sentFg.withValues(alpha: kOnSentSecondaryAlpha)
             : AppColors.textMuted;
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -58,7 +58,7 @@ class BubbleFooter extends StatelessWidget {
             status: status,
             read: read,
             delivered: delivered,
-            idleColor: onMedia ? AppColors.white : sentFg.withValues(alpha: 0.55),
+            idleColor: onMedia ? AppColors.white : sentFg.withValues(alpha: kOnSentSecondaryAlpha),
           ),
         ],
       ],
@@ -97,6 +97,10 @@ class MediaCaption extends StatelessWidget {
 
 /// Thin overlay used while an outbox upload is in flight: a ring with the
 /// fraction, or an indeterminate ring until the first part lands.
+/// Scrim behind white text or icons drawn over a photo. Over a white photo
+/// (the worst case) white on it is 5.55:1; at the old 0.55 it was 3.98:1.
+const double kPhotoScrimAlpha = 0.65;
+
 class UploadRing extends StatelessWidget {
   final double? progress;
   const UploadRing({super.key, this.progress});
@@ -107,7 +111,7 @@ class UploadRing extends StatelessWidget {
       width: 44,
       height: 44,
       decoration: BoxDecoration(
-        color: AppColors.gray900.withValues(alpha: 0.55),
+        color: AppColors.gray900.withValues(alpha: kPhotoScrimAlpha),
         shape: BoxShape.circle,
       ),
       padding: const EdgeInsets.all(8),
@@ -130,6 +134,11 @@ class DownloadPlaceholder extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
   final bool loading;
+
+  /// The whole control's accessible name. Set it when [label] is empty (an
+  /// album tile), or when the parent would otherwise wrap this in a second
+  /// labelled node. Null reads the visible [label].
+  final String? semanticLabel;
   const DownloadPlaceholder({
     super.key,
     required this.width,
@@ -137,6 +146,7 @@ class DownloadPlaceholder extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.loading = false,
+    this.semanticLabel,
   });
 
   @override
@@ -144,13 +154,18 @@ class DownloadPlaceholder extends StatelessWidget {
     return AppPressable(
       key: const ValueKey('media-download'),
       onTap: loading ? null : onTap,
+      // The label replaces everything inside, the spinner included, so the
+      // loading state has to be said here.
+      semanticLabel: loading && semanticLabel != null
+          ? '$semanticLabel, ${Strings.loading}'
+          : semanticLabel,
       child: Container(
         width: width,
         height: height,
         color: AppColors.gray100,
         child: Center(
           child: loading
-              ? const CircularProgressIndicator()
+              ? const CircularProgressIndicator(semanticsLabel: Strings.loading)
               : Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -163,8 +178,10 @@ class DownloadPlaceholder extends StatelessWidget {
                       ),
                       child: const Icon(Icons.download_rounded, color: AppColors.white),
                     ),
-                    const SizedBox(height: AppSpacing.xs),
-                    Text(label, style: AppText.timestamp.copyWith(color: AppColors.textMuted)),
+                    if (label.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(label, style: AppText.timestamp.copyWith(color: AppColors.textMuted)),
+                    ],
                   ],
                 ),
         ),
@@ -308,6 +325,7 @@ class _ImageBubbleState extends ConsumerState<ImageBubble> {
               right: AppSpacing.md,
               child: SafeArea(
                 child: IconButton(
+                  tooltip: Strings.a11yClose,
                   icon: const Icon(Icons.close, color: AppColors.white),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
@@ -322,10 +340,34 @@ class _ImageBubbleState extends ConsumerState<ImageBubble> {
   Widget _broken(double width) => AppPressable(
         // Tap to try again: a miss is usually just a dropped connection.
         onTap: _load,
-        child: SizedBox(
+        semanticLabel: Strings.mediaPhotoRetry,
+        // On its own gray100 tile (gray400 on it is 4.65:1): straight on a
+        // sent bubble the glyph is nearly the bubble's own colour.
+        child: Container(
           width: width,
           height: 120,
-          child: Icon(Icons.broken_image_outlined, color: AppColors.gray400),
+          color: AppColors.gray100,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.broken_image_outlined, color: AppColors.gray400),
+              // The glyph alone does not say the tile can be tapped. The
+              // button's own label already covers it for VoiceOver.
+              ExcludeSemantics(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 2, 4, 0),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      Strings.mediaTapToRetry,
+                      maxLines: 1,
+                      style: AppText.caption.copyWith(color: AppColors.textSecondary),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       );
 
@@ -352,11 +394,19 @@ class _ImageBubbleState extends ConsumerState<ImageBubble> {
         loading: _loading,
       );
     } else if (file == null) {
-      image = SizedBox(width: w, height: _placeholderHeight(w), child: const Center(child: CircularProgressIndicator()));
+      image = Semantics(
+        label: '${Strings.mediaPhoto}, ${Strings.loading}',
+        child: SizedBox(
+          width: w,
+          height: _placeholderHeight(w),
+          child: const Center(child: ExcludeSemantics(child: CircularProgressIndicator())),
+        ),
+      );
     } else {
       image = AppPressable(
         key: ValueKey('image-open-${widget.messageId}'),
         onTap: () => _openViewer(file),
+        semanticLabel: Strings.mediaPhoto,
         child: Image.file(
           file,
           width: w,
@@ -428,7 +478,11 @@ class PendingImageBubble extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
         children: [
-          ClipRRect(
+          Semantics(
+            container: true,
+            image: true,
+            label: Strings.mediaPhoto,
+            child: ClipRRect(
             borderRadius: AppRadii.rMd,
             child: Stack(
               alignment: Alignment.center,
@@ -437,16 +491,20 @@ class PendingImageBubble extends StatelessWidget {
                   opacity: status == MessageStatus.sending ? 0.7 : 1,
                   child: Image.file(
                     File(path),
+                    excludeFromSemantics: true,
                     width: maxW - 8,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => SizedBox(
+                    errorBuilder: (_, _, _) => Container(
+                      width: maxW - 8,
                       height: 120,
+                      color: AppColors.gray100,
                       child: Icon(Icons.broken_image_outlined, color: AppColors.gray400),
                     ),
                   ),
                 ),
                 if (status == MessageStatus.sending) UploadRing(progress: progress),
               ],
+            ),
             ),
           ),
           if (caption != null && caption!.isNotEmpty) MediaCaption(text: caption!, isMine: isMine),
@@ -549,6 +607,8 @@ class _VideoBubbleState extends ConsumerState<VideoBubble> {
             child: AppPressable(
               key: ValueKey('video-open-${widget.messageId}'),
               onTap: widget.onOpen,
+              // The poster is a picture; say what it is and how long.
+              semanticLabel: '${Strings.mediaVideo}, ${VideoBubble.formatDuration(widget.durationSec)}',
               child: SizedBox(
                 width: w,
                 height: h,
@@ -571,7 +631,7 @@ class _VideoBubbleState extends ConsumerState<VideoBubble> {
                         width: 48,
                         height: 48,
                         decoration: BoxDecoration(
-                          color: AppColors.gray900.withValues(alpha: 0.55),
+                          color: AppColors.gray900.withValues(alpha: kPhotoScrimAlpha),
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(Icons.play_arrow_rounded, color: AppColors.white, size: 32),
@@ -583,7 +643,7 @@ class _VideoBubbleState extends ConsumerState<VideoBubble> {
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: AppColors.gray900.withValues(alpha: 0.55),
+                          color: AppColors.gray900.withValues(alpha: kPhotoScrimAlpha),
                           borderRadius: AppRadii.rSm,
                         ),
                         child: Row(
@@ -656,7 +716,11 @@ class PendingVideoBubble extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
         children: [
-          ClipRRect(
+          Semantics(
+            container: true,
+            image: true,
+            label: '${Strings.mediaVideo}, ${VideoBubble.formatDuration(durationSec)}',
+            child: ClipRRect(
             borderRadius: AppRadii.rMd,
             child: SizedBox(
               width: w,
@@ -669,6 +733,7 @@ class PendingVideoBubble extends StatelessWidget {
                     Opacity(
                       opacity: status == MessageStatus.sending ? 0.7 : 1,
                       child: Image.file(File(posterPath!), fit: BoxFit.cover,
+                          excludeFromSemantics: true,
                           errorBuilder: (_, _, _) => Container(color: AppColors.gray800)),
                     )
                   else
@@ -676,18 +741,36 @@ class PendingVideoBubble extends StatelessWidget {
                   if (status == MessageStatus.sending)
                     Center(child: UploadRing(progress: progress))
                   else if (status == MessageStatus.failed)
-                    const Center(child: Icon(Icons.error_outline_rounded, color: AppColors.white, size: 36)),
+                    // Same scrim circle as UploadRing: white on it is 5.55:1
+                    // even over a white poster (1:1 without it).
+                    Center(
+                      child: Container(
+                        key: const ValueKey('video-failed-disc'),
+                        width: 44,
+                        height: 44,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: AppColors.gray900.withValues(alpha: kPhotoScrimAlpha),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.error_outline_rounded, color: AppColors.white, size: 28),
+                      ),
+                    ),
                   Positioned(
                     left: AppSpacing.sm,
                     bottom: AppSpacing.sm,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(color: AppColors.gray900.withValues(alpha: 0.55), borderRadius: AppRadii.rSm),
-                      child: Text(VideoBubble.formatDuration(durationSec), style: AppText.timestamp.copyWith(color: AppColors.white)),
+                      decoration: BoxDecoration(color: AppColors.gray900.withValues(alpha: kPhotoScrimAlpha), borderRadius: AppRadii.rSm),
+                      // Spoken once, in the label above.
+                      child: ExcludeSemantics(
+                        child: Text(VideoBubble.formatDuration(durationSec), style: AppText.timestamp.copyWith(color: AppColors.white)),
+                      ),
                     ),
                   ),
                 ],
               ),
+            ),
             ),
           ),
           if (caption != null && caption!.isNotEmpty) MediaCaption(text: caption!, isMine: isMine),
@@ -779,7 +862,10 @@ class _FileBubbleState extends ConsumerState<FileBubble> {
     final sizeLabel = fileSizeLabel(widget.fileSizeBytes);
     final sending = widget.status == MessageStatus.sending;
     final bubble = AppPressable(
-      onTap: _open,
+      // Still in the outbox (uploading or failed): nothing to open, so claim
+      // no tap — the thread's outer "Retry send / Delete message" handler
+      // must get it.
+      onTap: widget.messageId == null || widget.getFileUrl == null ? null : _open,
       child: Container(
         constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.72),
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm + 2),
@@ -818,7 +904,7 @@ class _FileBubbleState extends ConsumerState<FileBubble> {
                               ? '${(widget.progress! * 100).clamp(0, 100).round()}%${sizeLabel.isEmpty ? '' : ' · $sizeLabel'}'
                               : sizeLabel,
                           style: AppText.timestamp.copyWith(
-                            color: widget.isMine ? fg.withValues(alpha: 0.7) : AppColors.textMuted,
+                            color: widget.isMine ? fg.withValues(alpha: kOnSentSecondaryAlpha) : AppColors.textMuted,
                           ),
                         ),
                     ],

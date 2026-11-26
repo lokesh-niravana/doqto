@@ -5,6 +5,7 @@ import '../../../core/tokens/colors.dart';
 import '../../../state/groups_state.dart';
 import '../chat/chat_thread_screen.dart';
 import '../../widgets/app_skeleton.dart';
+import '../../widgets/root_back_button.dart';
 import 'group_info_screen.dart';
 
 /// A group opens as its chat, full screen like any conversation; the header
@@ -22,6 +23,9 @@ class GroupDetailScreen extends ConsumerWidget {
       return ref.watch(groupDetailProvider(groupId)).isLoading
           ? Scaffold(
               backgroundColor: AppColors.appBg,
+              // An app bar even while loading, so there is always a visible
+              // back button.
+              appBar: AppBar(leading: const RootBackButton()),
               body: const SafeArea(child: SkeletonList()),
             )
           : GroupInfoScreen(groupId: groupId);

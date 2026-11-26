@@ -31,12 +31,17 @@ class SectionCard extends StatelessWidget {
       child: child,
     );
     if (onTap == null) return content;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: AppRadii.rLg,
-        child: content,
+    // A tappable card is a button to VoiceOver, not just text that happens
+    // to respond to a double-tap.
+    return Semantics(
+      button: true,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: AppRadii.rLg,
+          child: content,
+        ),
       ),
     );
   }

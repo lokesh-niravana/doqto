@@ -65,8 +65,10 @@ class _SwipeActionRowState extends State<SwipeActionRow>
     super.dispose();
   }
 
-  double get _maxLeft => widget.trailing == null ? 0 : SwipeActionRow.actionWidth;
-  double get _maxRight => widget.leading == null ? 0 : SwipeActionRow.actionWidth;
+  double get _maxLeft =>
+      widget.trailing == null ? 0 : SwipeActionRow.actionWidth;
+  double get _maxRight =>
+      widget.leading == null ? 0 : SwipeActionRow.actionWidth;
 
   void _onUpdate(DragUpdateDetails d) {
     if (!widget.enabled) return;
@@ -81,7 +83,9 @@ class _SwipeActionRowState extends State<SwipeActionRow>
     if (!widget.enabled) return;
     final v = d.primaryVelocity ?? 0;
     double target = 0;
-    if (_offset < 0 && (_offset < -_maxLeft / 2 || v < -300)) target = -_maxLeft;
+    if (_offset < 0 && (_offset < -_maxLeft / 2 || v < -300)) {
+      target = -_maxLeft;
+    }
     if (_offset > 0 && (_offset > _maxRight / 2 || v > 300)) target = _maxRight;
     _animateTo(target);
   }
@@ -93,14 +97,16 @@ class _SwipeActionRowState extends State<SwipeActionRow>
       setState(() => _offset = target);
       return;
     }
-    final anim = Tween<double>(begin: _offset, end: target).animate(
-      CurvedAnimation(parent: _ctrl, curve: AppMotion.standard),
-    );
+    final anim = Tween<double>(
+      begin: _offset,
+      end: target,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: AppMotion.standard));
     _snap = anim;
     void tick() {
       if (!mounted || _snap != anim) return;
       setState(() => _offset = anim.value);
     }
+
     anim.addListener(tick);
     _ctrl.forward(from: 0).whenComplete(() => anim.removeListener(tick));
   }
@@ -187,25 +193,45 @@ class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: SwipeActionRow.actionWidth,
-      height: double.infinity,
-      child: Material(
-        color: action.color,
-        child: InkWell(
-          key: action.key,
-          onTap: visible ? onTap : null,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(action.icon, color: AppColors.white, size: 22),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                action.label,
-                style: AppText.badge.copyWith(color: AppColors.white, fontSize: 11),
-                textAlign: TextAlign.center,
+    // Hidden under the row until swiped: not in the semantics tree either.
+    return ExcludeSemantics(
+      excluding: !visible,
+      child: Semantics(
+        button: true,
+          child: SizedBox(
+          width: SwipeActionRow.actionWidth,
+          height: double.infinity,
+          child: Material(
+            color: action.color,
+            child: InkWell(
+              key: action.key,
+              onTap: visible ? onTap : null,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(action.icon, color: AppColors.white, size: 22),
+                  const SizedBox(height: AppSpacing.xs),
+                  // One line that shrinks to the 88pt action: "Unarchive"
+                  // broke mid-word at large text sizes.
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        action.label,
+                        maxLines: 1,
+                        softWrap: false,
+                        style: AppText.badge.copyWith(
+                          color: AppColors.white,
+                          fontSize: 11,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),

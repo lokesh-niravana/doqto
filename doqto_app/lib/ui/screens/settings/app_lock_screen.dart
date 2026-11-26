@@ -49,7 +49,12 @@ class AppLockScreen extends ConsumerWidget {
       appBar: AppBar(title: Text(l.settingsAppLock)),
       body: ListView(
         key: const ValueKey('app-lock-list'),
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last row clears the home indicator.
+        padding: EdgeInsets.only(
+          top: AppSpacing.lg,
+          bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           FadeSlideIn.staggered(
             0,

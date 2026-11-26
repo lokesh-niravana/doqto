@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:doqto_app/core/constants/strings.dart';
 import 'package:doqto_app/core/di/providers.dart';
+import 'package:doqto_app/core/tokens/colors.dart';
 import 'package:doqto_app/data/api/api_client.dart';
 import 'package:doqto_app/data/models/conversation.dart';
 import 'package:doqto_app/data/models/conversation_prefs.dart';
@@ -15,7 +16,9 @@ import 'package:doqto_app/data/services/chat_cache.dart';
 import 'package:doqto_app/state/auth_state.dart';
 import 'package:doqto_app/state/presence_state.dart';
 import 'package:doqto_app/state/realtime_state.dart';
+import 'package:doqto_app/ui/screens/chat/chat_details_screen.dart';
 import 'package:doqto_app/ui/screens/chat/chat_list_screen.dart';
+import 'package:doqto_app/ui/widgets/primary_button.dart';
 
 import '../support/fake_socket.dart';
 
@@ -53,8 +56,14 @@ class _Repo extends ChatRepository {
   final patches = <(String, Map<String, dynamic>)>[];
   final removed = <String>[];
 
+  /// The list call throws, as it does offline with nothing cached.
+  bool failList = false;
+
   @override
-  Future<List<Conversation>> listConversations() async => List.of(convs);
+  Future<List<Conversation>> listConversations() async {
+    if (failList) throw ApiException('offline');
+    return List.of(convs);
+  }
 
   @override
   Future<ConversationPrefs> updatePrefs(String id, Map<String, dynamic> patch) async {
@@ -347,7 +356,11 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Rounds Group'));
     await tester.pumpAndSettle();
-    expect(find.text('2 selected'), findsOneWidget);
+    // The title shows the count alone (it truncated beside five actions);
+    // VoiceOver still hears "2 selected".
+    final count = find.byKey(const ValueKey('chat-selection-count'));
+    expect(tester.widget<Text>(count).data, '2');
+    expect(find.bySemanticsLabel('2 selected'), findsOneWidget);
     for (final k in ['pin', 'mute', 'archive', 'unread', 'delete']) {
       expect(find.byKey(ValueKey('chat-select-$k')), findsOneWidget);
     }
@@ -355,7 +368,108 @@ void main() {
     await tester.pumpAndSettle();
     expect(repo.patches.map((p) => p.$1).toSet(), {'n', 'g'});
     expect(repo.patches.every((p) => p.$2['archived'] == true), isTrue);
-    expect(find.text('2 selected'), findsNothing, reason: 'selection clears');
+    expect(find.byKey(const ValueKey('chat-selection-count')), findsNothing, reason: 'selection clears');
     expect(find.text('Archived (3)'), findsOneWidget);
+  });
+
+  testWidgets('multi-select buttons name what they will do: undo when the whole selection is already set', (tester) async {
+    String tip(String k) => tester.widget<IconButton>(find.byKey(ValueKey('chat-select-$k'))).tooltip!;
+    await open(tester);
+    await tester.longPress(find.text('Pinned Peer'));
+    await tester.pumpAndSettle();
+    expect(tip('pin'), Strings.chatUnpin);
+    expect(tip('mute'), Strings.chatMute);
+    expect(tip('archive'), Strings.chatArchive);
+    // One unpinned chat in the selection: the action pins both again.
+    await tester.tap(find.text('Rounds Group'));
+    await tester.pumpAndSettle();
+    expect(tip('pin'), Strings.chatPin);
+    await tester.tap(find.text('Rounds Group'));
+    await tester.tap(find.text('Pinned Peer'));
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.text('Marked Peer'));
+    await tester.pumpAndSettle();
+    expect(tip('mute'), Strings.chatUnmute);
+    expect(tip('unread'), Strings.chatMarkRead);
+    expect(tip('pin'), Strings.chatPin);
+  });
+
+  testWidgets('search: a failed load is an error with Retry, not "No results"', (tester) async {
+    repo.failList = true;
+    await open(tester);
+    await tester.enterText(find.byType(TextField), 'Newest');
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('chat-search-error')), findsOneWidget);
+    expect(find.textContaining('No results for'), findsNothing);
+
+    // Retry asks again; with the chats loaded the match is there.
+    repo.failList = false;
+    await tester.tap(find.descendant(
+      of: find.byKey(const ValueKey('chat-search-error')),
+      matching: find.byType(AppButton),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('chat-search-error')), findsNothing);
+    expect(find.text('Newest Peer'), findsOneWidget);
+  });
+
+  testWidgets('search: loaded with no match still says No results', (tester) async {
+    await open(tester);
+    await tester.enterText(find.byType(TextField), 'zzzz');
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('No results for'), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-search-error')), findsNothing);
+  });
+
+  Widget details(String id) => ProviderScope(
+        overrides: [
+          websocketClientProvider.overrideWithValue(FakeSocket()),
+          chatRepositoryProvider.overrideWithValue(repo),
+          chatCacheProvider.overrideWithValue(cache),
+          authProvider.overrideWith(_Auth.new),
+          presenceProvider.overrideWith(_NoPresence.new),
+          realtimeRefreshDebounceProvider.overrideWithValue(Duration.zero),
+        ],
+        child: MaterialApp(home: ChatDetailsScreen(conversationId: id)),
+      );
+
+  testWidgets('chat info: Clear chat is a visible red row that asks first', (tester) async {
+    await tester.pumpWidget(details('n'));
+    await tester.pumpAndSettle();
+    final clear = find.byKey(const ValueKey('details-clear'));
+    await tester.scrollUntilVisible(clear, 200, scrollable: find.byType(Scrollable).first);
+    await tester.pumpAndSettle();
+    // The rest of the swipe sheet is here too.
+    for (final k in ['details-pin', 'details-mute', 'details-unread', 'details-archive', 'details-delete']) {
+      expect(find.byKey(ValueKey(k), skipOffstage: false), findsOneWidget, reason: k);
+    }
+    expect(tester.getSize(clear).height, greaterThanOrEqualTo(44));
+
+    await tester.tap(clear);
+    await tester.pumpAndSettle();
+    expect(find.text(Strings.chatClearTitle), findsOneWidget);
+    await tester.tap(find.text(Strings.cancel));
+    await tester.pumpAndSettle();
+    expect(repo.patches, isEmpty);
+
+    await tester.tap(clear);
+    await tester.pumpAndSettle();
+    final confirm = find.byKey(const ValueKey('chat-confirm-clear'));
+    expect(tester.widget<TextButton>(confirm).style!.foregroundColor!.resolve({}), AppColors.red);
+    await tester.tap(confirm);
+    await tester.pumpAndSettle();
+    expect(repo.patches.last.$1, 'n');
+    expect(repo.patches.last.$2, {'clear_chat': true});
+  });
+
+  testWidgets('chat info: a chat that is not in the loaded list says so instead of spinning', (tester) async {
+    await tester.pumpWidget(details('gone'));
+    await tester.pumpAndSettle();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text(Strings.chatUnavailable), findsOneWidget);
+    expect(find.byKey(const ValueKey('details-unavailable-back')), findsOneWidget);
   });
 }

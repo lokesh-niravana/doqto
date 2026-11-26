@@ -129,8 +129,14 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Verify')),
-      body: Padding(
-        padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
+      // Scrolls when the keyboard (or a large text size) leaves too little
+      // room; looks the same otherwise.
+      body: SingleChildScrollView(
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last control clears the home indicator.
+        padding: const EdgeInsets.all(AppSpacing.screenHorizontal).copyWith(
+          bottom: AppSpacing.screenHorizontal + MediaQuery.paddingOf(context).bottom,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -152,6 +158,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                 child: AppTextField(
                   key: _otpKey,
                   controller: _controller,
+                  semanticLabel: Strings.a11yVerificationCode,
                   hint: Strings.authOtpHint,
                   keyboardType: TextInputType.number,
                   maxLength: AppConstants.otpLength,
@@ -159,6 +166,9 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   validator: Validators.otp(AppConstants.otpLength),
                   dismissOnValid: true,
+                  // iOS offers the code from the SMS above the keyboard.
+                  autofillHints: const [AutofillHints.oneTimeCode],
+                  textInputAction: TextInputAction.done,
                   onChanged: (_) {
                     if (_error != null) setState(() => _error = null);
                   },
@@ -175,8 +185,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                 style: TextButton.styleFrom(
                   foregroundColor: AppColors.medBlue,
                   padding: EdgeInsets.zero,
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  minimumSize: const Size(0, 44),
                 ),
                 child: _resending
                     ? const SizedBox(

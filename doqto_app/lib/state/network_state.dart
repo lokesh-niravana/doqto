@@ -258,13 +258,16 @@ class ConnectionsNotifier extends AsyncNotifier<List<PersonCard>> {
     }
   }
 
-  Future<void> refresh() async {
+  /// [rethrowOnError]: a pull-to-refresh passes true so the screen can say
+  /// the refresh failed; the list is kept either way.
+  Future<void> refresh({bool rethrowOnError = false}) async {
     try {
       final page = await ref.read(networkRepositoryProvider).listConnections();
       await ref.read(networkCacheProvider).putConnections(page.data);
       state = AsyncData(page.data); // stays on previous data → no flash
     } catch (_) {
       // Offline refresh: keep showing what we have.
+      if (rethrowOnError) rethrow;
     }
   }
 
@@ -324,12 +327,15 @@ class BlockedNotifier extends AsyncNotifier<List<PersonCard>> {
     return page.data;
   }
 
-  Future<void> refresh() async {
+  /// [rethrowOnError]: a pull-to-refresh passes true so the screen can say
+  /// the refresh failed; the list is kept either way.
+  Future<void> refresh({bool rethrowOnError = false}) async {
     try {
       final page = await ref.read(networkRepositoryProvider).listBlocks();
       state = AsyncData(page.data);
     } catch (_) {
       // Offline refresh: keep showing what we have.
+      if (rethrowOnError) rethrow;
     }
   }
 
@@ -384,7 +390,9 @@ class InvitationsNotifier extends AsyncNotifier<List<Invitation>> {
     return page.data;
   }
 
-  Future<void> refresh() async {
+  /// [rethrowOnError]: a pull-to-refresh passes true so the screen can say
+  /// the refresh failed; the list is kept either way.
+  Future<void> refresh({bool rethrowOnError = false}) async {
     try {
       final page = await ref
           .read(networkRepositoryProvider)
@@ -392,6 +400,7 @@ class InvitationsNotifier extends AsyncNotifier<List<Invitation>> {
       state = AsyncData(page.data);
     } catch (_) {
       // Keep showing what we have.
+      if (rethrowOnError) rethrow;
     }
   }
 
@@ -470,7 +479,9 @@ class SentInvitationsNotifier extends AsyncNotifier<List<Invitation>> {
     return page.data;
   }
 
-  Future<void> refresh() async {
+  /// [rethrowOnError]: a pull-to-refresh passes true so the screen can say
+  /// the refresh failed; the list is kept either way.
+  Future<void> refresh({bool rethrowOnError = false}) async {
     try {
       final page = await ref
           .read(networkRepositoryProvider)
@@ -478,6 +489,7 @@ class SentInvitationsNotifier extends AsyncNotifier<List<Invitation>> {
       state = AsyncData(page.data);
     } catch (_) {
       // Keep showing what we have.
+      if (rethrowOnError) rethrow;
     }
   }
 
@@ -596,11 +608,17 @@ class SuggestionsNotifier extends AsyncNotifier<List<PersonCard>> {
   Future<List<PersonCard>> _fetch() async =>
       (await ref.read(networkRepositoryProvider).suggestions(limit: limit)).data;
 
-  Future<void> refresh() async {
+  /// [rethrowOnError]: a pull-to-refresh passes true so the screen can say
+  /// the refresh failed; the list is kept either way.
+  Future<void> refresh({bool rethrowOnError = false}) async {
     try {
       state = AsyncData(await _fetch()); // in place — no flash
     } catch (e, st) {
-      if (state.valueOrNull == null) state = AsyncError(e, st);
+      if (state.valueOrNull == null) {
+        state = AsyncError(e, st);
+      } else if (rethrowOnError) {
+        rethrow;
+      }
     }
   }
 

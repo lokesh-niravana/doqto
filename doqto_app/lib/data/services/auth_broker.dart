@@ -1,7 +1,7 @@
 /// Firebase sits behind this interface so the rest of the app — and every
 /// widget test — never touches a Firebase binding.
 ///
-/// Phone, Google, Facebook and Apple all converge on the same thing: a Firebase
+/// Phone, Google and Apple all converge on the same thing: a Firebase
 /// ID token, which [AuthRepository.signInWithFirebase] exchanges for a Doqto
 /// session. Nothing downstream knows which button was tapped.
 ///
@@ -11,7 +11,7 @@
 /// applies. See docs/superpowers/specs/2026-09-14-firebase-auth-design.md.
 library;
 
-enum SocialProvider { google, facebook, apple }
+enum SocialProvider { google, apple }
 
 /// Firebase refused. [message] is Firebase's own wording, which is readable
 /// enough to show ("The phone number is invalid", "SMS quota exceeded") and
@@ -62,6 +62,23 @@ abstract class AuthBroker {
   /// Cancellation is a normal outcome, not an error.
   Future<String?> signInWithSocial(SocialProvider provider);
 
+  /// Account deletion, step one (App Store 5.1.1(v)): an account that uses
+  /// Sign in with Apple must have its Apple tokens revoked, so Doqto leaves
+  /// the person's "Sign in with Apple" list. Revoking needs a fresh
+  /// authorization code, which means asking Apple to confirm once more.
+  ///
+  /// Returns false when the person dismisses that confirmation — nothing has
+  /// been deleted and nothing should be. Returns true when the tokens were
+  /// revoked or the account has no Apple sign-in. Throws when Apple or
+  /// Firebase refuses.
+  Future<bool> revokeAppleAccess();
+
+  /// Account deletion, last step: remove the sign-in identity itself (the
+  /// phone number, email and provider links Firebase holds). Best effort —
+  /// Firebase refuses when the sign-in is old, and by then the Doqto account
+  /// is already gone and no longer linked to it.
+  Future<void> deleteIdentity();
+
   Future<void> signOut();
 }
 
@@ -106,6 +123,20 @@ class FakeAuthBroker implements AuthBroker {
 
   @override
   Future<String?> signInWithSocial(SocialProvider provider) async => idToken;
+
+  /// What [revokeAppleAccess] answers; false plays a dismissed Apple sheet.
+  bool appleRevokeResult = true;
+  int appleRevokes = 0;
+  int identitiesDeleted = 0;
+
+  @override
+  Future<bool> revokeAppleAccess() async {
+    appleRevokes++;
+    return appleRevokeResult;
+  }
+
+  @override
+  Future<void> deleteIdentity() async => identitiesDeleted++;
 
   @override
   Future<void> signOut() async => signedOut++;

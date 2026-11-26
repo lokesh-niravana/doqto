@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/constants/strings.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/radii.dart';
 import '../../core/tokens/spacing.dart';
@@ -110,29 +111,37 @@ class SkeletonList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView.builder(
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: rows,
-      itemBuilder: (context, index) => Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.screenHorizontal,
-          vertical: AppSpacing.md,
-        ),
-        child: Row(
-          children: [
-            AppSkeleton.circle(size: 44),
-            const SizedBox(width: AppSpacing.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AppSkeleton.line(width: 140),
-                  const SizedBox(height: AppSpacing.sm),
-                  AppSkeleton.line(width: 220),
-                ],
-              ),
+    // The grey rows are only drawn; a screen reader hears "Loading" once.
+    return Semantics(
+      container: true,
+      label: Strings.loading,
+      liveRegion: true,
+      child: ExcludeSemantics(
+        child: ListView.builder(
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: rows,
+          itemBuilder: (context, index) => Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.screenHorizontal,
+              vertical: AppSpacing.md,
             ),
-          ],
+            child: Row(
+              children: [
+                AppSkeleton.circle(size: 44),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AppSkeleton.line(width: 140),
+                      const SizedBox(height: AppSpacing.sm),
+                      AppSkeleton.line(width: 220),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

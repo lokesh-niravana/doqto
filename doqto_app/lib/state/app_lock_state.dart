@@ -82,6 +82,16 @@ final localAuthenticatorProvider = Provider<LocalAuthenticator>((ref) =>
 /// Wall clock for the lock timeout; tests inject a fake.
 final appLockClockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
 
+/// Why the last unlock attempt did not unlock, for the lock screen to say.
+enum AppLockFailure {
+  /// The prompt was cancelled or the check did not pass.
+  notConfirmed,
+
+  /// The device can no longer authenticate at all (biometrics and passcode
+  /// removed since the lock was turned on): only signing out gets past.
+  unavailable,
+}
+
 @immutable
 class AppLockState {
   /// Covered: the app is not in the foreground (inactive / paused / hidden),
@@ -94,17 +104,30 @@ class AppLockState {
   /// A prompt is in flight (avoid stacking two system dialogs).
   final bool prompting;
 
+  /// Set when the last unlock attempt failed; null while one is in flight,
+  /// before the first attempt and once unlocked.
+  final AppLockFailure? failure;
+
   const AppLockState({
     this.covered = false,
     this.locked = false,
     this.prompting = false,
+    this.failure,
   });
 
-  AppLockState copyWith({bool? covered, bool? locked, bool? prompting}) =>
+  static const Object _keep = Object();
+
+  AppLockState copyWith({
+    bool? covered,
+    bool? locked,
+    bool? prompting,
+    Object? failure = _keep,
+  }) =>
       AppLockState(
         covered: covered ?? this.covered,
         locked: locked ?? this.locked,
         prompting: prompting ?? this.prompting,
+        failure: identical(failure, _keep) ? this.failure : failure as AppLockFailure?,
       );
 
   @override
@@ -112,10 +135,11 @@ class AppLockState {
       other is AppLockState &&
       other.covered == covered &&
       other.locked == locked &&
-      other.prompting == prompting;
+      other.prompting == prompting &&
+      other.failure == failure;
 
   @override
-  int get hashCode => Object.hash(covered, locked, prompting);
+  int get hashCode => Object.hash(covered, locked, prompting, failure);
 }
 
 /// App lock (batch 6). Observes the widgets lifecycle: leaving the foreground
@@ -182,21 +206,40 @@ class AppLockNotifier extends Notifier<AppLockState> with WidgetsBindingObserver
   /// Prompt Face ID / Touch ID / passcode; clears the lock on success.
   Future<bool> unlock() async {
     if (state.prompting) return false;
-    state = state.copyWith(prompting: true);
-    bool ok;
+    state = state.copyWith(prompting: true, failure: null);
+    final authenticator = ref.read(localAuthenticatorProvider);
+    var ok = false;
+    AppLockFailure? failure;
     try {
-      ok = await ref.read(localAuthenticatorProvider).authenticate(unlockReason);
+      ok = await authenticator.authenticate(unlockReason);
+      if (!ok) {
+        // Tell "cancelled / didn't match" from "this phone can't check any
+        // more" (passcode removed): the second has no way through but
+        // signing out, and the lock screen says so.
+        failure = await authenticator.canAuthenticate()
+            ? AppLockFailure.notConfirmed
+            : AppLockFailure.unavailable;
+      }
+    } catch (_) {
+      failure = AppLockFailure.notConfirmed;
     } finally {
       state = state.copyWith(prompting: false);
     }
-    if (ok) state = state.copyWith(locked: false);
+    // Sign-out (or Settings) may have cleared the lock while the prompt was
+    // up: nothing to report then.
+    if (!state.locked) return ok;
+    state = ok
+        ? state.copyWith(locked: false, failure: null)
+        : state.copyWith(failure: failure);
     return ok;
   }
 
   /// Settings turned the lock off: nothing to owe any more.
   void clearLock() {
     _leftAt = null;
-    if (state.locked) state = state.copyWith(locked: false);
+    if (state.locked || state.failure != null) {
+      state = state.copyWith(locked: false, failure: null);
+    }
   }
 }
 

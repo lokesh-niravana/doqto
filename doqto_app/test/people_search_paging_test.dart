@@ -11,6 +11,9 @@ import 'package:doqto_app/state/people_search_state.dart';
 /// backend's `/people/search` (which omits `q` to browse).
 class _FakeNetworkRepository extends NetworkRepository {
   final List<String> calls = [];
+
+  /// Fail every request for a page after the first.
+  bool failMore = false;
   _FakeNetworkRepository() : super(ApiClient());
 
   static PersonCard _card(String name) => PersonCard.fromJson({
@@ -29,6 +32,7 @@ class _FakeNetworkRepository extends NetworkRepository {
     int? limit,
   }) async {
     calls.add('q=$q cursor=$cursor');
+    if (failMore && cursor != null) throw Exception('offline');
     const total = 25;
     const pageSize = 10;
     final offset = int.tryParse(cursor ?? '0') ?? 0;
@@ -108,5 +112,29 @@ void main() {
     expect(s.people, hasLength(20));
     expect(s.people.last.id, 'cardio-19');
     expect(fake.calls.last, 'q=cardio cursor=10');
+  });
+
+  test('a failed next page is kept as an error until Retry, not swallowed', () async {
+    await _settled(container);
+    final n = container.read(peopleSearchProvider.notifier);
+    fake.failMore = true;
+    await n.loadMore();
+    var s = container.read(peopleSearchProvider) as PeopleSearchResults;
+    expect(s.moreError, isNotNull);
+    expect(s.loadingMore, isFalse);
+    expect(s.people, hasLength(10), reason: 'rows on screen stay');
+    expect(s.hasMore, isTrue);
+
+    // Scrolling does not refire a page that just failed.
+    final before = fake.calls.length;
+    await n.loadMore();
+    expect(fake.calls.length, before);
+
+    // Retry clears the error and lands the page.
+    fake.failMore = false;
+    await n.loadMore(retry: true);
+    s = container.read(peopleSearchProvider) as PeopleSearchResults;
+    expect(s.moreError, isNull);
+    expect(s.people, hasLength(20));
   });
 }

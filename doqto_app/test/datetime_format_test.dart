@@ -34,8 +34,22 @@ void main() {
           startsWith('last seen yesterday at 9:05'));
       expect(formatLastSeen(DateTime(2026, 3, 9, 9, 5), now: now),
           startsWith('last seen Mon at 9:05'));
-      expect(formatLastSeen(DateTime(2026, 3, 1, 9, 5), now: now),
-          'last seen 01/03/26');
+      // Older dates follow the reader's locale, not a fixed day-first form.
+      expect(formatLastSeen(DateTime(2026, 3, 1, 9, 5), now: now, locale: 'en_US'),
+          'last seen 3/1/2026');
+      expect(formatLastSeen(DateTime(2026, 3, 1, 9, 5), now: now, locale: 'en_GB'),
+          'last seen 01/03/2026');
+    });
+
+    test('short date: month-first in the US, day-first elsewhere', () {
+      final d = DateTime(2026, 3, 12);
+      expect(formatShortDate(d, locale: 'en_US'), '3/12/2026');
+      expect(formatShortDate(d, locale: 'en-GB'), '12/03/2026');
+      expect(formatShortDate(d, locale: 'es'), '12/3/2026');
+      // An unknown locale falls back instead of throwing.
+      expect(formatShortDate(d, locale: 'xx_YY'), isNotEmpty);
+      final old = DateTime.now().subtract(const Duration(days: 30));
+      expect(formatChatListTime(old, locale: 'en_US'), formatShortDate(old, locale: 'en_US'));
     });
 
     test('unknown stays empty (hidden looks like never seen)', () {

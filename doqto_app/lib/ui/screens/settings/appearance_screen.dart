@@ -38,7 +38,12 @@ class AppearanceScreen extends ConsumerWidget {
       appBar: AppBar(title: Text(l.appearanceTitle)),
       body: ListView(
         key: const ValueKey('appearance-list'),
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last row clears the home indicator.
+        padding: EdgeInsets.only(
+          top: AppSpacing.lg,
+          bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           FadeSlideIn.staggered(
             0,
@@ -81,9 +86,10 @@ class AppearanceScreen extends ConsumerWidget {
                       child: Text(
                         l.appearancePreview,
                         key: const ValueKey('appearance-preview'),
+                        // The app-wide text scaler already applies the
+                        // chosen size; multiplying here applied it twice.
                         style: AppText.messageBody.copyWith(
                           color: defaultTheme.onSent,
-                          fontSize: AppText.messageBody.fontSize! * s.fontSize.factor,
                         ),
                       ),
                     ),

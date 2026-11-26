@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/utils/error_messages.dart';
 import 'primary_button.dart';
 
 /// The visual for one state value of a [StatefulActionButton].
@@ -20,7 +21,8 @@ class ActionVisual {
 ///   1. optimistically flips to `optimisticNext(state)` (if provided),
 ///   2. shows a width-stable label↔spinner crossfade (reuses [AppButton]),
 ///   3. runs [onPressed], and
-///   4. rolls the optimistic flip back + fires an error haptic if it throws.
+///   4. rolls the optimistic flip back, fires an error haptic and says what
+///      went wrong if it throws.
 ///
 /// The real state is owned upstream (e.g. a Riverpod notifier that also flips
 /// optimistically and rolls back on error); the local optimism just keeps the
@@ -72,13 +74,17 @@ class _StatefulActionButtonState<S> extends State<StatefulActionButton<S>> {
       await widget.onPressed();
       if (!mounted) return;
       setState(() => _loading = false);
-    } catch (_) {
+    } catch (e) {
       HapticFeedback.heavyImpact();
       if (!mounted) return;
       setState(() {
         _optimistic = null; // roll back to the real state
         _loading = false;
       });
+      // The label snapping back is easy to miss and says nothing about why.
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(ErrorMessages.forApi(e))));
     }
   }
 

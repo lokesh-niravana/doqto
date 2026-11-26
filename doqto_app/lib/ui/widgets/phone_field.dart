@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phone_numbers_parser/phone_numbers_parser.dart';
 
+import '../../core/constants/strings.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/radii.dart';
 import '../../core/tokens/spacing.dart';
@@ -133,7 +134,8 @@ class PhoneFieldState extends State<PhoneField> {
         destinationCountry: IsoCode.values.byName(_country.countryCode),
       );
       if (!parsed.isValid()) {
-        return 'That doesn\'t look like a valid ${_country.countryCode} number.';
+        // The country by name: "a valid IN number" reads as a typo.
+        return Strings.phoneInvalidFor(_country.name);
       }
     } catch (_) {
       return 'Please enter a valid phone number.';
@@ -201,25 +203,45 @@ class PhoneFieldState extends State<PhoneField> {
       children: [
         Row(
           children: [
-            _CountryPill(country: _country, onTap: _pickCountry, hasError: hasError),
+            _CountryPill(
+              country: _country,
+              onTap: _pickCountry,
+              hasError: hasError,
+            ),
             const SizedBox(width: AppSpacing.sm),
             Expanded(
-              child: TextField(
-                controller: _controller,
-                focusNode: _focus,
-                keyboardType: TextInputType.phone,
-                autofocus: widget.autofocus,
-                onTapOutside: (_) => _focus.unfocus(),
-                style: AppText.bodyPrimary,
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[0-9\s\-]')),
-                  LengthLimitingTextInputFormatter(20),
-                ],
-                decoration: InputDecoration(
-                  hintText: _exampleFor(_country.countryCode),
-                  enabledBorder: border,
-                  focusedBorder: focusedBorder,
-                  border: border,
+              // One node named "Phone number".
+              child: Semantics(
+                label: 'Phone number',
+                child: TextField(
+                  controller: _controller,
+                  focusNode: _focus,
+                  keyboardType: TextInputType.phone,
+                  // Lets iOS offer the person's own number above the keyboard.
+                  autofillHints: const [AutofillHints.telephoneNumberNational],
+                  autofocus: widget.autofocus,
+                  onTapOutside: (_) => _focus.unfocus(),
+                  style: AppText.bodyPrimary,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9\s\-]')),
+                    LengthLimitingTextInputFormatter(20),
+                  ],
+                  decoration: InputDecoration(
+                    // Drawn only: an example number merged into the name
+                    // would be read as "Phone number, 555 555 0100".
+                    hint: ExcludeSemantics(
+                      child: Text(
+                        _exampleFor(_country.countryCode),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).inputDecorationTheme.hintStyle ??
+                            AppText.body.copyWith(color: AppColors.textMuted),
+                      ),
+                    ),
+                    enabledBorder: border,
+                    focusedBorder: focusedBorder,
+                    border: border,
+                  ),
                 ),
               ),
             ),
@@ -228,18 +250,26 @@ class PhoneFieldState extends State<PhoneField> {
         if (hasError)
           Padding(
             padding: const EdgeInsets.only(top: AppSpacing.xs + 2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.error_outline, size: 14, color: AppColors.red),
-                const SizedBox(width: AppSpacing.xs + 2),
-                Expanded(
-                  child: Text(
-                    errorToShow,
-                    style: AppText.caption.copyWith(color: AppColors.red),
+            child: Semantics(
+              container: true,
+              liveRegion: true,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.error_outline,
+                    size: 14,
+                    color: AppColors.red,
                   ),
-                ),
-              ],
+                  const SizedBox(width: AppSpacing.xs + 2),
+                  Expanded(
+                    child: Text(
+                      errorToShow,
+                      style: AppText.caption.copyWith(color: AppColors.red),
+                    ),
+                  ),
+                ],
+              ),
             ),
           )
         else if (widget.helperText != null && widget.helperText!.isNotEmpty)
@@ -273,35 +303,50 @@ class _CountryPill extends StatelessWidget {
   final VoidCallback onTap;
   final bool hasError;
 
-  const _CountryPill({required this.country, required this.onTap, required this.hasError});
+  const _CountryPill({
+    required this.country,
+    required this.onTap,
+    required this.hasError,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.white,
-      borderRadius: AppRadii.rMd,
-      child: InkWell(
+    return Semantics(
+      container: true,
+      button: true,
+      label: 'Country code, ${country.name} +${country.phoneCode}',
+      excludeSemantics: true,
+      onTap: onTap,
+      child: Material(
+        color: AppColors.white,
         borderRadius: AppRadii.rMd,
-        onTap: onTap,
-        child: Container(
-          height: 52,
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-          decoration: BoxDecoration(
-            borderRadius: AppRadii.rMd,
-            border: Border.all(
-              color: hasError ? AppColors.red : AppColors.gray200,
-              width: hasError ? 1.5 : 1,
+        child: InkWell(
+          borderRadius: AppRadii.rMd,
+          onTap: onTap,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 52),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+            decoration: BoxDecoration(
+              borderRadius: AppRadii.rMd,
+              border: Border.all(
+                color: hasError ? AppColors.red : AppColors.gray200,
+                width: hasError ? 1.5 : 1,
+              ),
             ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(country.flagEmoji, style: const TextStyle(fontSize: 20)),
-              const SizedBox(width: AppSpacing.xs + 2),
-              Text('+${country.phoneCode}', style: AppText.bodyPrimary),
-              const SizedBox(width: 2),
-              Icon(Icons.arrow_drop_down, size: 18, color: AppColors.textSecondary),
-            ],
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(country.flagEmoji, style: const TextStyle(fontSize: 20)),
+                const SizedBox(width: AppSpacing.xs + 2),
+                Text('+${country.phoneCode}', style: AppText.bodyPrimary),
+                const SizedBox(width: 2),
+                Icon(
+                  Icons.arrow_drop_down,
+                  size: 18,
+                  color: AppColors.textSecondary,
+                ),
+              ],
+            ),
           ),
         ),
       ),

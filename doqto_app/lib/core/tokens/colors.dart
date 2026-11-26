@@ -73,7 +73,9 @@ class DoqtoPalette {
     gray50: Color(0xFFF8FAFD),
     gray100: Color(0xFFEEF2F8),
     gray200: Color(0xFFD6DDF0),
-    gray400: Color(0xFF8A9CC4),
+    // Muted text (captions, timestamps, placeholders): 5.2:1 on white and
+    // 4.5:1 or better on every app surface. Was #8A9CC4 at 2.75:1.
+    gray400: Color(0xFF5B6C94),
     gray600: Color(0xFF4A5E8C),
     gray800: Color(0xFF1C2B4A),
     gray900: Color(0xFF0D1829),
@@ -129,7 +131,10 @@ class AppColors {
   static DoqtoPalette get current => _current;
 
   // --- Primary palette (brand teal — matches logo + landing --color-primary) ---
-  static const Color medBlue = Color(0xFF35878F); // brand teal: primary actions, nav bar, sent bubbles
+  // The logo teal is #35878F; white text on it is only 4.19:1. This is the
+  // same hue darkened just far enough for 4.5:1 (5.03:1 with white), so
+  // button labels, sent bubbles and teal text on white all pass.
+  static const Color medBlue = Color(0xFF307981); // brand teal: primary actions, nav bar, sent bubbles
   static Color get medBlueDark => _current.medBlueDark; // brand navy: headings, pressed states
   static Color get medBlueMid => _current.medBlueMid; // lighter teal: focused inputs, secondary highlights
   static Color get medBlueLight => _current.medBlueLight; // pale teal tint: input bg, tinted surfaces
@@ -158,7 +163,8 @@ class AppColors {
   static const Color amber = Color(0xFFF59E0B);
   static Color get amberText => _current.amberText;
   static Color get amberLight => _current.amberLight;
-  static const Color red = Color(0xFFEF4444);
+  // 5.3:1 on white, so it works as error text as well as a fill.
+  static const Color red = Color(0xFFD02424);
   static Color get redLight => _current.redLight;
   static const Color purple = Color(0xFF7C3AED);
   static Color get purpleText => _current.purpleText;

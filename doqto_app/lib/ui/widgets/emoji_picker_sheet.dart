@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/constants/strings.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/spacing.dart';
 import '../../core/tokens/typography.dart';
@@ -92,6 +93,8 @@ Future<String?> showEmojiPickerSheet(BuildContext context, ChatCache cache) {
   return showModalBottomSheet<String>(
     context: context,
     isScrollControlled: true,
+    // Stays under the status bar when the keyboard pushes the sheet up.
+    useSafeArea: true,
     showDragHandle: true,
     builder: (_) => EmojiPickerSheet(cache: cache),
   );
@@ -184,12 +187,13 @@ class _EmojiPickerSheetState extends State<EmojiPickerSheet> {
                     key: const ValueKey('emoji-search'),
                     controller: _search,
                     focusNode: _focus,
+                    semanticLabel: Strings.a11ySearchEmoji,
                     hint: 'Search emoji',
                     onChanged: (v) => setState(() => _query = v.trim()),
                   ),
                 ),
                 if (groups == null)
-                  const Expanded(child: Center(child: CircularProgressIndicator()))
+                  const Expanded(child: Center(child: CircularProgressIndicator(semanticsLabel: Strings.loading)))
                 else if (_query.isNotEmpty)
                   Expanded(child: _searchResults(groups))
                 else
@@ -226,11 +230,11 @@ class _EmojiPickerSheetState extends State<EmojiPickerSheet> {
             indicatorColor: AppColors.medBlue,
             tabs: [
               if (showRecent)
-                const Tab(icon: Icon(Icons.access_time), height: 40),
+                const Tab(icon: Icon(Icons.access_time, semanticLabel: 'Recent'), height: 44),
               for (final g in groups)
                 Tab(
-                  icon: Icon(_groupIcons[g.name] ?? Icons.circle_outlined),
-                  height: 40,
+                  icon: Icon(_groupIcons[g.name] ?? Icons.circle_outlined, semanticLabel: g.name),
+                  height: 44,
                 ),
             ],
           ),
@@ -249,11 +253,27 @@ class _EmojiPickerSheetState extends State<EmojiPickerSheet> {
   }
 
   Widget _grid(List<EmojiEntry> items) {
+    // A fixed count from the width, never a max extent: 48pt max-extent cells
+    // come out 42.9pt on a 402pt phone. floor((width - padding) / 44) keeps
+    // every cell at 44pt or more.
+    return LayoutBuilder(
+      builder: (context, constraints) => _gridFor(items, constraints.maxWidth),
+    );
+  }
+
+  Widget _gridFor(List<EmojiEntry> items, double width) {
+    final perRow = ((width - 2 * AppSpacing.sm) / 44).floor().clamp(1, 1000);
     return GridView.builder(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 48,
+      // The last row clears the home indicator.
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.sm,
+        AppSpacing.xs,
+        AppSpacing.sm,
+        AppSpacing.xs + MediaQuery.viewPaddingOf(context).bottom,
+      ),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: perRow,
       ),
       itemCount: items.length,
       itemBuilder: (_, i) {
@@ -261,14 +281,20 @@ class _EmojiPickerSheetState extends State<EmojiPickerSheet> {
         final shown = e.withTone(_tone);
         return Semantics(
           button: true,
-          label: e.name,
+          // A recent emoji has no catalogue name: the character itself is
+          // what VoiceOver should read, not "recent" forty times.
+          label: e.name == 'recent' ? shown : e.name,
           child: InkResponse(
             key: ValueKey('emoji-$shown'),
             onTap: () => _pick(shown),
             onLongPress: e.tones == null ? null : () => _pickTone(e),
             child: Center(
               child: ExcludeSemantics(
-                child: Text(shown, style: const TextStyle(fontSize: 28)),
+                // Shrinks to the cell at large text sizes instead of clipping.
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(shown, style: const TextStyle(fontSize: 28)),
+                ),
               ),
             ),
           ),

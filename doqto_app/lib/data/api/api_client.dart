@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../core/constants/api_routes.dart';
 import '../../core/constants/app_constants.dart';
@@ -132,6 +133,22 @@ class ApiClient {
         }
         try {
           await _refreshOnce();
+        } on ApiException catch (re) {
+          if (refreshFailureIsTransient(re.status)) {
+            // The refresh never got an answer about the token (offline,
+            // timeout, 5xx). The session may be fine: keep the tokens and
+            // report a connection failure, not the 401.
+            return handler.next(DioException(
+              requestOptions: e.requestOptions,
+              type: DioExceptionType.connectionError,
+              error: re,
+              message: 'refresh_unreachable',
+            ));
+          }
+          // The server rejected the refresh token: a real sign-out.
+          await _tokens.clear();
+          onSessionEnded?.call();
+          return handler.next(e);
         } catch (_) {
           // Refresh failed — wipe tokens and let the app flip to signedOut.
           await _tokens.clear();
@@ -213,6 +230,13 @@ class ApiClient {
     return _tokens.accessToken;
   }
 
+  /// A failed refresh that says nothing about the refresh token itself: no
+  /// response at all, a server error, a timeout or a rate limit. Only a
+  /// rejection (any other 4xx) ends the session.
+  @visibleForTesting
+  static bool refreshFailureIsTransient(int? status) =>
+      status == null || status >= 500 || status == 408 || status == 429;
+
   /// Refresh when the access token expires within this window.
   static const Duration tokenRefreshLeeway = Duration(seconds: 60);
 
@@ -237,7 +261,13 @@ class ApiClient {
       throw ApiException('no_refresh_token', status: 401);
     }
     // Bare Dio — no interceptor, no recursion. Same pinned transport.
-    final bare = Dio(BaseOptions(baseUrl: _baseUrl))
+    // Same timeouts as the main client, so a stalled refresh fails instead of
+    // holding the splash forever.
+    final bare = Dio(BaseOptions(
+      baseUrl: _baseUrl,
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 20),
+    ))
       ..httpClientAdapter = _pinnedAdapter(_baseUrl);
     try {
       final resp = await bare.post(

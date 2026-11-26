@@ -78,13 +78,9 @@ void main() {
     // Tests run as Android: Google only (Apple is iOS-only, see below).
     expect(
       find.byType(SocialButton),
-      findsNWidgets(kFacebookSignInEnabled ? 2 : 1),
+      findsOneWidget,
     );
     expect(find.text(Strings.loginGoogle), findsOneWidget);
-    expect(
-      find.text(Strings.loginFacebook),
-      kFacebookSignInEnabled ? findsOneWidget : findsNothing,
-    );
 
     // Phone and the providers are the only ways in: no tabs, no password.
     expect(find.text('Username / Email'), findsNothing);
@@ -128,7 +124,7 @@ void main() {
     expect(find.text(Strings.loginApple), findsOneWidget);
     expect(
       find.byType(SocialButton),
-      findsNWidgets(kFacebookSignInEnabled ? 3 : 2),
+      findsNWidgets(2),
     );
     debugDefaultTargetPlatformOverride = null;
   });

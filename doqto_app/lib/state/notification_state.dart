@@ -1,3 +1,4 @@
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -172,18 +173,110 @@ Future<void> _notifyGroupInvite(Ref ref, Map<String, dynamic> data) async {
       );
 }
 
+/// Opens the screen a notification tap points at.
+///
+/// A tap that launched the app arrives while the splash is still working
+/// out who is signed in. Pushed straight away, the target was replaced a
+/// moment later when the splash moved on to Chats (or the PIN gate). So a
+/// tap that comes before the app is ready is remembered, and opened once
+/// the user is signed in: Chats first, the target on top, so Back leads to
+/// the chat list.
+class NotificationRouteOpener {
+  NotificationRouteOpener({
+    required this.signedIn,
+    required this.onLaunchScreen,
+    required this.push,
+    required this.goHome,
+    required this.afterFrame,
+  });
+
+  /// The session is settled and signed in.
+  final bool Function() signedIn;
+
+  /// The router is still on a pre-shell screen (splash, login, PIN gate…)
+  /// that will replace the stack when it leaves.
+  final bool Function() onLaunchScreen;
+  final void Function(String path) push;
+
+  /// Replace the stack with the chat list.
+  final void Function() goHome;
+
+  /// Run once the current frame's navigation has been applied.
+  final void Function(VoidCallback fn) afterFrame;
+
+  /// The target of a tap that could not be opened yet.
+  String? pending;
+
+  void open(String path) {
+    if (signedIn() && !onLaunchScreen()) {
+      push(path);
+      return;
+    }
+    pending = path;
+    // Already signed in, the splash just has not left yet.
+    if (signedIn()) flushSoon();
+  }
+
+  /// Call when the user becomes signed in: opens the remembered target after
+  /// the screen that finished sign-in has done its own navigation.
+  void flushSoon() {
+    if (pending == null) return;
+    afterFrame(flush);
+  }
+
+  void flush() {
+    final path = pending;
+    if (path == null || !signedIn()) return;
+    pending = null;
+    goHome();
+    afterFrame(() => push(path));
+  }
+
+  /// Signed out: a tap meant for the previous session is not replayed.
+  void clear() => pending = null;
+}
+
+final notificationRouteOpenerProvider = Provider<NotificationRouteOpener>((ref) {
+  const launchScreens = {
+    AppRoutes.splash,
+    AppRoutes.login,
+    AppRoutes.otp,
+    AppRoutes.registration,
+    AppRoutes.pinGate,
+  };
+  return NotificationRouteOpener(
+    signedIn: () => ref.read(authProvider).stage == AuthStage.signedIn,
+    onLaunchScreen: () => launchScreens.contains(
+      ref.read(routerProvider).routerDelegate.currentConfiguration.uri.path,
+    ),
+    push: (path) => ref.read(routerProvider).push(path),
+    goHome: () => ref.read(routerProvider).go(AppRoutes.chats),
+    afterFrame: (fn) {
+      SchedulerBinding.instance.addPostFrameCallback((_) => fn());
+      SchedulerBinding.instance.ensureVisualUpdate();
+    },
+  );
+});
+
 final notificationListenerProvider = Provider<void>((ref) {
   final service = ref.watch(notificationServiceProvider);
+  final opener = ref.watch(notificationRouteOpenerProvider);
+  // A tap remembered from before sign-in settles opens once it has.
+  ref.listen(authProvider.select((s) => s.stage), (_, stage) {
+    if (stage == AuthStage.signedIn) {
+      opener.flushSoon();
+    } else if (stage == AuthStage.signedOut) {
+      opener.clear();
+    }
+  });
   service.init(
-    onTap: (payload) {
-      ref.read(routerProvider).push(routePathForPayload(payload));
-    },
+    onTap: (payload) => opener.open(routePathForPayload(payload)),
   );
   // Remote push taps (app backgrounded or killed). Foreground pushes are
   // ignored: the WS listener below already shows a richer local banner.
   void openPush(RemoteMessage m) {
     final path = routePathForPushData(m.data);
-    if (path != null) ref.read(routerProvider).push(path);
+    if (path != null) opener.open(path);
   }
 
   // Firebase is absent in widget tests (no initializeApp) — skip quietly.

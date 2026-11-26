@@ -4,12 +4,14 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/constants/strings.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/radii.dart';
 import '../../core/tokens/spacing.dart';
 import '../../core/tokens/typography.dart';
 import '../../data/models/message.dart';
 import '../../state/link_preview_state.dart';
+import 'message_bubble.dart' show kOnSentInset, kOnSentSecondaryAlpha;
 
 /// The site card under a bubble (or above the composer) for the first URL in
 /// a message (batch 4). Nothing renders while loading, when previews are off
@@ -84,14 +86,15 @@ class LinkPreviewView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final image = decodeDataUrl(preview.imageDataUrl);
-    final bg = isMine
-        ? AppColors.white.withValues(alpha: 0.16)
-        : AppColors.gray100;
+    final bg = isMine ? kOnSentInset : AppColors.gray100;
     final title = isMine ? AppColors.white : AppColors.textPrimary;
     final sub = isMine
-        ? AppColors.white.withValues(alpha: 0.8)
+        ? AppColors.white.withValues(alpha: kOnSentSecondaryAlpha)
         : AppColors.textSecondary;
-    return GestureDetector(
+    // Tappable (opens the link): a button to a screen reader.
+    return Semantics(
+      button: onTap != null ? true : null,
+      child: GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Container(
@@ -158,13 +161,14 @@ class LinkPreviewView extends StatelessWidget {
               if (onClose != null)
                 IconButton(
                   key: const ValueKey('link-preview-close'),
-                  visualDensity: VisualDensity.compact,
+                  tooltip: Strings.chatRemoveLinkPreview,
                   onPressed: onClose,
                   icon: Icon(Icons.close, size: 18, color: sub),
                 ),
             ],
           ),
         ),
+      ),
       ),
     );
   }

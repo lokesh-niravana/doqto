@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/utils/error_messages.dart';
+import '../../../data/services/auth_broker.dart';
 import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/router/app_router.dart';
@@ -16,6 +18,8 @@ import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/settings_rows.dart';
 import '../../../core/utils/avatar_urls.dart';
+import '../../widgets/confirm_sign_out.dart';
+import '../../widgets/silent_hint.dart';
 
 /// Settings home (batch 6): a profile card, then grouped entries into the
 /// Account, Privacy, Chats & appearance, Notifications, Storage, Language and
@@ -27,25 +31,88 @@ class SettingsScreen extends ConsumerWidget {
   /// high-friction: the exact word must be typed, because this destroys the
   /// profile, all authored messages and the whole connection graph.
   Future<void> _confirmAndDelete(BuildContext context, WidgetRef ref) async {
+    if (!await confirmDeleteAccount(context)) return;
+    if (!context.mounted) return;
+    await deleteAccountAndLeave(context, ref);
+  }
+
+  /// Signing out wipes this phone's cached chats and anything still waiting
+  /// to send, so it is confirmed first — the same dialog as on Profile.
+  Future<void> _confirmAndSignOut(BuildContext context, WidgetRef ref) async {
+    if (!await confirmSignOut(context) || !context.mounted) return;
+    final busy = _showBusy(context);
+    try {
+      await ref.read(authProvider.notifier).signOut();
+    } finally {
+      busy.remove();
+    }
+    if (context.mounted) context.go(AppRoutes.login);
+  }
+
+  /// A dimmed, untappable layer with a spinner while sign-out or deletion
+  /// runs. An overlay entry rather than a dialog route: the router replaces
+  /// the page underneath when the session ends, and a route pushed on top of
+  /// it would be torn down mid-flight.
+  static OverlayEntry _showBusy(BuildContext context) {
+    final entry = OverlayEntry(
+      builder: (_) => const Stack(
+        children: [
+          ModalBarrier(dismissible: false, color: Color(0x66000000)),
+          Center(child: CircularProgressIndicator(semanticsLabel: Strings.loading)),
+        ],
+      ),
+    );
+    Overlay.of(context, rootOverlay: true).insert(entry);
+    return entry;
+  }
+
+  /// Runs the deletion after the person has confirmed. Shared with the
+  /// registration screen, where a half-registered account can be deleted
+  /// too. Sign in with Apple accounts confirm with Apple once more so their
+  /// tokens can be revoked; backing out of that leaves the account alone.
+  static Future<void> deleteAccountAndLeave(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final busy = _showBusy(context);
+    final bool deleted;
+    try {
+      // Also signs out, which wipes the local encrypted PHI caches.
+      deleted = await ref.read(authProvider.notifier).deleteAccount();
+    } catch (e) {
+      busy.remove();
+      // A sign-in problem (wrong Apple ID, Apple refused) has its own
+      // explanation; "try again" alone would send the person round in circles.
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text(
+            e is AuthBrokerException
+                ? ErrorMessages.forApi(e)
+                : "Couldn't delete your account. Try again.",
+          ),
+        ),
+      );
+      return;
+    }
+    busy.remove();
+    if (!deleted) {
+      messenger?.showSnackBar(
+        const SnackBar(content: Text('Your account was not deleted.')),
+      );
+      return;
+    }
+    if (context.mounted) context.go(AppRoutes.login);
+  }
+
+  /// The type-DELETE confirmation. True only when the person armed and
+  /// pressed Delete.
+  static Future<bool> confirmDeleteAccount(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => const _DeleteAccountDialog(),
     );
-    if (confirmed != true) return;
-
-    try {
-      await ref.read(userRepositoryProvider).deleteAccount();
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't delete your account. Try again.")),
-        );
-      }
-      return;
-    }
-    // signOut also wipes the local encrypted PHI caches.
-    await ref.read(authProvider.notifier).signOut();
-    if (context.mounted) context.go(AppRoutes.login);
+    return confirmed == true;
   }
 
   @override
@@ -58,7 +125,11 @@ class SettingsScreen extends ConsumerWidget {
       appBar: AppBar(title: Text(l.settingsTitle)),
       body: ListView(
         key: const ValueKey('settings-list'),
-        padding: const EdgeInsets.only(bottom: AppSpacing.xl),
+        // Explicit padding replaces the automatic safe-area inset, so the
+        // home-indicator height is added back.
+        padding: EdgeInsets.only(
+          bottom: AppSpacing.xl + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           // Profile card → edit profile.
           FadeSlideIn.staggered(
@@ -87,7 +158,8 @@ class SettingsScreen extends ConsumerWidget {
                   status ?? user?.specialty ?? user?.phone ?? '',
                   key: const ValueKey('settings-profile-subtitle'),
                   style: AppText.caption,
-                  maxLines: 1,
+                  // Room for a status at a large text size.
+                  maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                 ),
                 trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
@@ -247,10 +319,7 @@ class SettingsScreen extends ConsumerWidget {
                 icon: Icons.logout,
                 variant: AppButtonVariant.danger,
                 expand: true,
-                onPressed: () async {
-                  await ref.read(authProvider.notifier).signOut();
-                  if (context.mounted) context.go(AppRoutes.login);
-                },
+                onPressed: () => _confirmAndSignOut(context, ref),
               ),
             ),
           ),
@@ -288,6 +357,8 @@ class SettingsScreen extends ConsumerWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(l.settingsExport),
+        // Scrolls rather than clipping at a large text size.
+        scrollable: true,
         content: const Text(
           'We\'ll prepare a file with your profile, settings, organizations, '
           'connections and groups. It never includes messages. The link works '
@@ -309,11 +380,19 @@ class SettingsScreen extends ConsumerWidget {
     if (go != true || !context.mounted) return;
     try {
       final r = await ref.read(settingsRepositoryProvider).requestExport();
-      await ref.read(urlOpenerProvider).open(r.url);
+      // open() reports a link the system could not hand off; say so rather
+      // than leave the user waiting for a file that never appears.
+      final opened = await ref.read(urlOpenerProvider).open(r.url);
+      if (!opened && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(Strings.exportOpenFailed)),
+        );
+      }
     } catch (_) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(l.commonSaveFailed)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(Strings.exportRequestFailed)),
+      );
     }
   }
 }
@@ -346,7 +425,8 @@ class _NavRow extends StatelessWidget {
           title: Text(title, style: AppText.bodyPrimary),
           subtitle: subtitle == null || subtitle!.isEmpty
               ? null
-              : Text(subtitle!, style: AppText.caption, maxLines: 1, overflow: TextOverflow.ellipsis),
+              // Not one line: Spanish and large text sizes were cut off.
+              : Text(subtitle!, style: AppText.caption, maxLines: 3, overflow: TextOverflow.ellipsis),
           trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
           onTap: onTap ?? () => context.push(route),
         ),
@@ -377,6 +457,9 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
     final armed = _controller.text.trim() == 'DELETE';
     return AlertDialog(
       title: const Text('Delete account'),
+      // Scrolls so the field stays reachable with the keyboard up at a large
+      // text size.
+      scrollable: true,
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -386,12 +469,17 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
             'connections. It cannot be undone.\n\nType DELETE to confirm.',
           ),
           const SizedBox(height: AppSpacing.md),
-          TextField(
-            controller: _controller,
-            autocorrect: false,
-            onTapOutside: (_) => FocusScope.of(context).unfocus(),
-            decoration: const InputDecoration(hintText: 'DELETE'),
-            onChanged: (_) => setState(() {}),
+          Semantics(
+            label: Strings.a11yDeleteConfirmField,
+            child: TextField(
+              controller: _controller,
+              autocorrect: false,
+              // The word to type is upper case; start the keyboard that way.
+              textCapitalization: TextCapitalization.characters,
+              onTapOutside: (_) => FocusScope.of(context).unfocus(),
+              decoration: const InputDecoration(hint: SilentHint('DELETE')),
+              onChanged: (_) => setState(() {}),
+            ),
           ),
         ],
       ),
@@ -402,6 +490,9 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
         ),
         TextButton(
           onPressed: armed ? () => Navigator.of(context).pop(true) : null,
+          style: TextButton.styleFrom(
+            foregroundColor: Theme.of(context).colorScheme.error,
+          ),
           child: const Text('Delete'),
         ),
       ],

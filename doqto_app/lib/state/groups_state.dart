@@ -16,7 +16,16 @@ class MyGroupsData {
   final List<Group> member;
   final List<Group> invited;
 
-  const MyGroupsData({this.member = const [], this.invited = const []});
+  /// Why the invitations could not be fetched, when the member list could.
+  /// [invited] then holds whatever was known before (often nothing), and the
+  /// tab says so with a Retry instead of showing "no invitations".
+  final Object? invitedError;
+
+  const MyGroupsData({
+    this.member = const [],
+    this.invited = const [],
+    this.invitedError,
+  });
 
   bool get isEmpty => member.isEmpty && invited.isEmpty;
 }
@@ -74,9 +83,10 @@ class MyGroupsNotifier extends AsyncNotifier<MyGroupsData> {
       final data = await _fetch();
       await cache.putMyGroups(data.member);
       return data;
-    } catch (_) {
+    } catch (e) {
       if (cachedMembers != null) {
-        return MyGroupsData(member: cachedMembers);
+        // The cache holds members only: the invitations are unknown, not none.
+        return MyGroupsData(member: cachedMembers, invitedError: e);
       }
       rethrow;
     }
@@ -84,26 +94,38 @@ class MyGroupsNotifier extends AsyncNotifier<MyGroupsData> {
 
   Future<MyGroupsData> _fetch() async {
     final repo = ref.read(groupsRepositoryProvider);
-    // Member list is required; invited is a best-effort adornment.
+    // Member list is required. A failed invitations fetch does not fail the
+    // tab, but it is recorded: the invitations already known stay on screen
+    // and the tab offers a retry.
     final member = (await repo.myGroups(state: 'member'))
         .map((g) => g.copyWith(membershipTag: GroupMembershipTag.member))
         .toList();
-    List<Group> invited = const [];
+    List<Group> invited = state.valueOrNull?.invited ?? const [];
+    Object? invitedError;
     try {
       invited = (await repo.myGroups(state: 'invited'))
           .map((g) => g.copyWith(membershipTag: GroupMembershipTag.invited))
           .toList();
-    } catch (_) {}
-    return MyGroupsData(member: member, invited: invited);
+    } catch (e) {
+      invitedError = e;
+    }
+    return MyGroupsData(
+      member: member,
+      invited: invited,
+      invitedError: invitedError,
+    );
   }
 
-  Future<void> refresh() async {
+  /// [rethrowOnError]: a pull-to-refresh passes true so the screen can say
+  /// the refresh failed; the list is kept either way.
+  Future<void> refresh({bool rethrowOnError = false}) async {
     try {
       final data = await _fetch();
       await ref.read(groupsCacheProvider).putMyGroups(data.member);
       state = AsyncData(data); // stays on previous data → no flash
     } catch (_) {
       // Offline refresh: keep showing what we have.
+      if (rethrowOnError) rethrow;
     }
   }
 
@@ -124,6 +146,7 @@ class MyGroupsNotifier extends AsyncNotifier<MyGroupsData> {
     state = AsyncData(MyGroupsData(
       member: [optimistic, ...before.member],
       invited: [for (final x in before.invited) if (x.id != g.id) x],
+      invitedError: before.invitedError,
     ));
     try {
       await ref.read(groupsRepositoryProvider).acceptInvite(g.id, inviteId);
@@ -143,6 +166,7 @@ class MyGroupsNotifier extends AsyncNotifier<MyGroupsData> {
     state = AsyncData(MyGroupsData(
       member: before.member,
       invited: [for (final x in before.invited) if (x.id != g.id) x],
+      invitedError: before.invitedError,
     ));
     try {
       await ref.read(groupsRepositoryProvider).declineInvite(g.id, inviteId);

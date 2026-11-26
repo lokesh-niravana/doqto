@@ -187,7 +187,23 @@ void main() {
       await pump(tester);
       await tester.tap(find.text(Strings.regSignOut));
       await tester.pumpAndSettle();
+      // Asks first, like Settings and Profile.
+      expect(find.text('Sign out?'), findsOneWidget);
+      expect(broker.signedOut, 0);
+      await tester.tap(find.byKey(const ValueKey('sign-out-confirm')));
+      await tester.pumpAndSettle();
       expect(broker.signedOut, 1);
+    });
+
+    testWidgets('cancelling the sign-out question keeps the session',
+        (tester) async {
+      await pump(tester);
+      await tester.tap(find.text(Strings.regSignOut));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sign-out-cancel')));
+      await tester.pumpAndSettle();
+      expect(find.text('Sign out?'), findsNothing);
+      expect(broker.signedOut, 0);
     });
   });
 
@@ -267,18 +283,22 @@ void main() {
       expect(broker.codesSentTo, isEmpty);
     });
 
-    testWidgets('a typed but unverified number blocks Continue', (tester) async {
+    testWidgets('a typed but unverified number blocks Continue and says why', (tester) async {
       await pump(tester, phone: '');
       await fillRequired(tester);
       await tester.enterText(phone, _number);
       await tester.pumpAndSettle();
 
-      expect(tester.widget<AppButton>(continueButton).onPressed, isNull);
+      // Tappable, so the reason can be shown: a disabled button explains
+      // nothing.
+      expect(tester.widget<AppButton>(continueButton).onPressed, isNotNull);
+      expect(find.text(Strings.regPhoneUnverified), findsNothing);
       await tapContinue(tester);
       expect(auth.registered, isEmpty);
+      expect(find.text(Strings.regPhoneUnverified), findsOneWidget);
     });
 
-    testWidgets("Firebase's own refusal is shown, not a generic error",
+    testWidgets("Firebase's refusal is shown as a plain sentence, not SDK text or a generic error",
         (tester) async {
       broker.sendError = const AuthBrokerException(
           'invalid-phone-number', 'The phone number is invalid.');
@@ -287,7 +307,11 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(AppButton, Strings.regPhoneSendCode).first);
       await tester.pumpAndSettle();
-      expect(find.text('The phone number is invalid.'), findsOneWidget);
+      expect(find.text('The phone number is invalid.'), findsNothing);
+      expect(
+        find.text("That phone number doesn't look right. Check it and try again."),
+        findsOneWidget,
+      );
     });
 
     testWidgets('a half-typed number offers no Send code', (tester) async {
@@ -354,8 +378,9 @@ void main() {
       expect(find.textContaining('already on another Doqto account'), findsOneWidget);
       expect(find.text(Strings.regPhoneVerified), findsNothing);
       expect(broker.unlinked, 1);
-      // Still unverified, so Continue stays off.
-      expect(tester.widget<AppButton>(continueButton).onPressed, isNull);
+      // Still unverified: Continue refuses and registers nothing.
+      await tapContinue(tester);
+      expect(auth.registered, isEmpty);
     });
 
     testWidgets('a wrong code shows the error and stays unverified',

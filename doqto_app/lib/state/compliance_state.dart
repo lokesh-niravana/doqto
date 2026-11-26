@@ -97,11 +97,15 @@ class AccessRequestsNotifier
     return ref.read(complianceRepositoryProvider).accessRequests(orgId);
   }
 
-  Future<void> refresh() async {
+  /// [rethrowOnError]: a pull-to-refresh passes true so the screen can say
+  /// the refresh failed; the list is kept either way.
+  Future<void> refresh({bool rethrowOnError = false}) async {
     try {
       state = AsyncData(
           await ref.read(complianceRepositoryProvider).accessRequests(arg));
-    } catch (_) {}
+    } catch (_) {
+      if (rethrowOnError) rethrow;
+    }
   }
 
   Future<AccessRequest> create({
@@ -150,10 +154,14 @@ class OrgReportsNotifier extends FamilyAsyncNotifier<List<OrgReport>, String> {
     return ref.read(complianceRepositoryProvider).reports(orgId);
   }
 
-  Future<void> refresh() async {
+  /// [rethrowOnError]: a pull-to-refresh passes true so the screen can say
+  /// the refresh failed; the list is kept either way.
+  Future<void> refresh({bool rethrowOnError = false}) async {
     try {
       state = AsyncData(await ref.read(complianceRepositoryProvider).reports(arg));
-    } catch (_) {}
+    } catch (_) {
+      if (rethrowOnError) rethrow;
+    }
   }
 
   Future<void> setStatus(String reportId, ReportStatus status) async {

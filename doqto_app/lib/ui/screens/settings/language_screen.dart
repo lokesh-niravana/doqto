@@ -27,7 +27,12 @@ class LanguageScreen extends ConsumerWidget {
       appBar: AppBar(title: Text(l.settingsLanguage)),
       body: ListView(
         key: const ValueKey('language-list'),
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last row clears the home indicator.
+        padding: EdgeInsets.only(
+          top: AppSpacing.lg,
+          bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           FadeSlideIn.staggered(
             0,
@@ -40,6 +45,9 @@ class LanguageScreen extends ConsumerWidget {
                     children: [
                       ListTile(
                         key: ValueKey('language-opt-${options[i].$1}'),
+                        // The tick alone is silent to VoiceOver.
+                        selected: current == options[i].$2,
+                        selectedColor: AppColors.textPrimary,
                         title: Text(options[i].$3, style: AppText.bodyPrimary),
                         trailing: current == options[i].$2
                             ? Icon(Icons.check_rounded, color: AppColors.medBlue)

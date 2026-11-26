@@ -16,6 +16,16 @@ class UserPatchBody {
   final int? yearsOfExperience;
   final List<String>? skills;
 
+  /// Wire names of fields to empty: sent as an explicit `null`, which the
+  /// server (PATCH /users/me, `exclude_unset`) stores as "no value". A field
+  /// that is only left out keeps what it had, so a value the user removed
+  /// must be named here. Only [clearEmail] and [clearYearsOfExperience] are
+  /// nullable server-side.
+  final Set<String> clear;
+
+  static const String clearEmail = 'email';
+  static const String clearYearsOfExperience = 'years_of_experience';
+
   const UserPatchBody({
     this.fullName,
     this.email,
@@ -25,6 +35,7 @@ class UserPatchBody {
     this.state,
     this.yearsOfExperience,
     this.skills,
+    this.clear = const {},
   });
 
   Map<String, dynamic> toJson() {
@@ -37,6 +48,10 @@ class UserPatchBody {
     if (state != null) map['state'] = state;
     if (yearsOfExperience != null) map['years_of_experience'] = yearsOfExperience;
     if (skills != null) map['skills'] = skills;
+    // A field with a new value is not also cleared.
+    for (final field in clear) {
+      map.putIfAbsent(field, () => null);
+    }
     return map;
   }
 }

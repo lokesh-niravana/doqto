@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/constants/strings.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/spacing.dart';
@@ -12,6 +13,10 @@ import '../../../state/network_state.dart';
 import '../../widgets/app_skeleton.dart';
 import '../../widgets/inline_connect.dart';
 import '../../widgets/person_card_row.dart';
+import '../../widgets/primary_button.dart';
+import '../home/main_shell.dart';
+import '../../../core/utils/async_retry.dart';
+import '../../widgets/refresh_feedback.dart';
 
 /// Why a doctor is suggested, in words. The server picks the reason; the app
 /// owns the copy.
@@ -44,31 +49,56 @@ class SuggestionRow extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return PersonCardRow(
-      person: person,
-      subtitle: suggestionReason(person),
-      onTap: () => context.push(AppRoutes.person(person.id)),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          InlineConnect(userId: person.id, compact: true),
-          IconButton(
-            tooltip: 'Hide ${person.fullName}',
-            icon: Icon(Icons.close, size: 20, color: AppColors.gray400),
-            onPressed: () async {
-              try {
-                await ref.read(suggestionsProvider.notifier).dismiss(person.id);
-              } catch (e) {
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                  content: Text(ErrorMessages.forApi(e)),
-                  backgroundColor: AppColors.red,
-                ));
-              }
-            },
+    final controls = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InlineConnect(userId: person.id, compact: true),
+        IconButton(
+          tooltip: 'Hide ${person.fullName}',
+          icon: Icon(Icons.close, size: 20, color: AppColors.gray400),
+          onPressed: () async {
+            try {
+              await ref.read(suggestionsProvider.notifier).dismiss(person.id);
+            } catch (e) {
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(ErrorMessages.forApi(e)),
+                backgroundColor: AppColors.red,
+              ));
+            }
+          },
+        ),
+      ],
+    );
+    void open() => context.push(AppRoutes.person(person.id));
+    // Past about 1.3x the pill and the hide button left three characters of
+    // the name: they move to a line of their own under it.
+    final large = MediaQuery.textScalerOf(context).scale(100) / 100 > 1.3;
+    if (!large) {
+      return PersonCardRow(
+        person: person,
+        subtitle: suggestionReason(person),
+        onTap: open,
+        trailing: controls,
+      );
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        PersonCardRow(
+          person: person,
+          subtitle: suggestionReason(person),
+          onTap: open,
+          trailing: const SizedBox.shrink(),
+        ),
+        Align(
+          alignment: AlignmentDirectional.centerEnd,
+          child: Padding(
+            padding: const EdgeInsetsDirectional.only(end: AppSpacing.sm),
+            child: controls,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -84,17 +114,44 @@ class SuggestionsScreen extends ConsumerWidget {
       backgroundColor: AppColors.appBg,
       appBar: AppBar(title: const Text('Recommended for you')),
       body: RefreshIndicator(
-        onRefresh: () => ref.read(suggestionsProvider.notifier).refresh(),
-        child: async.when(
+        onRefresh: () => refreshWithFeedback(
+          context,
+          () => ref.read(suggestionsProvider.notifier).refresh(rethrowOnError: true),
+        ),
+        child: async.whenRetrying(
           skipLoadingOnRefresh: true,
           loading: () => const SkeletonList(),
-          error: (e, _) => ListView(children: [
-            Padding(
-              padding: const EdgeInsets.all(AppSpacing.xl),
-              child: Text(ErrorMessages.forApi(e),
-                  style: AppText.body, textAlign: TextAlign.center),
-            ),
-          ]),
+          // refresh() keeps the old state on failure, so Retry rebuilds the
+          // provider instead.
+          error: (e, _) => ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(AppSpacing.xl),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.wifi_off_rounded,
+                        size: 40, color: AppColors.textMuted),
+                    const SizedBox(height: AppSpacing.md),
+                    Semantics(
+                      container: true,
+                      liveRegion: true,
+                      child: Text(ErrorMessages.forApi(e),
+                          style: AppText.caption, textAlign: TextAlign.center),
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                    AppButton(
+                      key: const ValueKey('suggestions-retry'),
+                      label: Strings.retry,
+                      icon: Icons.refresh_rounded,
+                      onPressed: () => ref.invalidate(suggestionsProvider),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
           data: (people) => people.isEmpty
               ? ListView(children: [
                   Padding(
@@ -107,7 +164,7 @@ class SuggestionsScreen extends ConsumerWidget {
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: EdgeInsets.only(
                     top: AppSpacing.sm,
-                    bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.xl,
+                    bottom: MediaQuery.paddingOf(context).bottom + kMicButtonRise + AppSpacing.xl,
                   ),
                   itemCount: people.length,
                   itemBuilder: (_, i) => Padding(

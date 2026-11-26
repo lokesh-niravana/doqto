@@ -1,7 +1,9 @@
+import '../../../core/utils/app_orientation.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../../core/constants/strings.dart';
@@ -11,9 +13,14 @@ import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
+import '../../../data/models/media.dart';
 import '../../../data/models/message.dart';
+import '../../../data/services/media_native.dart';
 import '../../../state/chat_state.dart';
+import '../../../state/media_gallery_state.dart';
+import '../../widgets/scrim_spinner.dart';
 import '../../widgets/app_pressable.dart';
+import '../../widgets/media_load_failed.dart';
 import '../chat/forward_picker_sheet.dart';
 import 'video_player_screen.dart';
 
@@ -21,6 +28,10 @@ import 'video_player_screen.dart';
 /// Save to Photos and Share appear only when the conversation allows media
 /// export; each writes an export-audit row first and bails when the server
 /// says `media_export_blocked`.
+const _closeLabel = 'Close';
+const _playVideoLabel = 'Play video';
+const Color _starOnScrim = Color(0xFFFDE68A);
+
 class MediaViewerScreen extends ConsumerStatefulWidget {
   final String conversationId;
   final List<Message> items;
@@ -61,7 +72,14 @@ class _MediaViewerScreenState extends ConsumerState<MediaViewerScreen> {
   Message get _current => widget.items[_index];
 
   @override
+  void initState() {
+    super.initState();
+    AppOrientation.enterMedia();
+  }
+
+  @override
   void dispose() {
+    AppOrientation.leaveMedia();
     _pager.dispose();
     super.dispose();
   }
@@ -95,13 +113,45 @@ class _MediaViewerScreenState extends ConsumerState<MediaViewerScreen> {
     try {
       final f = await _exportable(_current);
       if (f == null) return;
-      final ok = await ref.read(mediaNativeProvider).saveToPhotos(f.path);
-      _toast(ok ? Strings.mediaSaved : Strings.mediaSaveFailed);
+      final outcome = await ref.read(mediaNativeProvider).saveToPhotos(f.path);
+      switch (outcome) {
+        case SaveToPhotosResult.saved:
+          _toast(Strings.mediaSaved);
+        case SaveToPhotosResult.failed:
+          _toast(Strings.mediaSaveFailed);
+        case SaveToPhotosResult.denied:
+          await _showPhotoAccessOff();
+      }
     } catch (e) {
       _toast(ErrorMessages.forApi(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Photo access is refused in Settings: a retry cannot work, so say why
+  /// and offer the way there.
+  Future<void> _showPhotoAccessOff() async {
+    if (!mounted) return;
+    final shouldOpen = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const ValueKey('viewer-photo-access-off'),
+        title: const Text(Strings.photoAccessOffTitle),
+        content: const Text(Strings.photoSaveAccessOffBody),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text(Strings.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text(Strings.openSettings),
+          ),
+        ],
+      ),
+    );
+    if (shouldOpen == true) await openAppSettings();
   }
 
   Future<void> _share() async {
@@ -139,11 +189,32 @@ class _MediaViewerScreenState extends ConsumerState<MediaViewerScreen> {
     }
   }
 
+  /// Stars set from here on messages the thread does not hold (older than
+  /// its loaded pages): nothing live to read them back from, so the icon
+  /// follows this map. Written only after the server accepted the change.
+  final _starOverride = <String, bool>{};
+
+  bool _liveStarred(List<Message>? loaded) =>
+      loaded?.where((m) => m.id == _current.id).firstOrNull?.starred ??
+      _starOverride[_current.id] ??
+      _current.starred;
+
   Future<void> _star() async {
     final m = _current;
+    // The same live value the icon is drawn from: `_current` is the snapshot
+    // this screen was opened with, so toggling on it starred a second time.
+    final starred = _liveStarred(ref.read(messagesProvider(widget.conversationId)).asData?.value);
     try {
-      await ref.read(messagesProvider(widget.conversationId).notifier).star(m.id, !m.starred);
-      _toast(m.starred ? Strings.chatUnstarredToast : Strings.chatStarredToast);
+      await ref.read(messagesProvider(widget.conversationId).notifier).star(m.id, !starred);
+      // The gallery this was opened from (if any) draws its own copy.
+      for (final k in MediaKind.values) {
+        final key = (conversationId: widget.conversationId, kind: k);
+        if (ref.exists(mediaGalleryProvider(key))) {
+          ref.read(mediaGalleryProvider(key).notifier).patchStarred({m.id}, !starred);
+        }
+      }
+      if (mounted) setState(() => _starOverride[m.id] = !starred);
+      _toast(starred ? Strings.chatUnstarredToast : Strings.chatStarredToast);
     } catch (e) {
       _toast(ErrorMessages.forApi(e));
     }
@@ -153,9 +224,7 @@ class _MediaViewerScreenState extends ConsumerState<MediaViewerScreen> {
   Widget build(BuildContext context) {
     final exportAllowed = ref.watch(mediaExportAllowedProvider(widget.conversationId));
     // Live star state, if the thread has this message loaded.
-    final live = ref.watch(messagesProvider(widget.conversationId)).asData?.value
-        .where((m) => m.id == _current.id).firstOrNull;
-    final starred = live?.starred ?? _current.starred;
+    final starred = _liveStarred(ref.watch(messagesProvider(widget.conversationId)).asData?.value);
     final m = _current;
     return Scaffold(
       backgroundColor: AppColors.gray900,
@@ -190,6 +259,7 @@ class _MediaViewerScreenState extends ConsumerState<MediaViewerScreen> {
                         children: [
                           IconButton(
                             key: const ValueKey('viewer-close'),
+                            tooltip: _closeLabel,
                             onPressed: () => Navigator.of(context).pop(),
                             icon: const Icon(Icons.close, color: AppColors.white),
                           ),
@@ -202,13 +272,17 @@ class _MediaViewerScreenState extends ConsumerState<MediaViewerScreen> {
                           ),
                           IconButton(
                             key: const ValueKey('viewer-star'),
+                            tooltip: starred ? Strings.chatUnstar : Strings.chatStar,
                             onPressed: _star,
                             icon: Icon(starred ? Icons.star_rounded : Icons.star_outline_rounded,
-                                color: starred ? AppColors.amber : AppColors.white),
+                                // #FDE68A stays 3.76:1 on the 60% scrim even over a white
+                                // photo (amber was 2.18:1); the filled glyph carries the state too.
+                                color: starred ? _starOnScrim : AppColors.white),
                           ),
                           if (m.canForward)
                             IconButton(
                               key: const ValueKey('viewer-forward'),
+                              tooltip: Strings.mediaForward,
                               onPressed: _forward,
                               icon: const Icon(Icons.shortcut_rounded, color: AppColors.white),
                             ),
@@ -217,13 +291,18 @@ class _MediaViewerScreenState extends ConsumerState<MediaViewerScreen> {
                               key: const ValueKey('viewer-save'),
                               tooltip: Strings.mediaSaveToPhotos,
                               onPressed: _busy ? null : _save,
-                              icon: const Icon(Icons.download_rounded, color: AppColors.white),
+                              // Visibly dimmed while disabled.
+                              color: AppColors.white,
+                              disabledColor: AppColors.white.withValues(alpha: 0.38),
+                              icon: const Icon(Icons.download_rounded),
                             ),
                             IconButton(
                               key: const ValueKey('viewer-share'),
                               tooltip: Strings.mediaShare,
                               onPressed: _busy ? null : _share,
-                              icon: const Icon(Icons.ios_share_rounded, color: AppColors.white),
+                              color: AppColors.white,
+                              disabledColor: AppColors.white.withValues(alpha: 0.38),
+                              icon: const Icon(Icons.ios_share_rounded),
                             ),
                           ],
                         ],
@@ -237,9 +316,14 @@ class _MediaViewerScreenState extends ConsumerState<MediaViewerScreen> {
                       color: AppColors.gray900.withValues(alpha: 0.6),
                       child: SafeArea(
                         top: false,
-                        child: Padding(
-                          padding: const EdgeInsets.all(AppSpacing.lg),
-                          child: Text(m.caption!, key: const ValueKey('viewer-caption'), style: AppText.body.copyWith(color: AppColors.white)),
+                        // A long caption scrolls in at most 30% of the screen
+                        // instead of covering the photo and the controls.
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.3),
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.all(AppSpacing.lg),
+                            child: Text(m.caption!, key: const ValueKey('viewer-caption'), style: AppText.body.copyWith(color: AppColors.white)),
+                          ),
                         ),
                       ),
                     ),
@@ -247,7 +331,9 @@ class _MediaViewerScreenState extends ConsumerState<MediaViewerScreen> {
               ),
             ),
           ),
-          if (_busy) const Center(child: CircularProgressIndicator(color: AppColors.white)),
+          if (_busy)
+            // On a dark disc: a bare white ring is invisible over a white photo.
+            const Center(child: ScrimSpinner()),
         ],
       ),
     );
@@ -280,6 +366,7 @@ class _PageState extends ConsumerState<_Page> {
   Future<void> _load() async {
     final cache = ref.read(chatMediaCacheProvider);
     final m = widget.message;
+    if (_failed) setState(() => _failed = false);
     try {
       if (_isVideo) {
         // The poster is enough to draw the page; the clip loads in the player.
@@ -317,19 +404,31 @@ class _PageState extends ConsumerState<_Page> {
   Widget build(BuildContext context) {
     final f = _file;
     if (_failed) {
-      return Center(child: Icon(Icons.broken_image_outlined, color: AppColors.gray400, size: 48));
+      return MediaLoadFailed(
+        key: ValueKey('viewer-failed-${widget.message.id}'),
+        message: _isVideo ? Strings.mediaVideoLoadFailed : Strings.mediaPhotoLoadFailed,
+        onRetry: _load,
+      );
     }
-    if (f == null) return const Center(child: CircularProgressIndicator(color: AppColors.white));
+    if (f == null) {
+      return const Center(
+        child: CircularProgressIndicator(color: AppColors.white, semanticsLabel: Strings.loading),
+      );
+    }
     if (_isVideo) {
       return GestureDetector(
+        // Tapping only shows or hides the bars: not an action worth a
+        // nameless VoiceOver stop. The picture itself is named instead.
+        excludeFromSemantics: true,
         onTap: widget.onTap,
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Center(child: Image.file(f, fit: BoxFit.contain)),
+            Center(child: Image.file(f, fit: BoxFit.contain, semanticLabel: Strings.mediaVideo)),
             Center(
               child: AppPressable(
                 key: ValueKey('viewer-play-${widget.message.id}'),
+                semanticLabel: _playVideoLabel,
                 onTap: _play,
                 child: Container(
                   width: 72,
@@ -344,11 +443,12 @@ class _PageState extends ConsumerState<_Page> {
       );
     }
     return GestureDetector(
+      excludeFromSemantics: true,
       onTap: widget.onTap,
       child: InteractiveViewer(
         key: ValueKey('viewer-image-${widget.message.id}'),
         maxScale: 5,
-        child: Center(child: Image.file(f, fit: BoxFit.contain)),
+        child: Center(child: Image.file(f, fit: BoxFit.contain, semanticLabel: Strings.mediaPhoto)),
       ),
     );
   }

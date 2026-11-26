@@ -36,7 +36,7 @@ class SettingsSection extends StatelessWidget {
               left: AppSpacing.xs,
               bottom: AppSpacing.sm,
             ),
-            child: Text(title.toUpperCase(), style: AppText.label),
+            child: Semantics(header: true, child: Text(title.toUpperCase(), style: AppText.label)),
           ),
           SectionCard(
             padding: EdgeInsets.zero,
@@ -142,6 +142,9 @@ Future<(T,)?> showChoiceSheet<T>(
             for (final (v, label) in options)
               ListTile(
                 key: ValueKey('$keyPrefix-opt-$field-${wire(v)}'),
+                // The tick alone is drawn, not spoken.
+                selected: value != null && v == value,
+                selectedColor: AppColors.textPrimary,
                 title: Text(label, style: AppText.bodyPrimary),
                 trailing: value != null && v == value
                     ? const Icon(Icons.check, color: AppColors.medBlue)

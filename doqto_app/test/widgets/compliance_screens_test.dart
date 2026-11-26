@@ -5,12 +5,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:doqto_app/core/constants/strings.dart';
 import 'package:doqto_app/core/di/providers.dart';
 import 'package:doqto_app/data/api/api_client.dart';
+import 'package:doqto_app/core/enums/app_enums.dart';
 import 'package:doqto_app/data/models/compliance.dart';
+import 'package:doqto_app/data/models/conversation.dart';
 import 'package:doqto_app/data/models/organization.dart';
 import 'package:doqto_app/data/models/user.dart';
 import 'package:doqto_app/data/repositories/compliance_repository.dart';
 import 'package:doqto_app/data/repositories/org_repository.dart';
 import 'package:doqto_app/state/auth_state.dart';
+import 'package:doqto_app/state/chat_state.dart';
 import 'package:doqto_app/state/org_state.dart';
 import 'package:doqto_app/state/realtime_state.dart';
 import 'package:doqto_app/ui/screens/my_org/access_requests_screen.dart';
@@ -48,11 +51,14 @@ AccessRequest _req(String id, {required String requester, String status = 'pendi
       'created_at': '2026-11-01T00:00:00Z',
     });
 
-OrgReport _report(String id, String status, {String reason = 'spam'}) => OrgReport.fromJson({
+OrgReport _report(String id, String status,
+        {String reason = 'spam', String subject = 'message', String? conversation}) =>
+    OrgReport.fromJson({
       'id': id,
       'reporter_id': 'u2',
-      'subject_type': 'message',
+      'subject_type': subject,
       'subject_id': 'm1',
+      'conversation_id': conversation,
       'reason': reason,
       'details': 'details $id',
       'status': status,
@@ -104,6 +110,7 @@ class _Repo extends ComplianceRepository {
   @override
   Future<AccessRequest> createAccessRequest(String orgId,
       {required String conversationId, required String reason}) async {
+    if (fail) throw ApiException('org_admin_required', status: 403);
     created = {'conversation_id': conversationId, 'reason': reason};
     return _req('new', requester: 'me');
   }
@@ -135,6 +142,21 @@ class _Auth extends AuthNotifier {
 
 late _Repo _repo;
 
+/// My own chats, as the picker lists them.
+class _Convs extends ConversationsNotifier {
+  @override
+  Future<List<Conversation>> build() async => [
+        Conversation.fromJson({
+          'id': 'c1',
+          'type': ConversationType.group.wire,
+          'name': 'Ward round',
+          'member_ids': ['me', 'u2'],
+          'created_at': '2026-11-01T00:00:00Z',
+          'updated_at': '2026-11-01T00:00:00Z',
+        }),
+      ];
+}
+
 Widget _app(Widget home, {String myRole = 'admin'}) {
   final socket = FakeSocket();
   return ProviderScope(
@@ -143,6 +165,7 @@ Widget _app(Widget home, {String myRole = 'admin'}) {
       complianceRepositoryProvider.overrideWithValue(_repo),
       orgRepositoryProvider.overrideWithValue(_OrgRepo(myRole)),
       authProvider.overrideWith(_Auth.new),
+      conversationsProvider.overrideWith(_Convs.new),
       realtimeRefreshDebounceProvider.overrideWithValue(Duration.zero),
     ],
     child: Consumer(builder: (context, ref, child) {
@@ -283,8 +306,18 @@ void main() {
           of: find.byKey(const ValueKey('access-request-conversation')), matching: find.byType(TextField));
       final reason = find.descendant(
           of: find.byKey(const ValueKey('access-request-reason')), matching: find.byType(TextField));
+      // The conversation is chosen, never typed: the field is read-only and
+      // tapping it opens the picker, which lists titles — no ids anywhere.
+      expect(tester.widget<TextField>(conv).readOnly, isTrue);
+      expect(find.textContaining('ID'), findsNothing);
       await tester.tap(conv);
-      await tester.enterText(conv, 'c1');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('access-request-picker')), findsOneWidget);
+      expect(tester.testTextInput.isVisible, isFalse);
+      expect(find.text('c1'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('access-request-pick-c1')));
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(conv).controller!.text, 'Ward round');
       await tester.tap(reason);
       await tester.pumpAndSettle();
       expect(tester.testTextInput.isVisible, isTrue);
@@ -302,6 +335,34 @@ void main() {
       expect(find.byKey(const ValueKey('access-request-sheet')), findsNothing);
       expect(find.text(Strings.accessRequestCreated), findsOneWidget);
       expect(find.byKey(const ValueKey('access-request-new')), findsOneWidget);
+    });
+
+    testWidgets('create sheet: a refused request shows its error in the sheet; empty picker says so',
+        (tester) async {
+      await _open(tester, const AccessRequestsScreen());
+      await tester.tap(find.byKey(const ValueKey('access-request-new')));
+      await tester.pumpAndSettle();
+      final conv = find.descendant(
+          of: find.byKey(const ValueKey('access-request-conversation')), matching: find.byType(TextField));
+      final reason = find.descendant(
+          of: find.byKey(const ValueKey('access-request-reason')), matching: find.byType(TextField));
+      await tester.tap(conv);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('access-request-pick-c1')));
+      await tester.pumpAndSettle();
+      await tester.enterText(reason, 'Audit');
+      _repo.fail = true;
+      await tester.tap(find.byKey(const ValueKey('access-request-submit')));
+      await tester.pumpAndSettle();
+      // Still open, with the reason inside the sheet rather than a snackbar
+      // hidden under it.
+      expect(find.byKey(const ValueKey('access-request-sheet')), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(
+          find.descendant(
+              of: find.byKey(const ValueKey('access-request-submit-error')),
+              matching: find.byType(Text)),
+          findsOneWidget);
     });
   });
 
@@ -333,6 +394,60 @@ void main() {
         of: find.byKey(const ValueKey('report-status-a')),
         matching: find.byType(Text),
       )).data, Strings.orgReportStatusReviewing);
+    });
+
+    testWidgets('a message report asks for access to its conversation; a user report cannot',
+        (tester) async {
+      _repo.reportRows = [
+        _report('a', 'open', conversation: 'c9'),
+        _report('b', 'open', subject: 'user'),
+        _report('c', 'open'),
+      ];
+      await _open(tester, const OrgReportsScreen());
+      expect(find.byKey(const ValueKey('report-request-access-a')), findsOneWidget);
+      expect(find.byKey(const ValueKey('report-request-access-b')), findsNothing);
+      expect(find.byKey(const ValueKey('report-request-access-c')), findsNothing,
+          reason: 'no conversation known for this report');
+
+      await tester.tap(find.byKey(const ValueKey('report-request-access-a')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('access-request-sheet')), findsOneWidget);
+      expect(find.text(Strings.orgReportChangeStatus), findsNothing,
+          reason: 'the button does not also open the status sheet');
+      // Not one of my chats: words, never the id; nothing to pick.
+      final conv = find.descendant(
+          of: find.byKey(const ValueKey('access-request-conversation')), matching: find.byType(TextField));
+      expect(tester.widget<TextField>(conv).controller!.text, Strings.accessRequestReportedConversation);
+      expect(find.text('c9'), findsNothing);
+      expect(find.byKey(const ValueKey('access-request-pick')), findsNothing);
+
+      await tester.enterText(
+          find.descendant(
+              of: find.byKey(const ValueKey('access-request-reason')), matching: find.byType(TextField)),
+          'Reported message review');
+      await tester.tap(find.byKey(const ValueKey('access-request-submit')));
+      await tester.pumpAndSettle();
+      expect(_repo.created, {'conversation_id': 'c9', 'reason': 'Reported message review'});
+      expect(find.byKey(const ValueKey('access-request-sheet')), findsNothing);
+      expect(find.text(Strings.accessRequestCreated), findsOneWidget);
+    });
+
+    testWidgets('the status pill is a labelled 44pt menu button that opens the status sheet', (tester) async {
+      final handle = tester.ensureSemantics();
+      _repo.reportRows = [_report('a', 'open')];
+      await _open(tester, const OrgReportsScreen());
+      final control = find.byKey(const ValueKey('report-status-change-a'));
+      expect(tester.getSize(control).height, greaterThanOrEqualTo(44));
+      expect(tester.getSize(control).width, greaterThanOrEqualTo(44));
+      expect(find.descendant(of: control, matching: find.byIcon(Icons.expand_more)), findsOneWidget);
+      expect(
+        find.semantics.byLabel('${Strings.orgReportChangeStatus}, ${Strings.orgReportStatusOpen}'),
+        findsOneWidget,
+      );
+      await tester.tap(control);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('report-opt-status-reviewing')), findsOneWidget);
+      handle.dispose();
     });
 
     testWidgets('a refused status change rolls back with a toast', (tester) async {

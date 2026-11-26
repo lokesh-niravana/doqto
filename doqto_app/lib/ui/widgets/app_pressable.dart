@@ -11,6 +11,8 @@ import '../../core/tokens/motion.dart';
 /// - `haptic: true` → HapticFeedback.lightImpact on tap-down (primary actions).
 /// - `minTarget: true` → enforces a 44x44 minimum tap target.
 /// - Respects reduced motion.
+/// - VoiceOver hears a button (dimmed when disabled). Text inside is read
+///   as its name; an icon-only child needs `semanticLabel`.
 class AppPressable extends StatefulWidget {
   final Widget child;
   final VoidCallback? onTap;
@@ -18,6 +20,14 @@ class AppPressable extends StatefulWidget {
   final bool enabled;
   final bool haptic;
   final bool minTarget;
+
+  /// What a screen reader calls this control. Required in practice when the
+  /// child is only an icon or an image; replaces any text inside.
+  final String? semanticLabel;
+
+  /// Set for a toggle or a choice (tab, segment, option) so its state is
+  /// announced, not only drawn.
+  final bool? selected;
 
   const AppPressable({
     super.key,
@@ -27,6 +37,8 @@ class AppPressable extends StatefulWidget {
     this.enabled = true,
     this.haptic = false,
     this.minTarget = false,
+    this.semanticLabel,
+    this.selected,
   });
 
   @override
@@ -71,10 +83,34 @@ class _AppPressableState extends State<AppPressable> {
       );
     }
 
+    final hasHandler = widget.onTap != null || widget.onLongPress != null;
+    // A wrapper with no handler at all is decoration, not a control.
+    if (!hasHandler && widget.enabled && widget.semanticLabel == null) {
+      return child;
+    }
+
+    return Semantics(
+      container: true,
+      button: true,
+      enabled: _interactive,
+      selected: widget.selected,
+      label: widget.semanticLabel,
+      excludeSemantics: widget.semanticLabel != null,
+      onTap: _interactive ? widget.onTap : null,
+      onLongPress: _interactive ? widget.onLongPress : null,
+      child: _gestures(child),
+    );
+  }
+
+  Widget _gestures(Widget child) {
     if (!_interactive) return child;
 
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
+      // The Semantics wrapper in build() already declares the tap. A second
+      // declaration here would conflict with it and split the control into
+      // two VoiceOver nodes: a nameless button, then its text.
+      excludeFromSemantics: true,
       onTapDown: (_) {
         if (widget.haptic) HapticFeedback.lightImpact();
         _setPressed(true);

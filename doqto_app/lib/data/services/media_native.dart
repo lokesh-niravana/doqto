@@ -19,6 +19,11 @@ class VideoPoster {
   });
 }
 
+/// How a save into the system photo library ended. [denied] is the user's
+/// own setting (photo access refused or restricted), which only Settings can
+/// change; [failed] is everything else.
+enum SaveToPhotosResult { saved, failed, denied }
+
 /// The phone's own media tools, behind one MethodChannel (`doqto/media`) in
 /// AppDelegate.swift / MainActivity.kt. No plugin: AVFoundation, Photos,
 /// VisionKit and Network are system frameworks, so nothing here can bring
@@ -28,13 +33,16 @@ abstract class MediaNative {
   /// MediaMetadataRetriever), scaled to at most [maxSide] px.
   Future<VideoPoster?> videoPoster(String path, {int maxSide = 720});
 
-  /// Save a photo or video file into the system photo library. False when
-  /// permission was refused.
-  Future<bool> saveToPhotos(String path);
+  /// Save a photo or video file into the system photo library.
+  Future<SaveToPhotosResult> saveToPhotos(String path);
 
   /// iOS: VisionKit document camera → PDF written to [outputPath]. False when
   /// the user cancelled; null when the device has no scanner (Android).
   Future<bool?> scanDocument(String outputPath);
+
+  /// True when camera access has been refused or restricted in Settings.
+  /// Reads the status only; never shows the permission prompt.
+  Future<bool> cameraAccessDenied();
 
   Future<NetworkType> networkType();
 
@@ -83,13 +91,35 @@ class ChannelMediaNative implements MediaNative {
     );
   }
 
+  /// The native side's error code for refused photo-library access (the
+  /// same code image_picker uses).
+  static const photoAccessDeniedCode = 'photo_access_denied';
+
+  /// Not through [_invoke]: that swallows PlatformException, and the refusal
+  /// arrives as one. iOS answers true / false / a `photo_access_denied`
+  /// error; Android (and an older iOS build) answers only true / false.
   @override
-  Future<bool> saveToPhotos(String path) async =>
-      await _invoke<bool>('saveToPhotos', {'path': path}) ?? false;
+  Future<SaveToPhotosResult> saveToPhotos(String path) async {
+    if (kIsWeb) return SaveToPhotosResult.failed;
+    try {
+      final ok = await _channel.invokeMethod<Object?>('saveToPhotos', {'path': path});
+      return ok == true ? SaveToPhotosResult.saved : SaveToPhotosResult.failed;
+    } on MissingPluginException {
+      return SaveToPhotosResult.failed;
+    } on PlatformException catch (e) {
+      return e.code == photoAccessDeniedCode
+          ? SaveToPhotosResult.denied
+          : SaveToPhotosResult.failed;
+    }
+  }
 
   @override
   Future<bool?> scanDocument(String outputPath) =>
       _invoke<bool>('scanDocument', {'path': outputPath});
+
+  @override
+  Future<bool> cameraAccessDenied() async =>
+      await _invoke<bool>('cameraAccessDenied') ?? false;
 
   @override
   Future<NetworkType> networkType() async {

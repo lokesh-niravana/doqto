@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,17 +8,21 @@ import 'package:doqto_app/core/constants/app_constants.dart';
 import 'package:doqto_app/core/di/providers.dart';
 import 'package:doqto_app/core/enums/app_enums.dart';
 import 'package:doqto_app/data/api/api_client.dart';
+import 'package:doqto_app/data/api/websocket_client.dart';
 import 'package:doqto_app/data/models/conversation.dart';
 import 'package:doqto_app/data/models/message.dart';
 import 'package:doqto_app/data/models/user.dart';
 import 'package:doqto_app/data/repositories/chat_repository.dart';
 import 'package:doqto_app/data/services/app_badge.dart';
 import 'package:doqto_app/data/services/chat_cache.dart';
+import 'package:doqto_app/data/services/chat_document_store.dart';
+import 'package:doqto_app/data/services/chat_media_cache.dart';
 import 'package:doqto_app/data/services/outbox.dart';
 import 'package:doqto_app/state/auth_state.dart';
 import 'package:doqto_app/state/chat_state.dart';
 import 'package:doqto_app/state/realtime_state.dart';
 
+import 'support/fake_media_backend.dart';
 import 'support/fake_socket.dart';
 
 /// Batch 4 state: optimistic star with rollback and in-flight coalescing,
@@ -56,7 +61,29 @@ class _Repo extends ChatRepository {
   final sent = <Map<String, dynamic>>[];
   final beforeDates = <DateTime>[];
   bool failStar = false;
+
+  /// Sends fail as if offline: the entry stays in the outbox.
+  bool failSend = false;
+  final hidden = <List<String>>[];
+  final deleted = <String>[];
+
+  @override
+  Future<void> hideMessages(List<String> messageIds) async => hidden.add(messageIds);
+
+  @override
+  Future<Message> deleteMessage(String messageId) async {
+    deleted.add(messageId);
+    return Message.fromJson({
+      ..._json(messageId, 99),
+      'sender_id': 'me',
+      'content': null,
+      'deleted_at': '2026-11-08T10:01:00.000Z',
+    });
+  }
   bool failPin = false;
+
+  /// Older-page and jump-to-date fetches fail as if offline.
+  bool failOlder = false;
   Completer<void>? gate;
   int pageSize = 50;
 
@@ -67,6 +94,9 @@ class _Repo extends ChatRepository {
   Future<List<Message>> listMessages(String conversationId,
       {DateTime? before, int? afterSeq, DateTime? changedSince, DateTime? beforeDate}) async {
     if (changedSince != null || afterSeq != null) return const [];
+    if (failOlder && (before != null || beforeDate != null)) {
+      throw ApiException('connection error');
+    }
     Iterable<Message> src = history;
     if (before != null) src = src.where((m) => m.createdAt.isBefore(before));
     if (beforeDate != null) {
@@ -82,7 +112,8 @@ class _Repo extends ChatRepository {
     starCalls.add((messageId, starred));
     if (gate != null) await gate!.future;
     if (failStar) throw ApiException('rate_limited', status: 429);
-    final m = history.firstWhere((x) => x.id == messageId);
+    final m = history.where((x) => x.id == messageId).firstOrNull ??
+        Message.fromJson(_json(messageId, 0));
     return m.copyWith(starred: starred);
   }
 
@@ -104,6 +135,7 @@ class _Repo extends ChatRepository {
   Future<Message> sendText(String conversationId, String content, {String? clientId, String? replyToId}) async {
     sent.add({'content': content, 'client_id': clientId, 'reply_to_id': replyToId});
     if (gate != null) await gate!.future;
+    if (failSend) throw ApiException('connection error');
     return Message.fromJson({
       ..._json('srv-$clientId', 99),
       'sender_id': 'me',
@@ -176,6 +208,12 @@ void main() {
       websocketClientProvider.overrideWithValue(socket),
       chatCacheProvider.overrideWithValue(_Cache()),
       outboxProvider.overrideWithValue(_Outbox()),
+      // hide() evicts the hidden rows' media and documents: keep both off
+      // the real cache manager and path_provider.
+      chatMediaCacheProvider.overrideWithValue(ChatMediaCache(FakeMediaBackend())),
+      chatDocumentStoreProvider.overrideWithValue(
+        ChatDocumentStore(root: () async => Directory.systemTemp.createTemp('docs_')),
+      ),
       appBadgeProvider.overrideWithValue(_NoBadge()),
       authProvider.overrideWith(_Auth.new),
       realtimeRefreshDebounceProvider.overrideWithValue(Duration.zero),
@@ -244,6 +282,127 @@ void main() {
       await settle();
       expect(byId('m1').content, 'edited');
       expect(byId('m1').starred, isTrue);
+    });
+  });
+
+  group('star: a message the thread has not loaded (gallery / viewer)', () {
+    setUp(() => repo.history = [Message.fromJson(_json('m2', 2))]);
+
+    test('goes to the server instead of returning as if it had worked', () async {
+      await load();
+      final n = c.read(messagesProvider('c1').notifier);
+      expect(n.messageById('old'), isNull);
+      await n.star('old', true);
+      expect(repo.starCalls, [('old', true)]);
+      await n.star('old', false);
+      expect(repo.starCalls.last, ('old', false));
+    });
+
+    test('a server failure throws, so the caller cannot toast "Starred"', () async {
+      await load();
+      repo.failStar = true;
+      await expectLater(
+        c.read(messagesProvider('c1').notifier).star('old', true),
+        throwsA(isA<ApiException>()),
+      );
+    });
+
+    test('a loaded message that cannot be starred throws message_not_starrable', () async {
+      repo.history = [
+        Message.fromJson({..._json('gone', 3), 'deleted_at': '2026-11-08T10:01:00.000Z'}),
+      ];
+      await load();
+      await expectLater(
+        c.read(messagesProvider('c1').notifier).star('gone', true),
+        throwsA(isA<ApiException>().having((e) => e.detail, 'detail', 'message_not_starrable')),
+      );
+      expect(repo.starCalls, isEmpty);
+    });
+  });
+
+  group('deleting an unsent message', () {
+    List<OutboxEntry> queued() => c.read(outboxProvider).pending();
+
+    /// One message that failed to send: a failed bubble, still in the outbox.
+    Future<String> failedSend() async {
+      repo.history = [Message.fromJson(_json('m1', 1))];
+      await load();
+      repo.failSend = true;
+      await c.read(messagesProvider('c1').notifier).sendText('do not send');
+      repo.failSend = false;
+      final row = c.read(messagesProvider('c1')).value!.first;
+      expect(row.status, MessageStatus.failed);
+      expect(row.id, row.clientId, reason: 'an unsent row is keyed by its client id');
+      expect(queued().single.clientId, row.clientId);
+      repo.sent.clear();
+      return row.id;
+    }
+
+    Future<void> drain() async {
+      c.read(outboxDrainerProvider); // drains once when first read
+      await settle();
+      socket.emitState(WsConnState.connected); // and on every reconnect
+      await settle();
+    }
+
+    test('hide (delete for me) discards the outbox entry: drain sends nothing', () async {
+      final id = await failedSend();
+      await c.read(messagesProvider('c1').notifier).hide([id]);
+      expect(queued(), isEmpty);
+      expect(repo.hidden, isEmpty, reason: 'the server knows nothing of a client id');
+      expect(c.read(messagesProvider('c1')).value!.map((m) => m.id), ['m1']);
+      await drain();
+      expect(repo.sent, isEmpty);
+    });
+
+    test('hide of a mix: the unsent one is discarded, the sent one hidden on the server', () async {
+      final id = await failedSend();
+      await c.read(messagesProvider('c1').notifier).hide([id, 'm1']);
+      expect(queued(), isEmpty);
+      expect(repo.hidden, [
+        ['m1'],
+      ]);
+      expect(c.read(messagesProvider('c1')).value, isEmpty);
+      await drain();
+      expect(repo.sent, isEmpty);
+    });
+
+    test('delete for everyone discards the outbox entry: drain sends nothing', () async {
+      final id = await failedSend();
+      await c.read(messagesProvider('c1').notifier).delete(id);
+      expect(queued(), isEmpty);
+      expect(repo.deleted, isEmpty);
+      expect(c.read(messagesProvider('c1')).value!.map((m) => m.id), ['m1']);
+      await drain();
+      expect(repo.sent, isEmpty);
+    });
+
+    test('without the discard the drain does send it (the test can fail)', () async {
+      await failedSend();
+      await drain();
+      expect(repo.sent.single['content'], 'do not send');
+    });
+
+    test('discarded while the request is on the wire: withdrawn once it lands', () async {
+      repo.history = [Message.fromJson(_json('m1', 1))];
+      await load();
+      final n = c.read(messagesProvider('c1').notifier);
+      repo.gate = Completer<void>();
+      final f = n.sendText('too late');
+      await settle();
+      final pending = c.read(messagesProvider('c1')).value!.first;
+      expect(pending.status, MessageStatus.sending);
+      await n.hide([pending.id]);
+      expect(queued(), isEmpty);
+      repo.gate!.complete();
+      repo.gate = null;
+      await f;
+      expect(repo.deleted, ['srv-${pending.clientId}']);
+      expect(
+        c.read(messagesProvider('c1')).value!.where((m) => m.content == 'too late'),
+        isEmpty,
+        reason: 'never left readable after the user deleted it',
+      );
     });
   });
 
@@ -363,6 +522,83 @@ void main() {
       expect(repo.beforeDates.length, 1);
       // Before the first message → nothing.
       expect(await n.jumpToDate(DateTime.utc(2026, 10, 1)), isNull);
+    });
+
+    // A fetch that fails is not "history ran out": each helper must say so,
+    // or the screen tells the user a message is gone / there are no matches
+    // / nothing happened that day.
+    test('a failed older page is kept as an error, not as the end of history', () async {
+      await load();
+      final n = c.read(messagesProvider('c1').notifier);
+      final held = c.read(messagesProvider('c1')).value!.length;
+      repo.failOlder = true;
+      await n.loadOlder();
+      expect(n.olderLoadError, isA<ApiException>());
+      expect(n.hasMore, isTrue);
+      expect(n.loadingOlder, isFalse);
+      expect(c.read(messagesProvider('c1')).value!.length, held);
+
+      // Retry once the connection is back: the error clears, the page lands.
+      repo.failOlder = false;
+      await n.loadOlder();
+      expect(n.olderLoadError, isNull);
+      expect(c.read(messagesProvider('c1')).value!.length, greaterThan(held));
+    });
+
+    test('Retry notifies at once: loadingOlder set and the error cleared before the page lands', () async {
+      await load();
+      final n = c.read(messagesProvider('c1').notifier);
+      repo.failOlder = true;
+      await n.loadOlder();
+      expect(n.olderLoadError, isNotNull);
+
+      repo.failOlder = false;
+      // What each listener saw when it was notified: (loading, has error).
+      final seen = <(bool, bool)>[];
+      final sub = c.listen(
+        messagesProvider('c1'),
+        (_, _) => seen.add((n.loadingOlder, n.olderLoadError != null)),
+      );
+      final pending = n.loadOlder();
+      // Synchronously, before the response: spinner row, no Retry row.
+      expect(seen, [(true, false)]);
+      await pending;
+      sub.close();
+      expect(seen.last, (false, false));
+    });
+
+    test('ensureLoaded throws when a page fails instead of answering "not found"', () async {
+      await load();
+      final n = c.read(messagesProvider('c1').notifier);
+      repo.failOlder = true;
+      await expectLater(n.ensureLoaded('m5'), throwsA(isA<ApiException>()));
+      expect(n.hasMore, isTrue);
+      repo.failOlder = false;
+      expect(await n.ensureLoaded('m5'), isTrue);
+    });
+
+    test('loadOlderWhile throws when a page fails instead of answering "exhausted"', () async {
+      await load();
+      final n = c.read(messagesProvider('c1').notifier);
+      repo.failOlder = true;
+      await expectLater(
+        n.loadOlderWhile((loaded) => !loaded.any((m) => m.id == 'm1')),
+        throwsA(isA<ApiException>()),
+      );
+      expect(n.loadingOlder, isFalse);
+    });
+
+    test('jumpToDate throws when the fetch fails instead of answering "nothing that day"', () async {
+      await load();
+      final n = c.read(messagesProvider('c1').notifier);
+      repo.failOlder = true;
+      await expectLater(
+        n.jumpToDate(DateTime.utc(2026, 11, 2)),
+        throwsA(isA<ApiException>()),
+      );
+      expect(n.loadingOlder, isFalse, reason: 'busy flag reset in finally');
+      repo.failOlder = false;
+      expect(await n.jumpToDate(DateTime.utc(2026, 11, 2)), 'm47');
     });
   });
 }

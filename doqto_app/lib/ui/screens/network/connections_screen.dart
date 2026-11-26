@@ -19,6 +19,9 @@ import '../../widgets/fade_slide_in.dart';
 import '../../widgets/person_card_row.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/search_bar.dart';
+import '../home/main_shell.dart';
+import '../../../core/utils/async_retry.dart';
+import '../../widgets/refresh_feedback.dart';
 
 /// The full connections list with a client-side name filter (v1). Tap → profile;
 /// long-press → an action sheet (Message / View profile / Remove / Block).
@@ -64,7 +67,7 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
             onChanged: (q) => setState(() => _query = q),
           ),
           Expanded(
-            child: async.when(
+            child: async.whenRetrying(
               skipLoadingOnReload: true,
               skipLoadingOnRefresh: true,
               loading: () => const SkeletonList(),
@@ -82,13 +85,16 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
                   );
                 }
                 return RefreshIndicator(
-                  onRefresh: () =>
-                      ref.read(connectionsProvider.notifier).refresh(),
+                  onRefresh: () => refreshWithFeedback(
+                    context,
+                    () => ref.read(connectionsProvider.notifier).refresh(rethrowOnError: true),
+                  ),
                   child: ListView.builder(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: EdgeInsets.only(
                       top: AppSpacing.sm,
                       bottom: MediaQuery.paddingOf(context).bottom +
+                          kMicButtonRise +
                           AppSpacing.xl,
                     ),
                     itemCount: list.length,
@@ -102,11 +108,42 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
                               ref.watch(presenceOfProvider(p.id))?.status),
                           onTap: () => context.push(AppRoutes.person(p.id)),
                           onLongPress: () => _openSheet(context, p),
-                          trailing: IconButton(
-                            tooltip: Strings.netMessage,
-                            icon: const Icon(Icons.chat_bubble_outline),
-                            color: AppColors.medBlue,
-                            onPressed: () => _startChat(p),
+                          // The long-press sheet (Remove connection, Block)
+                          // is not discoverable on its own: the "more"
+                          // button opens the same sheet.
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // A spinner in the button's own 48pt slot
+                              // while the thread is created.
+                              if (_startingChatId == p.id)
+                                SizedBox(
+                                  key: ValueKey('connection-message-busy-${p.id}'),
+                                  width: 48,
+                                  height: 48,
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(14),
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      semanticsLabel: Strings.loading,
+                                    ),
+                                  ),
+                                )
+                              else
+                                IconButton(
+                                  tooltip: Strings.netMessage,
+                                  icon: const Icon(Icons.chat_bubble_outline),
+                                  color: AppColors.medBlue,
+                                  onPressed: () => _startChat(p),
+                                ),
+                              IconButton(
+                                key: ValueKey('connection-more-${p.id}'),
+                                tooltip: Strings.connectionMore,
+                                icon: const Icon(Icons.more_horiz),
+                                color: AppColors.textSecondary,
+                                onPressed: () => _openSheet(context, p),
+                              ),
+                            ],
                           ),
                         ),
                       );
@@ -121,7 +158,14 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
     );
   }
 
+  // True while a thread is being created/opened: a second tap would fire
+  // the request twice and push the chat twice.
+  // Holds that person's id, so their row can show the progress.
+  String? _startingChatId;
+
   Future<void> _startChat(PersonCard p) async {
+    if (_startingChatId != null) return;
+    setState(() => _startingChatId = p.id);
     try {
       final conv = await ref.read(chatRepositoryProvider).createConversation(
             type: ConversationType.direct,
@@ -136,14 +180,27 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
         content: Text(ErrorMessages.forApi(e)),
         backgroundColor: AppColors.red,
       ));
+    } finally {
+      if (mounted) setState(() => _startingChatId = null);
     }
   }
 
   void _openSheet(BuildContext context, PersonCard p) {
     showModalBottomSheet<void>(
       context: context,
+      // Over the tab bar and the raised mic button, not under them.
+      useRootNavigator: true,
+      // Sized to its content and scrollable, so nothing clips at large
+      // text or on a short screen.
+      isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
-        child: Column(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(ctx).height * 0.9,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
@@ -180,6 +237,8 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
               },
             ),
           ],
+        ),
+          ),
         ),
       ),
     );
@@ -276,7 +335,12 @@ class _EmptyPane extends StatelessWidget {
           children: [
             Icon(Icons.group_outlined, size: 48, color: AppColors.gray400),
             const SizedBox(height: AppSpacing.md),
-            Text(text, style: AppText.body, textAlign: TextAlign.center),
+            // Announced when it replaces the loading state.
+            Semantics(
+              container: true,
+              liveRegion: true,
+              child: Text(text, style: AppText.body, textAlign: TextAlign.center),
+            ),
           ],
         ),
       ),
@@ -299,7 +363,12 @@ class _ErrorPane extends StatelessWidget {
           children: [
             Icon(Icons.wifi_off_rounded, size: 40, color: AppColors.textMuted),
             const SizedBox(height: AppSpacing.md),
-            Text(message, style: AppText.caption, textAlign: TextAlign.center),
+            // Announced when it replaces the loading state.
+            Semantics(
+              container: true,
+              liveRegion: true,
+              child: Text(message, style: AppText.caption, textAlign: TextAlign.center),
+            ),
             const SizedBox(height: AppSpacing.lg),
             AppButton(
                 label: Strings.retry,

@@ -7,9 +7,11 @@ import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
+import '../../../state/auth_state.dart';
 import '../../widgets/app_pressable.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/section_card.dart';
+import '../../widgets/confirm_sign_out.dart';
 
 class OrgSelectionScreen extends ConsumerWidget {
   const OrgSelectionScreen({super.key});
@@ -18,8 +20,12 @@ class OrgSelectionScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       appBar: AppBar(title: const Text(Strings.orgSelectTitle)),
-      body: Padding(
-        padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
+      // Scrolls when a large text size leaves too little room.
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(AppSpacing.screenHorizontal).copyWith(
+          bottom: AppSpacing.screenHorizontal +
+              MediaQuery.paddingOf(context).bottom,
+        ),
         child: Column(
           children: [
             const SizedBox(height: AppSpacing.lg),
@@ -41,6 +47,18 @@ class OrgSelectionScreen extends ConsumerWidget {
                 subtitle: Strings.orgJoinSub,
                 onTap: () => context.push(AppRoutes.joinOrg),
               ),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            // Never a dead end: someone who wants neither can leave.
+            TextButton(
+              key: const ValueKey('org-selection-sign-out'),
+              onPressed: () async {
+                final auth = ref.read(authProvider.notifier);
+                if (!await confirmSignOut(context)) return;
+                await auth.signOut();
+              },
+              style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
+              child: const Text(Strings.regSignOut),
             ),
           ],
         ),

@@ -128,5 +128,12 @@ void main() {
         'Hi @Dr Kim\nx',
       );
     });
+
+    test('plainText never prints a raw user id for a mention', () {
+      const uid = '7b1e2d3c-4f5a-4b6c-8d7e-9f0a1b2c3d4e';
+      final out = plainText('cc @[$uid]');
+      expect(out, 'cc @someone');
+      expect(out, isNot(contains(uid)));
+    });
   });
 }

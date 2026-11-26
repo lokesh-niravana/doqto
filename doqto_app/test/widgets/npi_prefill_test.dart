@@ -387,8 +387,9 @@ void main() {
     await enterName(tester, 'V', 'N');
 
     expect(lookup.calls, isEmpty);
-    expect(find.text('Your first name must be at least 2 characters.'),
-        findsOneWidget);
+    // One letter is a valid name: no error, just no lookup.
+    expect(find.textContaining('at least 2 characters'), findsNothing);
+    expect(find.text('Please enter your first name.'), findsNothing);
   });
 
   testWidgets('both name fields dismiss the keyboard on a tap outside',

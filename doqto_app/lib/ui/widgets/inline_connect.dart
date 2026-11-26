@@ -72,21 +72,22 @@ class InlineConnectState extends ConsumerState<InlineConnect> {
   Widget build(BuildContext context) {
     if (widget.compact) {
       final pending = _pending;
-      return SizedBox(
-        height: 34,
-        child: TextButton(
-          onPressed: pending ? null : _connect,
-          style: TextButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            minimumSize: const Size(0, 34),
-            backgroundColor: pending ? AppColors.gray100 : AppColors.medBlue,
-            foregroundColor: AppColors.white,
-            disabledForegroundColor: AppColors.gray600,
-            shape: const StadiumBorder(),
-            textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-          ),
-          child: Text(pending ? Strings.netPending : Strings.netConnect),
+      // No fixed height, so the label grows with the user's text size
+      // instead of clipping. The pill still draws 34pt tall; the padded tap
+      // target makes the hit area 48pt around it.
+      return TextButton(
+        onPressed: pending ? null : _connect,
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          minimumSize: const Size(0, 34),
+          tapTargetSize: MaterialTapTargetSize.padded,
+          backgroundColor: pending ? AppColors.gray100 : AppColors.medBlue,
+          foregroundColor: AppColors.white,
+          disabledForegroundColor: AppColors.gray600,
+          shape: const StadiumBorder(),
+          textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
         ),
+        child: Text(pending ? Strings.netPending : Strings.netConnect),
       );
     }
     if (_pending) {

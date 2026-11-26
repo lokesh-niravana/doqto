@@ -11,6 +11,8 @@ import '../../../core/constants/strings.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/utils/image_metadata.dart';
+import '../../widgets/scrim_spinner.dart';
+import '../../widgets/silent_hint.dart';
 
 /// Markup step before a photo leaves the phone: draw, highlight, add text,
 /// and — the one that matters in a clinic — block out or pixelate a region
@@ -99,6 +101,12 @@ class ImageMarkupScreen extends StatefulWidget {
   @override
   State<ImageMarkupScreen> createState() => _ImageMarkupScreenState();
 }
+
+const _colorLabelPrefix = 'Colour:';
+const _kDiscardMessage = 'Discard your edits to this photo?';
+const _kKeepEditing = 'Keep editing';
+const _kDiscard = 'Discard';
+const _kCanvasLabel = 'Photo being edited';
 
 class _ImageMarkupScreenState extends State<ImageMarkupScreen> {
   static const palette = <(String, Color)>[
@@ -342,12 +350,38 @@ class _ImageMarkupScreenState extends State<ImageMarkupScreen> {
     }
   }
 
+  /// Cancel throws the edits away, so it asks first when there are any.
+  Future<void> _cancel() async {
+    if (_items.isNotEmpty) {
+      final discard = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          content: const Text(_kDiscardMessage),
+          actions: [
+            TextButton(
+              key: const ValueKey('markup-keep-editing'),
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text(_kKeepEditing),
+            ),
+            TextButton(
+              key: const ValueKey('markup-discard'),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              style: TextButton.styleFrom(foregroundColor: AppColors.red),
+              child: const Text(_kDiscard),
+            ),
+          ],
+        ),
+      );
+      if (discard != true || !mounted) return;
+    }
+    Navigator.of(context).pop(null);
+  }
+
   // --------------------------------------------------------------- build --
 
   static final _compact = TextButton.styleFrom(
     padding: const EdgeInsets.symmetric(horizontal: 12),
-    minimumSize: const Size(48, 40),
-    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    minimumSize: const Size(48, 44),
   );
 
   @override
@@ -366,10 +400,20 @@ class _ImageMarkupScreenState extends State<ImageMarkupScreen> {
         leading: TextButton(
           key: const ValueKey('markup-cancel'),
           style: _compact,
-          onPressed: _busy ? null : () => Navigator.of(context).pop(null),
-          child: Text(Strings.markupCancel, style: body.copyWith(color: AppColors.white)),
+          onPressed: _busy ? null : _cancel,
+          // One line always: the slot widens with the text size (below), and
+          // past its cap the word scales down instead of wrapping or clipping.
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              Strings.markupCancel,
+              maxLines: 1,
+              softWrap: false,
+              style: body.copyWith(color: AppColors.white),
+            ),
+          ),
         ),
-        leadingWidth: 80,
+        leadingWidth: (80 * MediaQuery.textScalerOf(context).scale(16) / 16).clamp(80.0, 136.0),
         titleSpacing: 0,
         centerTitle: false,
         title: FittedBox(
@@ -407,7 +451,9 @@ class _ImageMarkupScreenState extends State<ImageMarkupScreen> {
           children: [
             Expanded(
               child: image == null
-                  ? const Center(child: CircularProgressIndicator(color: AppColors.white))
+                  ? const Center(
+                      child: CircularProgressIndicator(color: AppColors.white, semanticsLabel: Strings.loading),
+                    )
                   : LayoutBuilder(
                       builder: (context, box) {
                         final fit = _fitRect(box.biggest, image);
@@ -421,8 +467,14 @@ class _ImageMarkupScreenState extends State<ImageMarkupScreen> {
                           children: [
                             Positioned.fromRect(
                               rect: fit,
-                              child: GestureDetector(
+                              // The canvas is a picture to VoiceOver, not a
+                              // nameless tappable.
+                              child: Semantics(
+                                image: true,
+                                label: _kCanvasLabel,
+                                child: GestureDetector(
                                 key: const ValueKey('markup-canvas'),
+                                excludeFromSemantics: true,
                                 behavior: HitTestBehavior.opaque,
                                 onTapUp: (d) => _tap(toImage(d.localPosition + fit.topLeft)),
                                 onPanStart: ready
@@ -443,11 +495,14 @@ class _ImageMarkupScreenState extends State<ImageMarkupScreen> {
                                   ),
                                 ),
                               ),
+                              ),
                             ),
                             if (_busy)
                               const ColoredBox(
                                 color: Color(0x66000000),
-                                child: Center(child: CircularProgressIndicator(color: AppColors.white)),
+                                // On a dark disc: white on the 40% scrim is
+                                // under 3:1 over a white photo.
+                                child: Center(child: ScrimSpinner()),
                               ),
                           ],
                         );
@@ -456,26 +511,38 @@ class _ImageMarkupScreenState extends State<ImageMarkupScreen> {
             ),
             if (colorTools)
               Padding(
-                padding: const EdgeInsets.only(top: AppSpacing.sm),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                // Seven 44pt cells are 308pt wide, so they fit a 320pt screen;
+                // Wrap takes over if a narrower layout ever appears. The dot
+                // stays 26pt; only its hit area grew.
+                padding: EdgeInsets.zero,
+                child: Wrap(
+                  alignment: WrapAlignment.center,
                   children: [
                     for (final (name, c) in palette)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 5),
+                      Semantics(
+                        button: true,
+                        enabled: ready,
+                        selected: _color == c,
+                        label: '$_colorLabelPrefix $name',
                         child: InkWell(
                           key: ValueKey('markup-color-$name'),
                           customBorder: const CircleBorder(),
                           onTap: ready ? () => setState(() => _color = c) : null,
-                          child: Container(
-                            width: 26,
-                            height: 26,
-                            decoration: BoxDecoration(
-                              color: c,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: _color == c ? AppColors.medTeal : AppColors.gray400,
-                                width: _color == c ? 3 : 1,
+                          child: SizedBox(
+                            width: 44,
+                            height: 44,
+                            child: Center(
+                              child: Container(
+                                width: 26,
+                                height: 26,
+                                decoration: BoxDecoration(
+                                  color: c,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: _color == c ? AppColors.medTeal : AppColors.gray400,
+                                    width: _color == c ? 3 : 1,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
@@ -486,8 +553,9 @@ class _ImageMarkupScreenState extends State<ImageMarkupScreen> {
               ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+              // Five equal slots: at a large text size each label scales down
+              // inside its slot instead of pushing the row past the screen.
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   _toolButton(MarkupTool.pen, Icons.edit_rounded, Strings.markupPen, ready),
                   _toolButton(MarkupTool.highlighter, Icons.border_color_rounded, Strings.markupHighlight, ready),
@@ -524,12 +592,20 @@ class _ImageMarkupScreenState extends State<ImageMarkupScreen> {
   Widget _toolButton(MarkupTool tool, IconData icon, String label, bool enabled) {
     final selected = _tool == tool;
     final text = Theme.of(context).textTheme.bodySmall ?? const TextStyle();
-    return InkWell(
+    // The filled background is the only visual cue for the active tool, so
+    // say it for VoiceOver too.
+    return Expanded(
+      child: Semantics(
+      button: true,
+      selected: selected,
+      child: InkWell(
       key: ValueKey('markup-tool-${tool.name}'),
       borderRadius: BorderRadius.circular(10),
       onTap: enabled ? () => setState(() => _tool = tool) : null,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        // Short labels ("Pen") made the button 42pt wide.
+        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         decoration: BoxDecoration(
           color: selected ? AppColors.medBlue : Colors.transparent,
           borderRadius: BorderRadius.circular(10),
@@ -539,9 +615,19 @@ class _ImageMarkupScreenState extends State<ImageMarkupScreen> {
           children: [
             Icon(icon, color: AppColors.white, size: 22),
             const SizedBox(height: 2),
-            Text(label, style: text.copyWith(color: AppColors.white, fontSize: 11)),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                label,
+                maxLines: 1,
+                softWrap: false,
+                style: text.copyWith(color: AppColors.white, fontSize: 11),
+              ),
+            ),
           ],
         ),
+      ),
+      ),
       ),
     );
   }
@@ -578,21 +664,27 @@ class _TextEntryDialogState extends State<_TextEntryDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+        scrollable: true,
       title: const Text(Strings.markupTextTitle),
       // A plain TextField on purpose: AppTextField's token styles pull Google
       // Fonts, and this editor also runs under a bare MaterialApp in tests.
       // Keyboard rule (CLAUDE.md): it dismisses itself on tap-outside.
-      content: TextField(
-        key: const ValueKey('markup-text-input'),
-        controller: _controller,
-        focusNode: _focus,
-        autofocus: true,
-        maxLength: 120,
-        maxLines: 3,
-        minLines: 1,
-        textCapitalization: TextCapitalization.sentences,
-        onTapOutside: (_) => _focus.unfocus(),
-        decoration: const InputDecoration(hintText: Strings.markupTextHint),
+      content: Semantics(
+        label: Strings.a11yMarkupText,
+        child: TextField(
+          key: const ValueKey('markup-text-input'),
+          controller: _controller,
+          focusNode: _focus,
+          autofocus: true,
+          maxLength: 120,
+          maxLines: 3,
+          minLines: 1,
+          textCapitalization: TextCapitalization.sentences,
+          onTapOutside: (_) => _focus.unfocus(),
+          decoration: const InputDecoration(
+            hint: SilentHint(Strings.markupTextHint),
+          ),
+        ),
       ),
       actions: [
         TextButton(

@@ -3,6 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:permission_handler/permission_handler.dart';
+
+import '../../../core/constants/strings.dart';
+import '../../../core/di/providers.dart';
 import '../../../core/enums/app_enums.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
@@ -15,6 +19,7 @@ import '../../widgets/app_skeleton.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/settings_rows.dart';
+import '../../../core/utils/async_retry.dart';
 
 /// Settings → Notifications (batch 6). Messages and Groups each get a tone,
 /// vibration (Android), preview and priority (Android); then reactions and
@@ -35,12 +40,102 @@ class NotificationsScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: AppColors.appBg,
       appBar: AppBar(title: Text(l.notifTitle)),
-      body: async.when(
-        loading: () => const _Skeleton(),
-        error: (e, _) => _ErrorPane(
-          onRetry: () => ref.invalidate(notificationSettingsProvider),
-        ),
-        data: (s) => _Body(settings: s),
+      body: Column(
+        children: [
+          // Nothing below can take effect while iOS itself has notifications
+          // switched off for the app, so say so and offer the way to fix it.
+          const _PermissionBanner(),
+          Expanded(
+            child: async.whenRetrying(
+              loading: () => const _Skeleton(),
+              error: (e, _) => _ErrorPane(
+                onRetry: () => ref.invalidate(notificationSettingsProvider),
+              ),
+              data: (s) => _Body(settings: s),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+final _pushDeniedProvider = FutureProvider.autoDispose<bool>((ref) async {
+  try {
+    return await ref.watch(pushTokenProviderProvider).permissionDenied();
+  } catch (_) {
+    return false;
+  }
+});
+
+/// Shows [_PermissionOffBanner] while the system has notifications off, and
+/// asks again each time the app comes back to the foreground: the user has
+/// usually just been to Settings to turn them on.
+class _PermissionBanner extends ConsumerStatefulWidget {
+  const _PermissionBanner();
+
+  @override
+  ConsumerState<_PermissionBanner> createState() => _PermissionBannerState();
+}
+
+class _PermissionBannerState extends ConsumerState<_PermissionBanner> {
+  late final AppLifecycleListener _lifecycle = AppLifecycleListener(
+    onResume: () => ref.invalidate(_pushDeniedProvider),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycle; // start listening
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final denied = ref.watch(_pushDeniedProvider).valueOrNull ?? false;
+    return denied ? const _PermissionOffBanner() : const SizedBox.shrink();
+  }
+}
+
+class _PermissionOffBanner extends StatelessWidget {
+  const _PermissionOffBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('notif-permission-off'),
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(
+          AppSpacing.lg, AppSpacing.md, AppSpacing.lg, 0),
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.xs),
+      decoration: BoxDecoration(
+        color: AppColors.amberLight,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Notifications are turned off for Doqto in Settings, so you '
+            "won't be alerted to new messages.",
+            style: AppText.bodyPrimary.copyWith(color: AppColors.amberText),
+          ),
+          TextButton(
+            onPressed: openAppSettings,
+            style: TextButton.styleFrom(
+              padding: EdgeInsets.zero,
+              minimumSize: const Size(0, 44),
+              foregroundColor: AppColors.amberText,
+            ),
+            child: const Text('Open Settings'),
+          ),
+        ],
       ),
     );
   }
@@ -166,8 +261,17 @@ class _Body extends ConsumerWidget {
               ListTile(
                 key: ValueKey('notif-row-${kind}_vibrate'),
                 enabled: false,
-                title: Text(l.notifVibrate, style: AppText.bodyPrimary),
-                subtitle: Text(l.notifVibrateDefault, style: AppText.caption),
+                // Not adjustable on iOS: drawn in the disabled colour (the
+                // explicit text styles would otherwise keep it at full
+                // strength). The section footer says why.
+                title: Text(
+                  l.notifVibrate,
+                  style: AppText.bodyPrimary.copyWith(color: Theme.of(context).disabledColor),
+                ),
+                subtitle: Text(
+                  l.notifVibrateDefault,
+                  style: AppText.caption.copyWith(color: Theme.of(context).disabledColor),
+                ),
               ),
               const Divider(height: 1, indent: AppSpacing.lg),
             ],
@@ -215,7 +319,12 @@ class _Body extends ConsumerWidget {
     final s = settings;
     return ListView(
       key: const ValueKey('notif-list'),
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+      // Explicit padding drops the automatic safe-area inset; add it back so
+      // the last row clears the home indicator.
+      padding: EdgeInsets.only(
+        top: AppSpacing.lg,
+        bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom,
+      ),
       children: [
         FadeSlideIn.staggered(
           0,
@@ -319,6 +428,9 @@ class _Body extends ConsumerWidget {
   }
 }
 
+const _kLoadFailed =
+    "Your notification settings couldn't be loaded. Check your connection and try again.";
+
 class _ErrorPane extends StatelessWidget {
   final VoidCallback onRetry;
   const _ErrorPane({required this.onRetry});
@@ -332,6 +444,19 @@ class _ErrorPane extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.cloud_off_outlined, size: 48, color: AppColors.textMuted),
+            const SizedBox(height: AppSpacing.md),
+            // Says what went wrong; an icon alone is silent to VoiceOver.
+            // Announced when it replaces the loading state.
+            Semantics(
+              container: true,
+              liveRegion: true,
+              child: Text(
+                _kLoadFailed,
+                key: const ValueKey('notifications-load-failed'),
+                style: AppText.caption,
+                textAlign: TextAlign.center,
+              ),
+            ),
             const SizedBox(height: AppSpacing.lg),
             AppButton(
               label: context.l10n.commonRetry,
@@ -350,21 +475,29 @@ class _Skeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.screenHorizontal,
-        vertical: AppSpacing.xl,
+    // The grey blocks are only drawn; a screen reader hears "Loading" once.
+    return Semantics(
+      container: true,
+      label: Strings.loading,
+      liveRegion: true,
+      child: ExcludeSemantics(
+        child: ListView(
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.screenHorizontal,
+            vertical: AppSpacing.xl,
+          ),
+          children: [
+            AppSkeleton.line(width: 120),
+            const SizedBox(height: AppSpacing.sm),
+            AppSkeleton.block(height: 220),
+            const SizedBox(height: AppSpacing.lg),
+            AppSkeleton.line(width: 96),
+            const SizedBox(height: AppSpacing.sm),
+            AppSkeleton.block(height: 220),
+          ],
+        ),
       ),
-      children: [
-        AppSkeleton.line(width: 120),
-        const SizedBox(height: AppSpacing.sm),
-        AppSkeleton.block(height: 220),
-        const SizedBox(height: AppSpacing.lg),
-        AppSkeleton.line(width: 96),
-        const SizedBox(height: AppSpacing.sm),
-        AppSkeleton.block(height: 220),
-      ],
     );
   }
 }

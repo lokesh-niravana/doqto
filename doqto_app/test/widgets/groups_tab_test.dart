@@ -58,6 +58,24 @@ class _FakeMyGroups extends MyGroupsNotifier {
   }
 }
 
+/// The member list loaded; the invitations fetch failed, then works on retry.
+class _InvitesFail extends MyGroupsNotifier {
+  int refreshes = 0;
+  @override
+  Future<MyGroupsData> build() async => MyGroupsData(
+        member: [_member('g1', 'Cardiology Leads')],
+        invitedError: StateError('offline'),
+      );
+  @override
+  Future<void> refresh({bool rethrowOnError = false}) async {
+    refreshes++;
+    state = AsyncData(MyGroupsData(
+      member: [_member('g1', 'Cardiology Leads')],
+      invited: [_invited('g9', 'Stroke Network')],
+    ));
+  }
+}
+
 Widget _app({_FakeMyGroups? fake}) => ProviderScope(
       overrides: [myGroupsProvider.overrideWith(() => fake ?? _FakeMyGroups())],
       child: const MaterialApp(home: GroupsTabScreen()),
@@ -91,7 +109,18 @@ void main() {
     expect(find.byKey(const ValueKey('group-accept-g9')), findsOneWidget);
     expect(find.byKey(const ValueKey('group-decline-g9')), findsOneWidget);
 
+    // Declining asks first; Cancel leaves the invite alone.
     await tester.tap(find.byKey(const ValueKey('group-decline-g9')));
+    await tester.pumpAndSettle();
+    expect(find.text(Strings.groupDeclineConfirm('Stroke Network')), findsOneWidget);
+    await tester.tap(find.text(Strings.cancel));
+    await tester.pumpAndSettle();
+    expect(fake.calls, isEmpty);
+    expect(find.text('Stroke Network'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('group-decline-g9')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('confirm-action')));
     await tester.pumpAndSettle();
     expect(fake.calls, ['decline:g9']);
     expect(find.text('Stroke Network'), findsNothing);
@@ -110,5 +139,25 @@ void main() {
     expect(find.text('Stroke Network'), findsOneWidget);
     expect(find.text(Strings.groupInvited), findsNothing);
     expect(find.byKey(const ValueKey('group-accept-g9')), findsNothing);
+  });
+
+  testWidgets('a failed invitations fetch is said, with a Retry — not shown as none',
+      (tester) async {
+    final fake = _InvitesFail();
+    await tester.pumpWidget(ProviderScope(
+      overrides: [myGroupsProvider.overrideWith(() => fake)],
+      child: const MaterialApp(home: GroupsTabScreen()),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Cardiology Leads'), findsOneWidget);
+    expect(find.text(Strings.groupInvitesLoadFailed), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('group-invites-retry')));
+    await tester.pumpAndSettle();
+    expect(fake.refreshes, 1);
+    expect(find.text(Strings.groupInvitesLoadFailed), findsNothing);
+    expect(find.text('Stroke Network'), findsOneWidget);
+    // The new row's staggered entrance runs on a timer.
+    await tester.pump(const Duration(seconds: 1));
   });
 }

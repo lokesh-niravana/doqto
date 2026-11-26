@@ -15,6 +15,15 @@ abstract class PushTokenProvider {
   /// Emits whenever the platform rotates the token — each emission must be
   /// re-registered with the backend.
   Stream<String> get onTokenRefresh;
+
+  /// True when the person has turned notifications off for Doqto in the
+  /// system settings. Only reads the status; never shows the prompt.
+  Future<bool> permissionDenied();
+
+  /// The token this device already has, without ever asking for permission:
+  /// null when the person has not been asked yet or said no. For sign-out,
+  /// which must unregister a token but has no business showing the prompt.
+  Future<String?> existingToken();
 }
 
 /// No-op provider used until real FCM/APNs wiring lands.
@@ -24,6 +33,12 @@ class StubPushTokenProvider implements PushTokenProvider {
 
   @override
   Stream<String> get onTokenRefresh => const Stream<String>.empty();
+
+  @override
+  Future<bool> permissionDenied() async => false;
+
+  @override
+  Future<String?> existingToken() async => null;
 }
 
 /// Apple hands the APNs device token to the app asynchronously, some time
@@ -69,6 +84,22 @@ class FirebasePushTokenProvider implements PushTokenProvider {
       // No APNs token yet → no FCM token. Null tells the caller to retry.
       final apns = await waitForApnsToken(_fcm.getAPNSToken);
       if (apns == null) return null;
+    }
+    return _fcm.getToken();
+  }
+
+  @override
+  Future<bool> permissionDenied() async {
+    final settings = await _fcm.getNotificationSettings();
+    return settings.authorizationStatus == AuthorizationStatus.denied;
+  }
+
+  @override
+  Future<String?> existingToken() async {
+    final status = (await _fcm.getNotificationSettings()).authorizationStatus;
+    if (status == AuthorizationStatus.notDetermined ||
+        status == AuthorizationStatus.denied) {
+      return null; // never registered, so nothing to unregister
     }
     return _fcm.getToken();
   }

@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import 'auth_broker.dart';
@@ -107,12 +106,12 @@ class FirebaseAuthBroker implements AuthBroker {
       try {
         return _idTokenFor(await _auth.signInWithProvider(apple));
       } on FirebaseAuthException catch (e) {
+        // Dismissing Apple's sheet is a choice, not a failure.
+        if (e.code == _appleCanceled) return null;
         throw _plain(e);
       }
     }
-    final credential = provider == SocialProvider.google
-        ? await _googleCredential()
-        : await _facebookCredential();
+    final credential = await _googleCredential();
     // null means the user dismissed the sheet — a normal outcome, not an error.
     if (credential == null) return null;
     return _idTokenFor(await _auth.signInWithCredential(credential));
@@ -137,20 +136,79 @@ class FirebaseAuthBroker implements AuthBroker {
     }
   }
 
-  Future<AuthCredential?> _facebookCredential() async {
-    final result = await FacebookAuth.instance.login();
-    if (result.status != LoginStatus.success) return null;
-    return FacebookAuthProvider.credential(result.accessToken!.tokenString);
-  }
-
   /// Nothing outside this file may see a FirebaseAuthException.
   AuthBrokerException _plain(FirebaseAuthException e) =>
       AuthBrokerException(e.code, e.message ?? e.code);
 
   Future<String> _idTokenFor(UserCredential result) async {
+    _appleMismatch = false; // a fresh sign-in clears the refusal
     final token = await result.user?.getIdToken();
     if (token == null) throw FirebaseAuthException(code: 'no-id-token');
     return token;
+  }
+
+  /// What the iOS plugin reports for ASAuthorizationError.canceled.
+  static const _appleCanceled = 'canceled';
+  static const _appleProviderId = 'apple.com';
+  bool _appleMismatch = false;
+
+  @override
+  Future<bool> revokeAppleAccess() async {
+    final user = _auth.currentUser;
+    // After a mismatch the Firebase session is gone, so "nobody signed in"
+    // must not be read as "nothing to revoke": refuse until a fresh sign-in.
+    if (_appleMismatch) {
+      throw const AuthBrokerException(
+        'apple-account-mismatch',
+        'Sign out and sign in again with your own Apple ID to delete this account.',
+      );
+    }
+    if (user == null) return true;
+    if (!user.providerData.any((p) => p.providerId == _appleProviderId)) {
+      return true;
+    }
+    try {
+      // Apple only issues an authorization code during an authorization, so
+      // the person confirms with Face ID / passcode once more. The same step
+      // makes the Firebase sign-in recent enough for [deleteIdentity].
+      //
+      // signInWithProvider, not reauthenticateWithProvider: on iOS the
+      // plugin's reauthenticate path leaves an internal flag set when the
+      // sheet is dismissed, and the next "Continue with Apple" then never
+      // completes. Signing in again as the same person has the same effect
+      // and returns the same authorization code.
+      final result = await _auth.signInWithProvider(AppleAuthProvider());
+      if (result.user?.uid != user.uid) {
+        // A different Apple ID was used: that is not this account's consent.
+        _appleMismatch = true;
+        await _auth.signOut();
+        throw const AuthBrokerException(
+          'apple-account-mismatch',
+          'That Apple ID does not match this account. Sign in again to delete it.',
+        );
+      }
+      final code = result.additionalUserInfo?.authorizationCode;
+      if (code == null || code.isEmpty) {
+        throw const AuthBrokerException(
+          'no-authorization-code',
+          'Apple did not confirm the request. Try again.',
+        );
+      }
+      await _auth.revokeTokenWithAuthorizationCode(code);
+      return true;
+    } on FirebaseAuthException catch (e) {
+      if (e.code == _appleCanceled) return false;
+      throw _plain(e);
+    }
+  }
+
+  @override
+  Future<void> deleteIdentity() async {
+    try {
+      await _auth.currentUser?.delete();
+    } on FirebaseAuthException {
+      // requires-recent-login and friends: see the interface comment.
+    }
   }
 
   @override

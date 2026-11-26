@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/constants/strings.dart';
@@ -6,12 +7,16 @@ import '../../../core/enums/app_enums.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
+import '../../../core/utils/error_messages.dart';
 import '../../../data/models/conversation.dart';
 import '../../../data/models/network_profile.dart';
 import '../../../state/auth_state.dart';
 import '../../../state/chat_state.dart';
 import '../../../state/network_state.dart';
+import '../../widgets/app_skeleton.dart';
 import '../../widgets/doctor_avatar.dart';
+import '../../widgets/inline_error.dart';
+import '../../widgets/load_failed.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/search_bar.dart';
 import '../../../core/utils/avatar_urls.dart';
@@ -38,6 +43,8 @@ Future<List<ForwardTarget>?> showForwardPicker(
     context: context,
     useRootNavigator: true,
     isScrollControlled: true,
+    // Full-height sheet: keep it out from under the status bar / notch.
+    useSafeArea: true,
     showDragHandle: true,
     builder: (_) => ForwardPickerSheet(excludeConversationId: excludeConversationId),
   );
@@ -57,16 +64,21 @@ class _ForwardPickerSheetState extends ConsumerState<ForwardPickerSheet> {
   String _query = '';
   final _picked = <String, ForwardTarget>{};
 
+  /// Set by a tap on a sixth chat. Shown as a line inside the sheet: a
+  /// SnackBar would be drawn by the screen underneath, where the sheet
+  /// hides it.
+  bool _limitHit = false;
+
   void _toggle(ForwardTarget t) {
     setState(() {
       if (_picked.containsKey(t.key)) {
         _picked.remove(t.key);
+        _limitHit = false;
       } else if (_picked.length < ForwardPickerSheet.max) {
         _picked[t.key] = t;
       } else {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          const SnackBar(content: Text(Strings.chatForwardLimit)),
-        );
+        _limitHit = true;
+        HapticFeedback.heavyImpact();
       }
     });
   }
@@ -79,8 +91,26 @@ class _ForwardPickerSheetState extends ConsumerState<ForwardPickerSheet> {
   @override
   Widget build(BuildContext context) {
     final meId = ref.watch(authProvider).user?.id;
-    final convs = ref.watch(conversationsProvider).asData?.value ?? const <Conversation>[];
-    final people = ref.watch(connectionsProvider).asData?.value ?? const <PersonCard>[];
+    final convsAsync = ref.watch(conversationsProvider);
+    final peopleAsync = ref.watch(connectionsProvider);
+    // `valueOrNull` keeps the last good list through a reload or a failed refresh.
+    final convs = convsAsync.valueOrNull ?? const <Conversation>[];
+    final people = peopleAsync.valueOrNull ?? const <PersonCard>[];
+    // A source with nothing to show yet is not "no chats": it is still
+    // loading, or it failed and gets a Retry.
+    final convsFailed = convsAsync.hasError && !convsAsync.isLoading;
+    final peopleFailed = peopleAsync.hasError && !peopleAsync.isLoading;
+    final loadError = convsFailed
+        ? convsAsync.error
+        : peopleFailed
+            ? peopleAsync.error
+            : null;
+    final loading = (convsAsync.isLoading && !convsAsync.hasValue) ||
+        (peopleAsync.isLoading && !peopleAsync.hasValue);
+    void retry() {
+      if (convsFailed) ref.invalidate(conversationsProvider);
+      if (peopleFailed) ref.invalidate(connectionsProvider);
+    }
 
     final recent = [
       for (final c in convs)
@@ -104,6 +134,7 @@ class _ForwardPickerSheetState extends ConsumerState<ForwardPickerSheet> {
 
     final shownRecent = recent.where((c) => _match(titleOf(c))).toList();
     final shownOthers = others.where((p) => _match(p.fullName)).toList();
+    final nothingShown = shownRecent.isEmpty && shownOthers.isEmpty;
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
@@ -125,9 +156,39 @@ class _ForwardPickerSheetState extends ConsumerState<ForwardPickerSheet> {
                 ],
               ),
             ),
+            if (_limitHit)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.xs, AppSpacing.lg, 0),
+                child: Semantics(
+                  liveRegion: true,
+                  child: Row(
+                    key: const ValueKey('forward-limit'),
+                    children: [
+                      const Icon(Icons.error_outline_rounded, size: 16, color: AppColors.red),
+                      const SizedBox(width: AppSpacing.xs),
+                      Expanded(
+                        child: Text(
+                          Strings.chatForwardLimit,
+                          style: AppText.caption.copyWith(color: AppColors.red, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             AppSearchBar(hint: Strings.chatForwardHint, onChanged: (q) => setState(() => _query = q)),
             Expanded(
-              child: ListView(
+              child: nothingShown && loading
+                  ? const SkeletonList(key: ValueKey('forward-loading'))
+                  : nothingShown && loadError != null
+                      ? SingleChildScrollView(
+                          child: LoadFailed(
+                            key: const ValueKey('forward-load-failed'),
+                            message: ErrorMessages.forApi(loadError),
+                            onRetry: retry,
+                          ),
+                        )
+                      : ListView(
                 children: [
                   if (shownRecent.isNotEmpty) const _Header('RECENT CHATS'),
                   for (final c in shownRecent)
@@ -147,10 +208,51 @@ class _ForwardPickerSheetState extends ConsumerState<ForwardPickerSheet> {
                       colorSeed: p.id,
                       image: userAvatarUrl(p.id, p.avatarUrl),
                     ),
-                  if (shownRecent.isEmpty && shownOthers.isEmpty)
+                  if (nothingShown)
                     Padding(
                       padding: const EdgeInsets.all(AppSpacing.xl),
-                      child: Text('No chats match.', style: AppText.caption, textAlign: TextAlign.center),
+                      // Nothing typed and nothing listed: there are no chats
+                      // to match against.
+                      child: Text(
+                        _query.trim().isEmpty ? Strings.forwardNoChatsYet : Strings.forwardNoMatch,
+                        key: const ValueKey('forward-empty'),
+                        style: AppText.caption,
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  else if (loading)
+                    // One source is in; the other is still on its way.
+                    const Padding(
+                      padding: EdgeInsets.all(AppSpacing.lg),
+                      child: Center(
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2, semanticsLabel: Strings.loading),
+                        ),
+                      ),
+                    )
+                  else if (loadError != null)
+                    // One source failed with the other's rows on screen.
+                    Padding(
+                      key: const ValueKey('forward-partial-error'),
+                      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.md),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          InlineError(ErrorMessages.forApi(loadError)),
+                          const SizedBox(height: AppSpacing.sm),
+                          AppButton(
+                            key: const ValueKey('forward-partial-retry'),
+                            label: Strings.retry,
+                            icon: Icons.refresh_rounded,
+                            variant: AppButtonVariant.ghost,
+                            expand: true,
+                            onPressed: retry,
+                          ),
+                        ],
+                      ),
                     ),
                 ],
               ),
@@ -193,6 +295,8 @@ class _ForwardPickerSheetState extends ConsumerState<ForwardPickerSheet> {
     final selected = _picked.containsKey(t.key);
     return ListTile(
       key: ValueKey('forward-target-${t.key}'),
+      selected: selected,
+      selectedColor: AppColors.textPrimary,
       leading: isGroup
           ? CircleAvatar(
               backgroundColor: AppColors.medBlueLight,
@@ -218,6 +322,6 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.xs),
-        child: Text(text, style: AppText.label),
+        child: Semantics(header: true, child: Text(text, style: AppText.label)),
       );
 }

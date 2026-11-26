@@ -5,7 +5,8 @@ import '../../core/tokens/typography.dart';
 import '../../data/services/url_opener.dart';
 
 /// Ask before leaving the app for a link or a call (batch 4). Returns true
-/// when the doctor confirmed and the opener accepted the URL.
+/// when the doctor confirmed and the opener accepted the URL. A confirmed
+/// link the system would not open says so, instead of ending in silence.
 Future<bool> confirmAndOpenExternal(
   BuildContext context, {
   required String url,
@@ -43,5 +44,16 @@ Future<bool> confirmAndOpenExternal(
     ),
   );
   if (ok != true) return false;
-  return opener.open(url);
+  // Looked up before the wait: the caller may be gone when it ends.
+  final messenger = context.mounted ? ScaffoldMessenger.maybeOf(context) : null;
+  var opened = false;
+  try {
+    opened = await opener.open(url);
+  } catch (_) {}
+  if (!opened) {
+    messenger?.showSnackBar(SnackBar(
+      content: Text(isPhone ? Strings.callOpenFailed : Strings.linkOpenFailed),
+    ));
+  }
+  return opened;
 }

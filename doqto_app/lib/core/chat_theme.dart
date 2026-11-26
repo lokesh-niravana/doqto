@@ -36,7 +36,7 @@ class ChatTheme {
   static const teal = ChatTheme(
     id: 'teal',
     name: 'Doqto teal',
-    sent: Color(0xFF35878F),
+    sent: AppColors.medBlue,
     received: Color(0xFFFFFFFF),
   );
 
@@ -45,7 +45,7 @@ class ChatTheme {
     ChatTheme(
       id: 'ocean',
       name: 'Ocean',
-      sent: Color(0xFF1D6FD1),
+      sent: Color(0xFF1D6ECF),
       received: Color(0xFFEAF2FF),
     ),
     ChatTheme(
@@ -57,7 +57,7 @@ class ChatTheme {
     ChatTheme(
       id: 'sunset',
       name: 'Sunset',
-      sent: Color(0xFFE0633A),
+      sent: Color(0xFFB5502F),
       received: Color(0xFFFFF1EA),
     ),
     ChatTheme(
@@ -69,7 +69,7 @@ class ChatTheme {
     ChatTheme(
       id: 'rose',
       name: 'Rose',
-      sent: Color(0xFFD1366B),
+      sent: Color(0xFFC53265),
       received: Color(0xFFFFEDF3),
     ),
     ChatTheme(
@@ -81,13 +81,13 @@ class ChatTheme {
     ChatTheme(
       id: 'sand',
       name: 'Sand',
-      sent: Color(0xFFB7791F),
+      sent: Color(0xFF98641A),
       received: Color(0xFFFBF4E4),
     ),
     ChatTheme(
       id: 'mint',
       name: 'Mint',
-      sent: Color(0xFF0E9F8E),
+      sent: Color(0xFF0B7D6F),
       received: Color(0xFFE6FAF6),
     ),
     ChatTheme(
@@ -99,7 +99,7 @@ class ChatTheme {
     ChatTheme(
       id: 'coral',
       name: 'Coral',
-      sent: Color(0xFFE5484D),
+      sent: Color(0xFFC63E43),
       received: Color(0xFFFFEEEE),
     ),
     ChatTheme(
@@ -291,6 +291,32 @@ class ChatWallpaperBackground extends StatelessWidget {
           ),
         child,
       ],
+    );
+  }
+}
+
+/// A label drawn straight on the thread background (sender name, "Forwarded",
+/// the empty-thread line). On a photo wallpaper the background is unknown —
+/// muted text is 1.5:1 on a dark photo — so there the label sits on its own
+/// opaque surface pill: worst case textMuted on white, 5.23:1, whatever the
+/// photo. Everywhere else it is returned untouched.
+class WallpaperLabel extends StatelessWidget {
+  final Widget child;
+  const WallpaperLabel({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    if (ChatThemeScope.of(context).wallpaper.localPhoto == null) return child;
+    return DecoratedBox(
+      key: const ValueKey('wallpaper-label'),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        child: child,
+      ),
     );
   }
 }

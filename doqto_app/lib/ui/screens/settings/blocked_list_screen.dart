@@ -14,6 +14,8 @@ import '../../widgets/app_skeleton.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/person_card_row.dart';
 import '../../widgets/primary_button.dart';
+import '../../../core/utils/async_retry.dart';
+import '../../widgets/refresh_feedback.dart';
 
 /// Settings → Privacy → Blocked contacts (batch 2). Unblock asks once, then
 /// the row goes at once and comes back only if the server refuses.
@@ -26,7 +28,7 @@ class BlockedListScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: AppColors.appBg,
       appBar: AppBar(title: const Text(Strings.privacyBlocked)),
-      body: async.when(
+      body: async.whenRetrying(
         loading: () => const _Skeleton(),
         error: (e, _) => _Pane(
           icon: Icons.cloud_off_outlined,
@@ -43,11 +45,19 @@ class BlockedListScreen extends ConsumerWidget {
                 text: Strings.privacyBlockedEmpty,
               )
             : RefreshIndicator(
-                onRefresh: () => ref.read(blockedProvider.notifier).refresh(),
+                onRefresh: () => refreshWithFeedback(
+                  context,
+                  () => ref.read(blockedProvider.notifier).refresh(rethrowOnError: true),
+                ),
                 child: ListView.builder(
                   key: const ValueKey('blocked-list'),
                   physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                  // Explicit padding drops the automatic safe-area inset; add it back so
+                  // the last row clears the home indicator.
+                  padding: EdgeInsets.only(
+                    top: AppSpacing.sm,
+                    bottom: AppSpacing.sm + MediaQuery.paddingOf(context).bottom,
+                  ),
                   itemCount: list.length,
                   itemBuilder: (context, i) {
                     final p = list[i];
@@ -128,7 +138,11 @@ class _Pane extends StatelessWidget {
           children: [
             Icon(icon, size: 48, color: AppColors.textMuted),
             const SizedBox(height: AppSpacing.md),
-            Text(text, style: AppText.body, textAlign: TextAlign.center),
+            Semantics(
+              container: action != null,
+              liveRegion: action != null,
+              child: Text(text, style: AppText.body, textAlign: TextAlign.center),
+            ),
             if (action != null) ...[
               const SizedBox(height: AppSpacing.lg),
               action!,
@@ -145,15 +159,23 @@ class _Skeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
-      children: [
-        for (var i = 0; i < 4; i++) ...[
-          AppSkeleton.block(height: 64),
-          const SizedBox(height: AppSpacing.sm),
-        ],
-      ],
+    // The grey blocks are only drawn; a screen reader hears "Loading" once.
+    return Semantics(
+      container: true,
+      label: Strings.loading,
+      liveRegion: true,
+      child: ExcludeSemantics(
+        child: ListView(
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
+          children: [
+            for (var i = 0; i < 4; i++) ...[
+              AppSkeleton.block(height: 64),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

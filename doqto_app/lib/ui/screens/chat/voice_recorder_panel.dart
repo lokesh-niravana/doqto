@@ -79,6 +79,10 @@ class VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
   double _slide = 0;
   bool _stopping = false;
 
+  /// The recording was stopped by the length limit, not by the doctor: the
+  /// review says so.
+  bool _hitMax = false;
+
   /// `_recorder.start` has returned; only then is there anything to stop.
   bool _started = false;
 
@@ -179,19 +183,30 @@ class VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
     }
     if (!mounted || _stopping) return;
 
-    final dir = await getTemporaryDirectory();
-    if (!mounted || _stopping) return;
-    final path =
-        '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.wav';
+    final String path;
+    try {
+      final dir = await getTemporaryDirectory();
+      if (!mounted || _stopping) return;
+      path = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.wav';
 
-    await _recorder.start(
-      RecordConfig(
-        encoder: AudioEncoder.wav,
-        sampleRate: 44100,
-        numChannels: 1,
-      ),
-      path: path,
-    );
+      await _recorder.start(
+        RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: 44100,
+          numChannels: 1,
+        ),
+        path: path,
+      );
+    } catch (_) {
+      // The microphone is busy (a call, another app) or the session would
+      // not start: say so and close the panel, instead of a recorder that
+      // sits at 0:00 and records nothing.
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(const SnackBar(content: Text(Strings.recordStartFailed)));
+      widget.onCancel();
+      return;
+    }
     _started = true;
     if (!mounted || _stopping) {
       await _recorder.stop();
@@ -217,7 +232,17 @@ class VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
           _state == _RecorderState.recording) {
         // Hard cap: stop, and in hold mode send what we have.
         final wasHeld = isHeld;
-        if (await _stopRecording() && wasHeld) await _send();
+        if (await _stopRecording()) {
+          if (!mounted) return;
+          setState(() => _hitMax = true);
+          if (wasHeld) {
+            // Sent straight away, so the review never shows: say it here.
+            ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+              const SnackBar(content: Text(Strings.voiceMaxReached)),
+            );
+            await _send();
+          }
+        }
       }
     });
 
@@ -463,20 +488,27 @@ class VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
                 Text(_formatDuration(_durationSec), style: AppText.subheading),
               ],
             ),
-            Material(
-              color: AppColors.medBlue,
-              shape: const CircleBorder(),
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: _stopRecording,
-                child: Container(
-                  width: 56,
-                  height: 56,
-                  alignment: Alignment.center,
-                  child: const Icon(
-                    Icons.stop,
-                    color: AppColors.white,
-                    size: 28,
+            Semantics(
+              container: true,
+              button: true,
+              label: Strings.voiceStopRecording,
+              excludeSemantics: true,
+              onTap: _stopRecording,
+              child: Material(
+                color: AppColors.medBlue,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: _stopRecording,
+                  child: Container(
+                    width: 56,
+                    height: 56,
+                    alignment: Alignment.center,
+                    child: const Icon(
+                      Icons.stop,
+                      color: AppColors.white,
+                      size: 28,
+                    ),
                   ),
                 ),
               ),
@@ -506,6 +538,9 @@ class VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
         Row(
           children: [
             IconButton(
+              tooltip: _isPlaying
+                  ? Strings.voicePreviewPause
+                  : Strings.voicePreviewPlay,
               onPressed: isSending ? null : _togglePlay,
               icon: Icon(
                 _isPlaying
@@ -542,6 +577,20 @@ class VoiceRecorderPanelState extends ConsumerState<VoiceRecorderPanel> {
             Text(_formatDuration(_durationSec), style: AppText.caption),
           ],
         ),
+        if (_hitMax) ...[
+          const SizedBox(height: AppSpacing.sm),
+          // Why the recording stopped by itself. Announced.
+          Semantics(
+            container: true,
+            liveRegion: true,
+            child: Text(
+              Strings.voiceMaxReached,
+              key: const ValueKey('voice-max-reached'),
+              style: AppText.caption,
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
         if (_transcript.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.sm),
           Padding(

@@ -59,12 +59,23 @@ class _ManageStorageScreenState extends ConsumerState<ManageStorageScreen> {
     return ok == true;
   }
 
+  void _clearFailed() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text(Strings.storageClearFailed)),
+    );
+  }
+
   Future<void> _clearChat(String convId, String title) async {
     if (!await _confirm('${Strings.storageClearChat} $title?')) return;
     setState(() => _busy = true);
     try {
       await ref.read(chatMediaCacheProvider).clearConversation(convId);
       await ref.read(chatDocumentStoreProvider).clearConversation(convId);
+    } catch (_) {
+      // A file that would not delete: without this the tap looked like it
+      // worked and the sizes just stayed.
+      _clearFailed();
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -76,6 +87,10 @@ class _ManageStorageScreenState extends ConsumerState<ManageStorageScreen> {
     try {
       await ref.read(chatMediaCacheProvider).clear();
       await ref.read(chatDocumentStoreProvider).clear();
+    } catch (_) {
+      // A file that would not delete: without this the tap looked like it
+      // worked and the sizes just stayed.
+      _clearFailed();
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -95,7 +110,12 @@ class _ManageStorageScreenState extends ConsumerState<ManageStorageScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text(Strings.storageManage)),
       body: ListView(
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last row clears the home indicator.
+        padding: EdgeInsets.only(
+          top: AppSpacing.lg,
+          bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/constants/strings.dart';
+import 'silent_hint.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/motion.dart';
 import '../../core/tokens/radii.dart';
@@ -88,7 +90,11 @@ class _AppSearchBarState extends State<AppSearchBar> {
             width: focused ? 1.5 : 1.0,
           ),
         ),
-        child: TextField(
+        // Named by its placeholder ("Search colleagues"), which is then drawn
+        // only: as hintText the name would vanish at the first character.
+        child: Semantics(
+          label: widget.hint,
+          child: TextField(
           controller: _controller,
           focusNode: _focus,
           onChanged: _onChanged,
@@ -96,8 +102,10 @@ class _AppSearchBarState extends State<AppSearchBar> {
           style: AppText.bodyPrimary,
           textInputAction: TextInputAction.search,
           decoration: InputDecoration(
-            hintText: widget.hint,
-            hintStyle: AppText.body.copyWith(color: AppColors.textMuted),
+            hint: SilentHint(
+              widget.hint,
+              style: AppText.body.copyWith(color: AppColors.textMuted),
+            ),
             filled: false,
             prefixIcon: Icon(
               Icons.search,
@@ -106,6 +114,7 @@ class _AppSearchBarState extends State<AppSearchBar> {
             ),
             suffixIcon: hasText
                 ? IconButton(
+                    tooltip: Strings.searchClear,
                     icon: Icon(Icons.close, color: AppColors.textMuted, size: 20),
                     onPressed: _clear,
                   )
@@ -126,6 +135,7 @@ class _AppSearchBarState extends State<AppSearchBar> {
               borderRadius: AppRadii.rFull,
               borderSide: BorderSide.none,
             ),
+          ),
           ),
         ),
       ),

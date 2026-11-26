@@ -8,7 +8,9 @@
 // Voice matches `ErrorMessages`: lead with what's wrong, propose a fix, no
 // jargon. Under ~80 chars so it fits one line under the input.
 
+import 'package:flutter/services.dart';
 import 'package:phone_numbers_parser/phone_numbers_parser.dart';
+import '../constants/strings.dart';
 
 typedef Validator = String? Function(String value);
 
@@ -125,6 +127,16 @@ class Validators {
         return null;
       };
 
+  /// A PIN the user chose (two-step verification), not a code we sent: the
+  /// message says so. One message for empty, short and non-digit input.
+  static Validator pin(int length) => (value) {
+        final v = value.trim();
+        if (v.length != length || !RegExp(r'^\d+$').hasMatch(v)) {
+          return Strings.pinInvalid(length);
+        }
+        return null;
+      };
+
   /// A single name part (first or last). [field] names it in the message.
   /// Registration collects the two halves separately so the NPI registry can
   /// be queried by first and last name.
@@ -132,19 +144,31 @@ class Validators {
         final v = value.trim();
         final f = field.toLowerCase();
         if (v.isEmpty) return 'Please enter your $f.';
-        if (v.length < 2) return 'Your $f must be at least 2 characters.';
         return null;
       };
 
-  /// Invite code: 4 letters, middle dot, 4 digits (e.g. APOL·4827). 9 chars total.
+  /// Canonical invite code as the server issues and compares it: four
+  /// upper-case letters, a middle dot, four digits (`APOL·4827`). Whatever
+  /// separator was typed (`.`, `-`, space, `·`, or none) is dropped and the
+  /// middle dot re-inserted after the fourth character.
+  static String normalizeInviteCode(String value) {
+    final raw = value.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    final v = raw.length > 8 ? raw.substring(0, 8) : raw;
+    if (v.length <= 4) return v;
+    return '${v.substring(0, 4)}·${v.substring(4)}';
+  }
+
+  /// Invite code: 4 letters then 4 digits (e.g. APOL·4827). The middle dot
+  /// cannot be typed on a phone keyboard, so it is never required of the
+  /// user — see [normalizeInviteCode] and [InviteCodeFormatter].
   static Validator inviteCode() => (value) {
-        final v = value.trim();
+        final v = normalizeInviteCode(value);
         if (v.isEmpty) return 'Please enter the invite code from your org admin.';
         if (v.length != 9) {
-          return 'Invite codes are 9 characters (e.g. APOL·4827).';
+          return 'Invite codes are 4 letters and 4 digits (e.g. APOL·4827).';
         }
-        if (!RegExp(r'^[A-Za-z]{4}·\d{4}$').hasMatch(v)) {
-          return 'Invite code must be 4 letters, a dot, and 4 digits.';
+        if (!RegExp(r'^[A-Z]{4}·\d{4}$').hasMatch(v)) {
+          return 'Invite codes are 4 letters followed by 4 digits (e.g. APOL·4827).';
         }
         return null;
       };
@@ -156,4 +180,27 @@ class Validators {
         if (v.length > 255) return 'Organization name is too long.';
         return null;
       };
+}
+
+/// Formats an invite code as it is typed: upper-cases, drops any separator
+/// the user typed (`.`, `-`, space, `·`) and puts the middle dot back after
+/// the fourth character, so `apol4827` becomes `APOL·4827`. Nine characters
+/// at most.
+class InviteCodeFormatter extends TextInputFormatter {
+  const InviteCodeFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    final text = Validators.normalizeInviteCode(newValue.text);
+    if (text == newValue.text) return newValue;
+    // Keep the caret after the same number of code characters it followed.
+    final end = newValue.selection.end;
+    var offset = text.length;
+    if (end >= 0 && end < newValue.text.length) {
+      final before = Validators.normalizeInviteCode(newValue.text.substring(0, end)).replaceAll('·', '').length;
+      offset = before > 4 ? before + 1 : before;
+      if (offset > text.length) offset = text.length;
+    }
+    return TextEditingValue(text: text, selection: TextSelection.collapsed(offset: offset));
+  }
 }

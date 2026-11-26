@@ -19,16 +19,9 @@ import '../../widgets/phone_field.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/social_button.dart';
 
-/// Sign-in. One screen, three ways in: phone, Google, Apple (Facebook once
-/// the Meta app exists). All brokered by Firebase and all ending in the same
+/// Sign-in. One screen, three ways in: phone, Google, Apple. All brokered by Firebase and all ending in the same
 /// place — one ID token, exchanged for a Doqto session. There is no separate
 /// sign-up: the identity decides.
-/// ponytail: off until the Meta app (and its App ID) exists. With no App ID
-/// in Info.plist the Facebook SDK throws a native exception on login, so a
-/// visible button is a crash in a tester's hands. Flip to true once
-/// FacebookAppID/FacebookClientToken are configured — docs/auth.md.
-const bool kFacebookSignInEnabled = false;
-
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -58,7 +51,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       if (!mounted) return;
       // A dismissed provider sheet leaves the stage untouched — stay put.
       final stage = ref.read(authProvider).stage;
-      if (stage == AuthStage.unknown || stage == AuthStage.signedOut) return;
+      if (stage == AuthStage.unknown ||
+          stage == AuthStage.signedOut ||
+          stage == AuthStage.unreachable) {
+        return;
+      }
       context.go(switch (stage) {
         AuthStage.needsRegistration => AppRoutes.registration,
         AuthStage.pinRequired => AppRoutes.pinGate,
@@ -144,18 +141,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           : () => _social(SocialProvider.google),
                     ),
                   ),
-                  if (kFacebookSignInEnabled) ...[
-                    const SizedBox(height: AppSpacing.md),
-                    FadeSlideIn.staggered(
-                      5,
-                      SocialButton.facebook(
-                        label: Strings.loginFacebook,
-                        onPressed: _loading
-                            ? null
-                            : () => _social(SocialProvider.facebook),
-                      ),
-                    ),
-                  ],
                   // Apple only where it's native. Guideline 4.8 is an App
                   // Store rule; on Android it opens a web page and looks odd.
                   if (Theme.of(context).platform == TargetPlatform.iOS) ...[

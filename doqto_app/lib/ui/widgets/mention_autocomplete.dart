@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../core/constants/strings.dart';
@@ -55,8 +57,22 @@ class MentionAutocomplete extends StatelessWidget {
               children: [Text(Strings.chatMentionHint.toUpperCase(), style: AppText.label)],
             ),
           ),
-          for (final m in rows)
-            ListTile(
+          // Scrolls inside a capped height: six two-line rows in a plain
+          // Column pushed the composer and Send behind the keyboard.
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: math.min(220.0, MediaQuery.sizeOf(context).height * 0.28),
+            ),
+            // At most six rows: a scrolling Column keeps them all built
+            // (a lazy list would drop the ones past the fold).
+            child: SingleChildScrollView(
+              key: const ValueKey('mention-autocomplete-list'),
+              padding: EdgeInsets.zero,
+              child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final m in rows)
+                  ListTile(
               key: ValueKey('mention-${m.userId}'),
               dense: true,
               leading: DoctorAvatar(
@@ -67,8 +83,12 @@ class MentionAutocomplete extends StatelessWidget {
               ),
               title: Text(m.fullName, style: AppText.bodyPrimary),
               subtitle: m.specialty == null ? null : Text(m.specialty!, style: AppText.caption),
-              onTap: () => onPick(m),
+                    onTap: () => onPick(m),
+                  ),
+              ],
+              ),
             ),
+          ),
         ],
       ),
     );

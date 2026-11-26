@@ -14,7 +14,8 @@ import '../../data/models/message.dart';
 import 'quote_strip.dart';
 
 /// Status tick shown on own messages: clock (sending) → check (sent) →
-/// gray double-check (delivered) → blue double-check (read) → red ! (failed).
+/// double-check (delivered) → filled check disc, blue (read) → red ! (failed).
+/// Read and delivered differ by glyph as well as tint.
 class MessageStatusTick extends StatelessWidget {
   final MessageStatus status;
   final bool delivered;
@@ -39,10 +40,16 @@ class MessageStatusTick extends StatelessWidget {
         Icons.error_outline,
         key: ValueKey('tick-failed'),
         size: 15,
-        color: Color(0xFFFFB4A9),
+        color: _failedTick,
       ),
       MessageStatus.sent => Icon(
-        (read || delivered) ? Icons.done_all : Icons.check,
+        // Three shapes, not two shapes and a tint: one check (sent), two
+        // checks (delivered), a filled disc with a check (read).
+        read
+            ? Icons.check_circle
+            : delivered
+            ? Icons.done_all
+            : Icons.check,
         key: ValueKey(
           'tick-sent-${read
               ? 'read'
@@ -51,16 +58,60 @@ class MessageStatusTick extends StatelessWidget {
               : 'sent'}',
         ),
         size: 15,
-        color: read ? const Color(0xFF7FC8FF) : idleColor,
+        color: read ? _readTick : idleColor,
       ),
     };
-    return AnimatedSwitcher(
-      duration: AppMotion.maybe(context, AppMotion.micro),
-      switchInCurve: AppMotion.curveEnter,
-      switchOutCurve: AppMotion.curveExit,
-      child: icon,
+    // The tick is the only place delivery state shows: say it, don't just
+    // draw it.
+    final label = switch (status) {
+      MessageStatus.sending => Strings.tickSending,
+      MessageStatus.failed => Strings.tickFailed,
+      MessageStatus.sent => read
+          ? Strings.tickRead
+          : delivered
+              ? Strings.tickDelivered
+              : Strings.tickSent,
+    };
+    return Semantics(
+      label: label,
+      child: AnimatedSwitcher(
+        duration: AppMotion.maybe(context, AppMotion.micro),
+        switchInCurve: AppMotion.curveEnter,
+        switchOutCurve: AppMotion.curveExit,
+        child: icon,
+      ),
     );
   }
+}
+
+/// Tick tints on a sent bubble. An icon needs 3:1 against what it sits on;
+/// the lowest of the twelve chat themes is Ocean (#1D6ECF), where these are
+/// 3.61:1 (failed) and 3.65:1 (read). The earlier, more saturated pair was
+/// 2.95 and 2.77 there.
+const Color _failedTick = Color(0xFFFFD0C9);
+const Color _readTick = Color(0xFFB9E1FF);
+
+/// Alpha for secondary text (time, "Edited", labels, ticks) on a sent
+/// bubble: anything lower drops under 4.5:1 on the bubble colours.
+const double kOnSentSecondaryAlpha = 0.93;
+
+/// Fill for an inset inside a sent bubble (quote, link card, code block,
+/// mention chip, speed pill). It darkens the bubble: white text on it is
+/// 6.8:1 or better on every chat theme, where the old white tint lightened
+/// the bubble to about 3.6:1.
+const Color kOnSentInset = Color(0x2E000000); // black at 18%
+
+/// Group sender names borrow the avatar colour, but some of those fills are
+/// too light for 11pt text on a light bubble: bright teal and amber are
+/// about 2:1, brand teal 4.41:1 on the Plum received bubble. Swap them for
+/// their text-safe variants (badge teal is 5.58:1 at worst, purple text
+/// 7.64:1).
+Color senderNameColor(int index) {
+  final c = AppColors.avatarColorFor(index);
+  if (c == AppColors.medTeal || c == AppColors.medBlue) return AppColors.tealBadgeText;
+  if (c == AppColors.purple) return AppColors.purpleText;
+  if (c == AppColors.amber) return AppColors.amberText;
+  return c;
 }
 
 /// Clock icon with a gentle opacity pulse while a message is pending.
@@ -217,6 +268,9 @@ class MessageBubble extends StatelessWidget {
     this.highlighted = false,
   });
 
+  /// Vertical padding inside the bubble.
+  static const double _padV = AppSpacing.sm + 2;
+
   @override
   Widget build(BuildContext context) {
     final radius = isMine ? AppRadii.bubbleSent : AppRadii.bubbleReceived;
@@ -225,11 +279,14 @@ class MessageBubble extends StatelessWidget {
     final bg = isMine ? chatTheme.sentBg : chatTheme.receivedBg;
     final fg = isMine ? chatTheme.sentFg : chatTheme.receivedFg;
     final timeColor = isMine
-        ? fg.withValues(alpha: 0.55)
+        ? fg.withValues(alpha: kOnSentSecondaryAlpha)
         : AppColors.textMuted;
     final muted = isMine
-        ? fg.withValues(alpha: 0.7)
+        ? fg.withValues(alpha: kOnSentSecondaryAlpha)
         : AppColors.textMuted;
+    // Ties the small "Edited" label to its 44pt tap area (see below).
+    final editedLink = LayerLink();
+    final editedTappable = edited && !deleted && onEditedTap != null;
 
     Widget bubble = Container(
       constraints: BoxConstraints(
@@ -237,7 +294,7 @@ class MessageBubble extends StatelessWidget {
       ),
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm + 2,
+        vertical: _padV,
       ),
       decoration: BoxDecoration(
         color: bg,
@@ -263,9 +320,11 @@ class MessageBubble extends StatelessWidget {
                 children: [
                   Icon(Icons.shortcut_rounded, size: 13, color: muted),
                   const SizedBox(width: 3),
-                  Text(
-                    forwardedLabel!,
-                    style: AppText.timestamp.copyWith(color: muted, fontStyle: FontStyle.italic),
+                  Flexible(
+                    child: Text(
+                      forwardedLabel!,
+                      style: AppText.timestamp.copyWith(color: muted, fontStyle: FontStyle.italic),
+                    ),
                   ),
                 ],
               ),
@@ -284,7 +343,7 @@ class MessageBubble extends StatelessWidget {
               child: Text(
                 senderName!,
                 style: AppText.timestamp.copyWith(
-                  color: AppColors.avatarColorFor(senderColorIndex),
+                  color: senderNameColor(senderColorIndex),
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -295,11 +354,13 @@ class MessageBubble extends StatelessWidget {
               children: [
                 Icon(Icons.block, size: 14, color: muted),
                 const SizedBox(width: 4),
-                Text(
-                  Strings.chatMessageDeleted,
-                  style: AppText.messageBody.copyWith(
-                    color: muted,
-                    fontStyle: FontStyle.italic,
+                Flexible(
+                  child: Text(
+                    Strings.chatMessageDeleted,
+                    style: AppText.messageBody.copyWith(
+                      color: muted,
+                      fontStyle: FontStyle.italic,
+                    ),
                   ),
                 ),
               ],
@@ -314,15 +375,25 @@ class MessageBubble extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (edited && !deleted) ...[
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: onEditedTap,
-                    child: Text(
-                      Strings.chatEdited,
-                      style: AppText.timestamp.copyWith(
-                        color: timeColor,
-                        decoration: TextDecoration.underline,
-                        decorationColor: timeColor,
+                  CompositedTransformTarget(
+                    link: editedLink,
+                    child: Semantics(
+                      button: onEditedTap != null,
+                      label: onEditedTap != null
+                          ? Strings.chatEditedShowHistory
+                          : null,
+                      excludeSemantics: onEditedTap != null,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: onEditedTap,
+                        child: Text(
+                          Strings.chatEdited,
+                          style: AppText.timestamp.copyWith(
+                            color: timeColor,
+                            decoration: TextDecoration.underline,
+                            decorationColor: timeColor,
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -334,6 +405,7 @@ class MessageBubble extends StatelessWidget {
                     key: const ValueKey('bubble-star'),
                     size: 13,
                     color: timeColor,
+                    semanticLabel: Strings.a11yStarred,
                   ),
                   const SizedBox(width: 3),
                 ],
@@ -347,7 +419,7 @@ class MessageBubble extends StatelessWidget {
                     status: status,
                     read: read,
                     delivered: delivered,
-                    idleColor: AppColors.white.withValues(alpha: 0.55),
+                    idleColor: timeColor,
                   ),
                 ],
               ],
@@ -356,6 +428,36 @@ class MessageBubble extends StatelessWidget {
         ],
       ),
     );
+
+    // The "Edited" link is one line of 11pt text. Its tap area is a 44pt
+    // square laid over the bubble's bottom edge and following the label, so
+    // the target is finger-sized without the footer row growing.
+    if (editedTappable) {
+      bubble = Stack(
+        children: [
+          bubble,
+          Positioned(
+            left: 0,
+            top: 0,
+            child: CompositedTransformFollower(
+              link: editedLink,
+              showWhenUnlinked: false,
+              targetAnchor: Alignment.bottomCenter,
+              followerAnchor: Alignment.bottomCenter,
+              offset: const Offset(0, _padV),
+              child: ExcludeSemantics(
+                child: GestureDetector(
+                  key: const ValueKey('edited-tap-area'),
+                  behavior: HitTestBehavior.translucent,
+                  onTap: onEditedTap,
+                  child: const SizedBox(width: 44, height: 44),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
 
     // Failed sends draw attention with a single, subtle horizontal shake.
     if (status == MessageStatus.failed) {

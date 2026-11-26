@@ -34,6 +34,9 @@ import '../../widgets/swipe_action_row.dart';
 import '../../widgets/typing_indicator.dart';
 import '_conversation_display.dart';
 import '../../../core/utils/avatar_urls.dart';
+import '../home/main_shell.dart';
+import '../../../core/utils/async_retry.dart';
+import '../../widgets/refresh_feedback.dart';
 
 class ChatListScreen extends ConsumerStatefulWidget {
   const ChatListScreen({super.key});
@@ -75,50 +78,64 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   }
 
   /// Run one prefs action over the selection; the first failure is toasted.
-  Future<void> _bulk(Future<void> Function(Conversation c) action) async {
+  /// Returns `(attempted, failed)` so a caller can report what really happened.
+  Future<(int, int)> _bulk(Future<void> Function(Conversation c) action) async {
     final targets = _selectedConvs;
     setState(() => _busy = true);
     Object? firstError;
+    var failed = 0;
     for (final c in targets) {
       try {
         await action(c);
       } catch (e) {
+        failed++;
         firstError ??= e;
       }
     }
-    if (!mounted) return;
+    if (!mounted) return (targets.length, failed);
     setState(() {
       _busy = false;
       _selectedIds.clear();
     });
     if (firstError != null) ConversationActions.toastError(context, firstError);
+    return (targets.length, failed);
   }
 
+  // What each bulk action will do to the selection. The app-bar buttons read
+  // the same four getters for their icon and tooltip, so a button never says
+  // "Pin" when tapping it unpins.
+  bool get _bulkWillPin => _selectedConvs.any((c) => !c.prefs.isPinned);
+  bool get _bulkWillMute => _selectedConvs.any((c) => !c.prefs.isMuted());
+  bool get _bulkWillArchive => _selectedConvs.any((c) => !c.prefs.archived);
+  bool get _bulkWillMarkUnread =>
+      _selectedConvs.any((c) => !isConversationUnread(c));
+
   Future<void> _bulkPin() {
-    final anyUnpinned = _selectedConvs.any((c) => !c.prefs.isPinned);
+    final anyUnpinned = _bulkWillPin;
     final notifier = ref.read(conversationsProvider.notifier);
     return _bulk((c) => notifier.pin(c.id, anyUnpinned));
   }
 
   Future<void> _bulkMute() async {
-    final anyUnmuted = _selectedConvs.any((c) => !c.prefs.isMuted());
+    final anyUnmuted = _bulkWillMute;
     final notifier = ref.read(conversationsProvider.notifier);
     if (!anyUnmuted) {
-      return _bulk((c) => notifier.mute(c.id, null));
+      await _bulk((c) => notifier.mute(c.id, null));
+      return;
     }
     final until = await ConversationActions.pickMuteUntil(context);
     if (until == null || !mounted) return;
-    return _bulk((c) => notifier.mute(c.id, until));
+    await _bulk((c) => notifier.mute(c.id, until));
   }
 
   Future<void> _bulkArchive() {
-    final anyLive = _selectedConvs.any((c) => !c.prefs.archived);
+    final anyLive = _bulkWillArchive;
     final notifier = ref.read(conversationsProvider.notifier);
     return _bulk((c) => notifier.archive(c.id, anyLive));
   }
 
   Future<void> _bulkMarkUnread() {
-    final anyRead = _selectedConvs.any((c) => !isConversationUnread(c));
+    final anyRead = _bulkWillMarkUnread;
     final notifier = ref.read(conversationsProvider.notifier);
     return _bulk((c) => notifier.markUnread(c.id, anyRead));
   }
@@ -149,11 +166,14 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
     );
     if (confirmed != true || !mounted) return;
     final notifier = ref.read(conversationsProvider.notifier);
-    await _bulk((c) => notifier.deleteChat(c.id));
-    if (!mounted) return;
+    final (attempted, failed) = await _bulk((c) => notifier.deleteChat(c.id));
+    final deleted = attempted - failed;
+    // Nothing went through: `_bulk` has already shown the error, and a
+    // "Deleted" toast on top of it would be false.
+    if (!mounted || deleted == 0) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Deleted $count chat${count == 1 ? '' : 's'}.'),
+        content: Text(Strings.chatsDeleted(deleted, attempted)),
         backgroundColor: AppColors.medBlue,
       ),
     );
@@ -167,7 +187,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
     final membersAsync = currentOrg == null
         ? const AsyncValue<List<OrgMember>>.data([])
         : ref.watch(orgMembersProvider(currentOrg.id));
-    final orgMembers = membersAsync.asData?.value ?? const <OrgMember>[];
+    final orgMembers = membersAsync.valueOrNull ?? const <OrgMember>[];
     if (!_entranceDone && convs.hasValue) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && !_entranceDone) setState(() => _entranceDone = true);
@@ -177,10 +197,20 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
       appBar: _isSelecting
           ? AppBar(
               leading: IconButton(
+                tooltip: Strings.chatSelectionClear,
                 icon: const Icon(Icons.close),
                 onPressed: _clearSelection,
               ),
-              title: Text('${_selectedIds.length} selected'),
+              // The count alone: "3 selected" truncates beside five actions.
+              title: Semantics(
+                label: Strings.a11ySelectedCount(_selectedIds.length),
+                child: ExcludeSemantics(
+                  child: Text(
+                    '${_selectedIds.length}',
+                    key: const ValueKey('chat-selection-count'),
+                  ),
+                ),
+              ),
               actions: _busy
                   ? const [
                       Padding(
@@ -195,26 +225,32 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                   : [
                       IconButton(
                         key: const ValueKey('chat-select-pin'),
-                        icon: const Icon(Icons.push_pin_outlined),
-                        tooltip: Strings.chatPin,
+                        icon: Icon(_bulkWillPin ? Icons.push_pin_outlined : Icons.push_pin),
+                        tooltip: _bulkWillPin ? Strings.chatPin : Strings.chatUnpin,
                         onPressed: _bulkPin,
                       ),
                       IconButton(
                         key: const ValueKey('chat-select-mute'),
-                        icon: const Icon(Icons.notifications_off_outlined),
-                        tooltip: Strings.chatMute,
+                        icon: Icon(_bulkWillMute
+                            ? Icons.notifications_off_outlined
+                            : Icons.notifications_active_outlined),
+                        tooltip: _bulkWillMute ? Strings.chatMute : Strings.chatUnmute,
                         onPressed: _bulkMute,
                       ),
                       IconButton(
                         key: const ValueKey('chat-select-archive'),
-                        icon: const Icon(Icons.archive_outlined),
-                        tooltip: Strings.chatArchive,
+                        icon: Icon(_bulkWillArchive
+                            ? Icons.archive_outlined
+                            : Icons.unarchive_outlined),
+                        tooltip: _bulkWillArchive ? Strings.chatArchive : Strings.chatUnarchive,
                         onPressed: _bulkArchive,
                       ),
                       IconButton(
                         key: const ValueKey('chat-select-unread'),
-                        icon: const Icon(Icons.mark_chat_unread_outlined),
-                        tooltip: Strings.chatMarkUnread,
+                        icon: Icon(_bulkWillMarkUnread
+                            ? Icons.mark_chat_unread_outlined
+                            : Icons.mark_chat_read_outlined),
+                        tooltip: _bulkWillMarkUnread ? Strings.chatMarkUnread : Strings.chatMarkRead,
                         onPressed: _bulkMarkUnread,
                       ),
                       IconButton(
@@ -275,8 +311,14 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                   ? _SearchResults(
                       key: const ValueKey('search'),
                       query: _query,
-                      conversations: convs.asData?.value ?? const [],
+                      // `valueOrNull`, not `asData`: a failed reload keeps
+                      // the chats it already had, and they are still
+                      // searchable.
+                      conversations: convs.valueOrNull ?? const [],
                       orgMembers: orgMembers,
+                      convsAsync: convs,
+                      membersAsync: membersAsync,
+                      orgId: currentOrg?.id,
                       meId: user?.id,
                     )
                   : _ConversationList(
@@ -404,7 +446,8 @@ class ConversationActions {
     return _run(
       context,
       () => ref.read(conversationsProvider.notifier).markUnread(c.id, next),
-      next ? Strings.chatMarkUnread : Strings.chatMarkRead,
+      // What happened, not the name of the action that was tapped.
+      next ? Strings.chatMarkedUnreadToast : Strings.chatMarkedReadToast,
     );
   }
 
@@ -680,7 +723,7 @@ class _ConversationList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return convs.when(
+    return convs.whenRetrying(
       // Cached data paints instantly (AsyncData); the skeleton only ever
       // shows on a true cold start with nothing cached.
       skipLoadingOnReload: true,
@@ -692,6 +735,8 @@ class _ConversationList extends ConsumerWidget {
         subtitle: ErrorMessages.forApi(e),
         actionLabel: 'Retry',
         onAction: () => ref.invalidate(conversationsProvider),
+        announce: true,
+        scrolls: true,
       ),
       data: (rawList) {
         final sorted = sortConversations(rawList);
@@ -718,9 +763,12 @@ class _ConversationList extends ConsumerWidget {
                 onTap: () => onFilter(ChatFilter.archived),
               )
             : null;
-        final bottom = MediaQuery.paddingOf(context).bottom + AppSpacing.sm;
+        final bottom = MediaQuery.paddingOf(context).bottom + kMicButtonRise + AppSpacing.sm;
         return RefreshIndicator(
-          onRefresh: () => ref.read(conversationsProvider.notifier).refresh(),
+          onRefresh: () => refreshWithFeedback(
+            context,
+            () => ref.read(conversationsProvider.notifier).refresh(rethrowOnError: true),
+          ),
           child: list.isEmpty
               ? ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
@@ -732,7 +780,8 @@ class _ConversationList extends ConsumerWidget {
                 )
               : ListView.separated(
                   physics: const AlwaysScrollableScrollPhysics(),
-                  // extendBody: keep last row clear of the floating nav bar.
+                  // extendBody: keep last row clear of the floating nav bar
+                  // and of the mic button that rises above it.
                   padding: EdgeInsets.only(top: AppSpacing.sm, bottom: bottom),
                   itemCount: list.length + (archivedRow != null ? 1 : 0),
                   separatorBuilder: (ctx, i) => const Divider(
@@ -811,6 +860,12 @@ class _SearchResults extends ConsumerStatefulWidget {
   final String query;
   final List<Conversation> conversations;
   final List<OrgMember> orgMembers;
+
+  /// The two sources behind the lists above. "No results" is only true once
+  /// both have answered: while one is loading or failed, say that instead.
+  final AsyncValue<List<Conversation>> convsAsync;
+  final AsyncValue<List<OrgMember>> membersAsync;
+  final String? orgId;
   final String? meId;
 
   const _SearchResults({
@@ -818,6 +873,9 @@ class _SearchResults extends ConsumerStatefulWidget {
     required this.query,
     required this.conversations,
     required this.orgMembers,
+    required this.convsAsync,
+    required this.membersAsync,
+    required this.orgId,
     required this.meId,
   });
 
@@ -882,6 +940,35 @@ class _SearchResultsState extends ConsumerState<_SearchResults> {
     final matchingMembers = widget.orgMembers.where(_matchMember).toList();
 
     if (matchingConvs.isEmpty && matchingMembers.isEmpty) {
+      final convs = widget.convsAsync;
+      final members = widget.membersAsync;
+      // First load still running, or a Retry in flight (an invalidated
+      // errored provider stays AsyncError with isLoading set).
+      final waiting =
+          (convs.isLoading && (!convs.hasValue || convs.hasError)) ||
+          (members.isLoading && (!members.hasValue || members.hasError));
+      if (waiting) return const SkeletonList();
+      final failure = convs.hasError
+          ? convs.error
+          : members.hasError
+          ? members.error
+          : null;
+      if (failure != null) {
+        return _StatusPane(
+          key: const ValueKey('chat-search-error'),
+          icon: Icons.cloud_off_rounded,
+          title: Strings.chatSearchLoadFailed,
+          subtitle: ErrorMessages.forApi(failure),
+          actionLabel: Strings.retry,
+          scrolls: true,
+          onAction: () {
+            ref.invalidate(conversationsProvider);
+            final orgId = widget.orgId;
+            if (orgId != null) ref.invalidate(orgMembersProvider(orgId));
+          },
+          announce: true,
+        );
+      }
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -911,7 +998,7 @@ class _SearchResultsState extends ConsumerState<_SearchResults> {
     return ListView(
       padding: EdgeInsets.only(
         top: AppSpacing.sm,
-        bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.sm,
+        bottom: MediaQuery.paddingOf(context).bottom + kMicButtonRise + AppSpacing.sm,
       ),
       children: [
         if (matchingConvs.isNotEmpty) ...[
@@ -922,7 +1009,7 @@ class _SearchResultsState extends ConsumerState<_SearchResults> {
               AppSpacing.screenHorizontal,
               AppSpacing.xs,
             ),
-            child: Text('CONVERSATIONS', style: AppText.label),
+            child: Semantics(header: true, child: Text('CONVERSATIONS', style: AppText.label)),
           ),
           for (var i = 0; i < matchingConvs.length; i++)
             _ChatRow(
@@ -945,7 +1032,7 @@ class _SearchResultsState extends ConsumerState<_SearchResults> {
               AppSpacing.screenHorizontal,
               AppSpacing.xs,
             ),
-            child: Text('PEOPLE', style: AppText.label),
+            child: Semantics(header: true, child: Text('PEOPLE', style: AppText.label)),
           ),
           for (final m in matchingMembers)
             AppPressable(
@@ -966,13 +1053,14 @@ class _SearchResultsState extends ConsumerState<_SearchResults> {
                   m.specialty ?? '',
                   style: AppText.caption,
                   maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 trailing: SizedBox(
-                  width: 40,
-                  height: 40,
+                  width: 44,
+                  height: 44,
                   child: _startingChat.contains(m.id)
                       ? const Padding(
-                          padding: EdgeInsets.all(AppSpacing.sm),
+                          padding: EdgeInsets.all(10),
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : IconButton(
@@ -1088,6 +1176,9 @@ class _ChatRow extends ConsumerWidget {
         ? AppText.caption.copyWith(color: AppColors.textSecondary)
         : AppText.caption.copyWith(fontStyle: FontStyle.italic);
     final draftText = draft?.trim();
+    // Brand teal is 4.36:1 on the pale-teal fill of a selected row; the
+    // badge teal is 5.53:1 there.
+    final accent = isSelected ? AppColors.tealBadgeText : AppColors.medBlue;
     final Widget subtitle;
     if (isTyping) {
       subtitle = Row(
@@ -1095,12 +1186,12 @@ class _ChatRow extends ConsumerWidget {
           Text(
             'typing',
             style: AppText.caption.copyWith(
-              color: AppColors.medBlue,
+              color: accent,
               fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(width: 5),
-          const TypingDots(color: AppColors.medBlue, size: 6),
+          TypingDots(color: accent, size: 6),
         ],
       );
     } else if (draftText != null && draftText.isNotEmpty) {
@@ -1170,7 +1261,7 @@ class _ChatRow extends ConsumerWidget {
               formatChatListTime(c.lastMessageAt ?? c.updatedAt),
               style: isUnread
                   ? AppText.timestamp.copyWith(
-                      color: AppColors.medBlue,
+                      color: accent,
                       fontWeight: FontWeight.w600,
                     )
                   : AppText.timestamp,
@@ -1185,6 +1276,7 @@ class _ChatRow extends ConsumerWidget {
                     child: Icon(
                       Icons.notifications_off_outlined,
                       key: ValueKey('chat-muted-${c.id}'),
+                      semanticLabel: Strings.a11yMuted,
                       size: 16,
                       color: AppColors.textMuted,
                     ),
@@ -1195,6 +1287,7 @@ class _ChatRow extends ConsumerWidget {
                     child: Icon(
                       Icons.push_pin,
                       key: ValueKey('chat-pinned-${c.id}'),
+                      semanticLabel: Strings.a11yPinned,
                       size: 16,
                       color: AppColors.textMuted,
                     ),
@@ -1219,6 +1312,7 @@ class _ChatRow extends ConsumerWidget {
                       constraints: const BoxConstraints(minWidth: 20),
                       child: Text(
                         c.unreadCount > 99 ? '99+' : '${c.unreadCount}',
+                        semanticsLabel: Strings.a11yUnreadCount(c.unreadCount),
                         style: AppText.badge.copyWith(color: AppColors.white),
                         textAlign: TextAlign.center,
                       ),
@@ -1226,13 +1320,16 @@ class _ChatRow extends ConsumerWidget {
                   )
                 else if (c.prefs.markedUnread)
                   // Hand-set unread: a dot, no number.
-                  Container(
-                    key: ValueKey('chat-unread-dot-${c.id}'),
-                    width: 10,
-                    height: 10,
-                    decoration: const BoxDecoration(
-                      color: AppColors.medBlue,
-                      shape: BoxShape.circle,
+                  Semantics(
+                    label: Strings.a11yUnread,
+                    child: Container(
+                      key: ValueKey('chat-unread-dot-${c.id}'),
+                      width: 10,
+                      height: 10,
+                      decoration: const BoxDecoration(
+                        color: AppColors.medBlue,
+                        shape: BoxShape.circle,
+                      ),
                     ),
                   ),
               ],
@@ -1273,37 +1370,69 @@ class _StatusPane extends StatelessWidget {
   final String? actionLabel;
   final VoidCallback? onAction;
 
+  /// True for the load-failed pane: announced when it replaces the skeleton.
+  final bool announce;
+
+  /// True when the pane stands alone in the tab body (the error panes): it
+  /// then scrolls by itself and clears the bottom inset. False inside a
+  /// list, which already does both.
+  final bool scrolls;
+
   const _StatusPane({
+    super.key,
     required this.icon,
     required this.title,
     required this.subtitle,
     this.actionLabel,
     this.onAction,
+    this.announce = false,
+    this.scrolls = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final pane = _pane(context);
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.xxl,
-          vertical: AppSpacing.xl,
+      child: scrolls ? SingleChildScrollView(child: pane) : pane,
+    );
+  }
+
+  Widget _pane(BuildContext context) {
+    return Padding(
+        // The mic button rises above the tab bar in the middle of the screen,
+        // exactly where the action button is: at a large text size on a short
+        // phone the button sat under its arc. Keep the pane clear of it.
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.xxl,
+          AppSpacing.xl,
+          AppSpacing.xxl,
+          AppSpacing.xl +
+              kMicButtonRise +
+              (scrolls ? MediaQuery.paddingOf(context).bottom : 0),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, size: 48, color: AppColors.gray400),
             const SizedBox(height: AppSpacing.lg),
-            Text(title, style: AppText.heading, textAlign: TextAlign.center),
-            const SizedBox(height: AppSpacing.xs),
-            Text(subtitle, style: AppText.caption, textAlign: TextAlign.center),
+            Semantics(
+              container: announce,
+              liveRegion: announce,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title, style: AppText.heading, textAlign: TextAlign.center),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(subtitle, style: AppText.caption, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
             if (actionLabel != null && actionLabel!.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.lg),
               AppButton(label: actionLabel!, onPressed: onAction),
             ],
           ],
         ),
-      ),
     );
   }
 }

@@ -61,7 +61,12 @@ class CustomNotificationsScreen extends ConsumerWidget {
       appBar: AppBar(title: Text(l.chatNotifTitle)),
       body: ListView(
         key: const ValueKey('chatnotif-list'),
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last row clears the home indicator.
+        padding: EdgeInsets.only(
+          top: AppSpacing.lg,
+          bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           SettingsSection(
             title: l.notifTitle,
@@ -100,29 +105,31 @@ class CustomNotificationsScreen extends ConsumerWidget {
                   }
                 },
               ),
-              Column(
-                children: [
-                  ListTile(
-                    key: const ValueKey('chatnotif-row-tone'),
-                    enabled: custom,
-                    title: Text(l.notifTone, style: AppText.bodyPrimary),
-                    subtitle: Text(
-                      NotificationTones.label(
-                        prefs.customTone ?? NotificationTones.systemDefault,
+              // Only while custom notifications are on, as the vibrate
+              // choice is: a full-colour row with a chevron and a dead tap
+              // looked like something to press.
+              if (custom)
+                Column(
+                  children: [
+                    ListTile(
+                      key: const ValueKey('chatnotif-row-tone'),
+                      title: Text(l.notifTone, style: AppText.bodyPrimary),
+                      subtitle: Text(
+                        NotificationTones.label(
+                          prefs.customTone ?? NotificationTones.systemDefault,
+                        ),
+                        key: const ValueKey('chatnotif-value-tone'),
+                        style:
+                            AppText.caption.copyWith(color: AppColors.medBlue),
                       ),
-                      key: const ValueKey('chatnotif-value-tone'),
-                      style: AppText.caption.copyWith(
-                        color: custom ? AppColors.medBlue : AppColors.textMuted,
-                      ),
+                      trailing:
+                          Icon(Icons.chevron_right, color: AppColors.textMuted),
+                      onTap: () =>
+                          context.push(AppRoutes.tonePicker(conversationId)),
                     ),
-                    trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
-                    onTap: custom
-                        ? () => context.push(AppRoutes.tonePicker(conversationId))
-                        : null,
-                  ),
-                  const Divider(height: 1, indent: AppSpacing.lg),
-                ],
-              ),
+                    const Divider(height: 1, indent: AppSpacing.lg),
+                  ],
+                ),
               if (android && custom)
                 SettingsChoiceRow<VibratePattern>(
                   keyPrefix: 'chatnotif',
@@ -149,10 +156,16 @@ class CustomNotificationsScreen extends ConsumerWidget {
                 ListTile(
                   key: const ValueKey('chatnotif-row-vibrate'),
                   enabled: false,
-                  title: Text(l.notifVibrate, style: AppText.bodyPrimary),
+                  // Not adjustable here: drawn in the disabled colour (the
+                  // explicit text styles would otherwise keep it at full
+                  // strength).
+                  title: Text(
+                    l.notifVibrate,
+                    style: AppText.bodyPrimary.copyWith(color: Theme.of(context).disabledColor),
+                  ),
                   subtitle: Text(
-                    android ? l.notifVibrateDefault : l.notifVibrateDefault,
-                    style: AppText.caption,
+                    l.notifVibrateDefault,
+                    style: AppText.caption.copyWith(color: Theme.of(context).disabledColor),
                   ),
                 ),
             ],

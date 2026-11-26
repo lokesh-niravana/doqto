@@ -6,6 +6,7 @@ import '../../core/tokens/radii.dart';
 import '../../core/tokens/spacing.dart';
 import '../../core/tokens/typography.dart';
 import '../../core/utils/rich_text.dart';
+import 'message_bubble.dart' show kOnSentInset;
 
 /// A message body with WhatsApp-style formatting, @mention chips, tappable
 /// links / phone numbers and an optional search [highlight] (batch 4).
@@ -105,9 +106,7 @@ class _MessageTextState extends State<MessageText> {
                 margin: const EdgeInsets.symmetric(vertical: 2),
                 padding: const EdgeInsets.all(AppSpacing.sm),
                 decoration: BoxDecoration(
-                  color: widget.isMine
-                      ? AppColors.white.withValues(alpha: 0.15)
-                      : AppColors.gray100,
+                  color: widget.isMine ? kOnSentInset : AppColors.gray100,
                   borderRadius: AppRadii.rSm,
                 ),
                 child: Text(
@@ -138,7 +137,10 @@ class _MessageTextState extends State<MessageText> {
     return s;
   }
 
-  Color get _accent => widget.isMine ? AppColors.white : AppColors.medBlue;
+  /// Mentions, links and phone numbers. On a received bubble the brand teal
+  /// is under 4.5:1 on the mention tint and on some chat themes; the badge
+  /// teal is 5.5:1 or better on all of them.
+  Color get _accent => widget.isMine ? AppColors.white : AppColors.tealBadgeText;
 
   List<InlineSpan> _span(InlineNode n, TextStyle base) {
     final st = _styled(base, n.styles);
@@ -153,9 +155,7 @@ class _MessageTextState extends State<MessageText> {
             style: st.copyWith(
               color: _accent,
               fontWeight: FontWeight.w700,
-              backgroundColor: widget.isMine
-                  ? AppColors.white.withValues(alpha: 0.18)
-                  : AppColors.medBlueLight,
+              backgroundColor: widget.isMine ? kOnSentInset : AppColors.medBlueLight,
             ),
             recognizer: widget.onMentionTap == null ? null : _tap(() => widget.onMentionTap!(userId)),
             semanticsLabel: 'mention ${name ?? ''}',
@@ -202,7 +202,10 @@ class _MessageTextState extends State<MessageText> {
       out.add(TextSpan(
         text: text.substring(i, i + q.length),
         style: st.copyWith(
-          backgroundColor: AppColors.amber.withValues(alpha: 0.55),
+          // Opaque: a translucent amber let a dark sent bubble show through
+          // and dropped the navy text to 3.67:1. Solid, it is 8.29:1 on
+          // every bubble.
+          backgroundColor: AppColors.amber,
           color: AppColors.gray900,
           fontWeight: FontWeight.w600,
         ),

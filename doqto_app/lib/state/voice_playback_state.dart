@@ -155,6 +155,10 @@ class VoicePlayback extends ChangeNotifier {
     await _start(messageId, conversationId, resolve);
   }
 
+  /// The note whose audio last failed to load; cleared by the next start.
+  String? get failedId => _failedId;
+  String? _failedId;
+
   Future<void> _start(
     String messageId,
     String conversationId,
@@ -169,6 +173,7 @@ class VoicePlayback extends ChangeNotifier {
     _position = Duration.zero;
     _duration = Duration.zero;
     _loading = true;
+    _failedId = null;
     notifyListeners();
     try {
       final src = await resolve();
@@ -185,6 +190,8 @@ class VoicePlayback extends ChangeNotifier {
       if (_messageId == messageId) {
         _messageId = null;
         _loading = false;
+        // The bubble says so and its Play button tries again.
+        _failedId = messageId;
         notifyListeners();
       }
     }

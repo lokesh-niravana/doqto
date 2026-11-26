@@ -37,6 +37,18 @@ class AppTheme {
         backgroundColor: AppColors.surface,
         surfaceTintColor: Colors.transparent,
       ),
+      // White on every snackbar fill the app uses: 5.03:1 on brand teal,
+      // 5.30:1 on red, 13.4:1 on the default dark surface. The M3 default
+      // content colour is 4.44:1 on teal, and its default action colour (a
+      // pale teal) is unreadable there.
+      // Floating: the Scaffold lifts it clear of the shell's raised mic
+      // button (fixed, it sat on the tab bar's top edge, half under the
+      // button). The fill is unchanged, so the contrast figures above hold.
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        contentTextStyle: AppText.bodyPrimary.copyWith(color: AppColors.white),
+        actionTextColor: AppColors.white,
+      ),
       listTileTheme: ListTileThemeData(
         textColor: AppColors.textPrimary,
         iconColor: AppColors.textSecondary,

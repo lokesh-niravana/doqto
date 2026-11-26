@@ -11,6 +11,7 @@ import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../state/groups_state.dart';
 import '../../widgets/primary_button.dart';
+import '../../widgets/root_back_button.dart';
 
 /// Landing for an invite link (`doqto:///g/<token>`): joins through the
 /// token, then replaces itself with the group. An expired, revoked or used-up
@@ -58,7 +59,11 @@ class _GroupInviteLinkScreenState extends ConsumerState<GroupInviteLinkScreen> {
     final error = _error;
     return Scaffold(
       backgroundColor: AppColors.appBg,
-      appBar: AppBar(title: const Text(Strings.groupInfoTitle)),
+      appBar: AppBar(
+        // An invite link lands here with nothing underneath.
+        leading: const RootBackButton(),
+        title: const Text(Strings.groupInfoTitle),
+      ),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.xl),
@@ -77,10 +82,15 @@ class _GroupInviteLinkScreenState extends ConsumerState<GroupInviteLinkScreen> {
                     Icon(Icons.link_off_rounded,
                         size: 40, color: AppColors.textMuted),
                     const SizedBox(height: AppSpacing.md),
-                    Text(
-                      ErrorMessages.forApi(error),
-                      style: AppText.body,
-                      textAlign: TextAlign.center,
+                    // Announced when it replaces the spinner.
+                    Semantics(
+                      container: true,
+                      liveRegion: true,
+                      child: Text(
+                        ErrorMessages.forApi(error),
+                        style: AppText.body,
+                        textAlign: TextAlign.center,
+                      ),
                     ),
                     const SizedBox(height: AppSpacing.lg),
                     AppButton(

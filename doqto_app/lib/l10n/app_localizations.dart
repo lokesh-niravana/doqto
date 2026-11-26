@@ -1262,6 +1262,12 @@ abstract class AppLocalizations {
   /// **'Couldn\'t open the link.'**
   String get helpOpenFailed;
 
+  /// No description provided for @helpEmailCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Email address copied: {email}'**
+  String helpEmailCopied(String email);
+
   /// No description provided for @languageFooter.
   ///
   /// In en, this message translates to:

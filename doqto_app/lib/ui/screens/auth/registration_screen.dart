@@ -7,6 +7,7 @@ import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
+import '../../../core/tokens/motion.dart';
 import '../../../core/tokens/radii.dart';
 import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
@@ -16,6 +17,7 @@ import '../../../data/models/user.dart';
 import '../../../data/services/npi_lookup.dart';
 import '../../../data/services/auth_broker.dart';
 import '../../../state/auth_state.dart';
+import '../../widgets/app_pressable.dart';
 import '../../widgets/app_text_field.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/inline_error.dart';
@@ -23,6 +25,8 @@ import '../../widgets/legal_footer.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/phone_field.dart';
 import '../../widgets/specialty_field.dart';
+import '../settings/settings_screen.dart';
+import '../../widgets/confirm_sign_out.dart';
 
 /// Registration, prefilled from the public CMS NPI registry — see
 /// `docs/npi-lookup.md`. The lookup is best-effort: it never blocks Continue,
@@ -43,6 +47,9 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
   final _firstKey = GlobalKey<AppTextFieldState>();
   final _lastKey = GlobalKey<AppTextFieldState>();
   final _npiKey = GlobalKey<AppTextFieldState>();
+  // Anchors for scrolling the first invalid field into view on submit.
+  final _specialtyKey = GlobalKey();
+  final _phoneKey = GlobalKey();
 
   bool _loading = false;
   String? _submitError;
@@ -252,6 +259,25 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
       _phoneError = _phonePending ? Strings.regPhoneUnverified : null;
     });
     if (!firstOk || !lastOk || !npiOk || specialtyError != null || _phonePending) {
+      // Continue sits at the bottom of the form: the field that stopped it
+      // may be off screen above. Bring the first one into view.
+      final firstInvalid = !firstOk
+          ? _firstKey.currentContext
+          : !lastOk
+              ? _lastKey.currentContext
+              : specialtyError != null
+                  ? _specialtyKey.currentContext
+                  : !npiOk
+                      ? _npiKey.currentContext
+                      : _phoneKey.currentContext;
+      if (firstInvalid != null && firstInvalid.mounted) {
+        await Scrollable.ensureVisible(
+          firstInvalid,
+          alignment: 0.1,
+          duration: AppMotion.maybe(context, AppMotion.enter),
+          curve: AppMotion.standard,
+        );
+      }
       return;
     }
 
@@ -284,7 +310,12 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Your details')),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
+        // An explicit padding drops the automatic safe-area inset, so the
+        // home-indicator height is added back under the Continue button.
+        padding: const EdgeInsets.all(AppSpacing.screenHorizontal).copyWith(
+          bottom: AppSpacing.screenHorizontal +
+              MediaQuery.paddingOf(context).bottom,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -295,10 +326,32 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
               children: [
                 Text(Strings.regSignedInAs(_identity), style: AppText.caption),
                 TextButton(
-                  onPressed: () => ref.read(authProvider.notifier).signOut(),
+                  key: const ValueKey('registration-sign-out'),
+                  onPressed: () async {
+                    final auth = ref.read(authProvider.notifier);
+                    if (!await confirmSignOut(context)) return;
+                    await auth.signOut();
+                  },
                   child: const Text(Strings.regSignOut),
                 ),
               ],
+            ),
+            // App Store 5.1.1(v): signing in already created an account, so
+            // it must be deletable from here too — not only after the form.
+            Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: TextButton(
+                key: const ValueKey('registration-delete-account'),
+                onPressed: () async {
+                  if (!await SettingsScreen.confirmDeleteAccount(context)) return;
+                  if (!context.mounted) return;
+                  await SettingsScreen.deleteAccountAndLeave(context, ref);
+                },
+                style: TextButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.error,
+                ),
+                child: const Text(Strings.regDeleteAccount),
+              ),
             ),
             const SizedBox(height: AppSpacing.sm),
             // One Focus around both name fields: tabbing first → last keeps
@@ -317,6 +370,8 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
                       controller: _first,
                       label: '${Strings.regFirstName} *',
                       validator: Validators.personName(Strings.regFirstName),
+                      autofillHints: const [AutofillHints.givenName],
+                      textInputAction: TextInputAction.next,
                       onChanged: (_) => _clearSubmitError(),
                     ),
                   ),
@@ -328,6 +383,8 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
                       controller: _last,
                       label: '${Strings.regLastName} *',
                       validator: Validators.personName(Strings.regLastName),
+                      autofillHints: const [AutofillHints.familyName],
+                      textInputAction: TextInputAction.next,
                       onChanged: (_) => _clearSubmitError(),
                     ),
                   ),
@@ -349,6 +406,7 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
             FadeSlideIn.staggered(
               2,
               SpecialtyField(
+                key: _specialtyKey,
                 controller: _specialty,
                 label: '${Strings.regSpecialty} *',
                 errorText: _specialtyError,
@@ -384,7 +442,7 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
               ),
             ),
             if (_askPhone) ...[
-              const SizedBox(height: AppSpacing.lg),
+              SizedBox(key: _phoneKey, height: AppSpacing.lg),
               _OptionalPhone(
                 errorText: _phoneError,
                 onPendingChanged: (pending) => setState(() {
@@ -402,8 +460,9 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
               AppButton(
                 label: Strings.regContinue,
                 // Never gated on the lookup — it is a convenience, not a step.
-                // Gated on the phone: a typed number must be verified first.
-                onPressed: _phonePending ? null : _submit,
+                // Not disabled for an unverified phone either: _submit
+                // refuses and says why, which a dead button never could.
+                onPressed: _submit,
                 loading: _loading,
                 expand: true,
               ),
@@ -454,19 +513,27 @@ class _MatchCard extends StatelessWidget {
                   style: AppText.caption.copyWith(color: AppColors.medBlueDark),
                 ),
               ),
-              GestureDetector(
+              // 44pt target around the small link; the gap below is dropped
+              // because the taller row now supplies it.
+              AppPressable(
+                minTarget: true,
                 onTap: onDismiss,
-                child: Text(
-                  Strings.regMatchDismiss,
-                  style: AppText.caption.copyWith(
-                    color: AppColors.medBlue,
-                    decoration: TextDecoration.underline,
+                child: Center(
+                  widthFactor: 1,
+                  heightFactor: 1,
+                  child: Text(
+                    Strings.regMatchDismiss,
+                    // medBlue on this medBlueLight card is 4.36:1; the
+                    // navy is 11.9:1 and the underline still marks the link.
+                    style: AppText.caption.copyWith(
+                      color: AppColors.medBlueDark,
+                      decoration: TextDecoration.underline,
+                    ),
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: AppSpacing.sm),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -479,15 +546,20 @@ class _MatchCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.xs),
             Text(line, style: AppText.caption),
           ],
-          const SizedBox(height: AppSpacing.sm),
-          GestureDetector(
+          AppPressable(
+            minTarget: true,
             onTap: onUse,
-            child: Text(
-              Strings.regMatchUse,
-              style: AppText.caption.copyWith(
-                color: AppColors.medBlue,
-                fontWeight: FontWeight.w600,
-                decoration: TextDecoration.underline,
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              widthFactor: 1,
+              heightFactor: 1,
+              child: Text(
+                Strings.regMatchUse,
+                style: AppText.caption.copyWith(
+                  color: AppColors.medBlueDark,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.underline,
+                ),
               ),
             ),
           ),
@@ -642,6 +714,8 @@ class _OptionalPhoneState extends ConsumerState<_OptionalPhone> {
             validator: Validators.otp(_codeLength),
             // Six digits is a complete code: drop the keypad and check it.
             dismissOnValid: true,
+            autofillHints: const [AutofillHints.oneTimeCode],
+            textInputAction: TextInputAction.done,
             errorText: _error ?? widget.errorText,
             onChanged: (v) {
               // Rebuild so Verify enables at six digits; the last digit also

@@ -17,6 +17,7 @@ import '../../../state/auth_state.dart';
 import '../../widgets/app_skeleton.dart';
 import '../../widgets/doctor_avatar.dart';
 import '../../widgets/inline_connect.dart';
+import '../../widgets/load_failed.dart';
 import '../../widgets/member_row.dart';
 import '../../widgets/search_bar.dart';
 
@@ -66,6 +67,9 @@ class _InviteScreenState extends ConsumerState<InviteScreen> {
     final results = q.length < 2
         ? null
         : ref.read(networkRepositoryProvider).npiLookup(q, state: _state);
+    // The FutureBuilder shows a failure (with Retry); this only keeps one
+    // that lands before the builder subscribes from being reported unhandled.
+    results?.ignore();
     setState(() {
       _results = results;
     });
@@ -86,7 +90,14 @@ class _InviteScreenState extends ConsumerState<InviteScreen> {
     await ref.read(shareTextProvider)(Strings.inviteMessage(hit?.greeting), origin);
   }
 
+  // True while a thread is being created/opened: a second tap would fire
+  // the request twice and push the chat twice.
+  // Holds that person's id, so their pill can show the progress.
+  String? _startingChatId;
+
   Future<void> _message(String userId) async {
+    if (_startingChatId != null) return;
+    setState(() => _startingChatId = userId);
     try {
       final conv = await ref.read(chatRepositoryProvider).createConversation(
             type: ConversationType.direct,
@@ -100,6 +111,8 @@ class _InviteScreenState extends ConsumerState<InviteScreen> {
         content: Text(ErrorMessages.forApi(e)),
         backgroundColor: AppColors.red,
       ));
+    } finally {
+      if (mounted) setState(() => _startingChatId = null);
     }
   }
 
@@ -126,8 +139,30 @@ class _InviteScreenState extends ConsumerState<InviteScreen> {
               Padding(
                 padding: const EdgeInsets.only(right: AppSpacing.lg),
                 child: DropdownButton<String?>(
+                  key: const ValueKey('invite-state-filter'),
                   value: _state,
-                  hint: const Text(Strings.inviteStateLabel),
+                  // The closed button names itself — "State: Any",
+                  // "State: TX" — instead of showing a bare value. (A hint
+                  // never showed: the null value is an item, "Any".)
+                  selectedItemBuilder: (context) => [
+                    for (final s in <String?>[null, ..._states])
+                      // With `itemHeight: null` the closed button is only as
+                      // tall as this child: keep it a full touch target.
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          minHeight: kMinInteractiveDimension,
+                        ),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          widthFactor: 1,
+                          child: Text(
+                            Strings.inviteStateValue(s ?? Strings.inviteAnyState),
+                          ),
+                        ),
+                      ),
+                  ],
+                  // Rows grow with the text size instead of clipping at 48pt.
+                  itemHeight: null,
                   underline: const SizedBox.shrink(),
                   borderRadius: AppRadii.rMd,
                   menuMaxHeight: 360,
@@ -153,7 +188,13 @@ class _InviteScreenState extends ConsumerState<InviteScreen> {
                 } else if (snap.connectionState != ConnectionState.done) {
                   return const SkeletonList();
                 } else if (snap.hasError) {
-                  top = [_Note(ErrorMessages.forApi(snap.error!))];
+                  // A failed lookup always comes with a way to try again.
+                  top = [
+                    LoadFailed(
+                      message: ErrorMessages.forApi(snap.error!),
+                      onRetry: _search,
+                    ),
+                  ];
                 } else if (snap.data!.isEmpty) {
                   top = [_Note(Strings.inviteNoResults)];
                 } else {
@@ -186,18 +227,10 @@ class _InviteScreenState extends ConsumerState<InviteScreen> {
         .take(2)
         .join();
     final userId = hit.userId;
-    return MemberRow(
-      avatar: DoctorAvatar(
-        initials: initials,
-        colorIndex: hit.npi.hashCode,
-        size: AvatarSize.lg,
-      ),
-      title: hit.name,
-      subtitle: [hit.specialty, hit.location].whereType<String>().join(' · '),
-      onTap: userId == null ? null : () => context.push(AppRoutes.person(userId)),
-      trailing: switch (hit.status) {
+    final Widget control = switch (hit.status) {
         NpiStatus.message => _Pill(
             label: Strings.netMessage,
+            loading: _startingChatId == userId,
             onPressed: () => _message(userId!),
           ),
         NpiStatus.requested => const _Pill(label: Strings.inviteRequested),
@@ -210,7 +243,37 @@ class _InviteScreenState extends ConsumerState<InviteScreen> {
               onPressed: () => _invite(c, hit),
             ),
           ),
-      },
+    };
+    // Past about 1.3x the pill left seven or so characters of the name: it
+    // moves to a line of its own under the row.
+    final large = MediaQuery.textScalerOf(context).scale(100) / 100 > 1.3;
+    final row = MemberRow(
+      avatar: DoctorAvatar(
+        initials: initials,
+        colorIndex: hit.npi.hashCode,
+        size: AvatarSize.lg,
+      ),
+      title: hit.name,
+      subtitle: [hit.specialty, hit.location].whereType<String>().join(' · '),
+      onTap: userId == null ? null : () => context.push(AppRoutes.person(userId)),
+      trailing: large ? null : control,
+    );
+    if (!large) return row;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        row,
+        Align(
+          alignment: AlignmentDirectional.centerEnd,
+          child: Padding(
+            padding: const EdgeInsetsDirectional.only(
+              end: AppSpacing.screenHorizontal,
+              bottom: AppSpacing.sm,
+            ),
+            child: control,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -221,15 +284,27 @@ class _Pill extends StatelessWidget {
   final IconData? icon;
   final bool accent;
   final VoidCallback? onPressed;
-  const _Pill({required this.label, this.icon, this.accent = false, this.onPressed});
+
+  /// Shows a small spinner beside the label while the action runs.
+  final bool loading;
+  const _Pill({
+    required this.label,
+    this.icon,
+    this.accent = false,
+    this.onPressed,
+    this.loading = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     final style = TextButton.styleFrom(
       padding: const EdgeInsets.symmetric(horizontal: 14),
       minimumSize: const Size(0, 34),
+      // Drawn 34pt tall; the padded tap target makes the hit area 48pt.
+      tapTargetSize: MaterialTapTargetSize.padded,
       backgroundColor: accent ? AppColors.medBlueLight : AppColors.white,
-      foregroundColor: accent ? AppColors.medBlue : AppColors.medBlueDark,
+      // Brand teal is 4.36:1 on the pale teal fill; the badge teal is 5.53:1.
+      foregroundColor: accent ? AppColors.tealBadgeText : AppColors.medBlueDark,
       disabledBackgroundColor: AppColors.gray100,
       disabledForegroundColor: AppColors.gray600,
       shape: StadiumBorder(
@@ -239,17 +314,31 @@ class _Pill extends StatelessWidget {
       ),
       textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
     );
-    return SizedBox(
-      height: 34,
-      child: icon == null
-          ? TextButton(onPressed: onPressed, style: style, child: Text(label))
-          : TextButton.icon(
-              onPressed: onPressed,
-              style: style,
-              icon: Icon(icon, size: 16),
-              label: Text(label),
-            ),
-    );
+    // No fixed height: the label can grow with the user's text size.
+    if (loading) {
+      // Still enabled-looking and still named; a second tap is ignored by
+      // the caller's guard.
+      return TextButton.icon(
+        onPressed: onPressed,
+        style: style,
+        icon: const SizedBox.square(
+          dimension: 14,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            semanticsLabel: Strings.loading,
+          ),
+        ),
+        label: Text(label),
+      );
+    }
+    return icon == null
+        ? TextButton(onPressed: onPressed, style: style, child: Text(label))
+        : TextButton.icon(
+            onPressed: onPressed,
+            style: style,
+            icon: Icon(icon, size: 16),
+            label: Text(label),
+          );
   }
 }
 

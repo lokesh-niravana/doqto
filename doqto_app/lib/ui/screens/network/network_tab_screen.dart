@@ -12,11 +12,14 @@ import '../../../data/models/network_profile.dart';
 import '../../../state/network_state.dart';
 import '../../widgets/app_skeleton.dart';
 import '../../widgets/fade_slide_in.dart';
+import '../../widgets/inline_error.dart';
 import '../../widgets/invitation_card.dart';
 import '../../widgets/person_card_row.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/section_card.dart';
 import 'suggestions_screen.dart';
+import '../home/main_shell.dart';
+import '../../widgets/refresh_feedback.dart';
 
 /// Network tab: an invitations preview (top ≤2 received pending), a connections
 /// preview with a count + "Manage all", "Recommended for you" (top 5 + See all)
@@ -37,11 +40,29 @@ class NetworkTabScreen extends ConsumerWidget {
 
     final invites = invitesAsync.valueOrNull ?? const <Invitation>[];
     final connections = connectionsAsync.valueOrNull ?? const <PersonCard>[];
-    final loading = invitesAsync.isLoading && connectionsAsync.isLoading;
+    // Either list still on its way with nothing to show for it is loading:
+    // with `&&` the first answer in painted "no connections yet" (or the
+    // empty-network pane) while the other request was still pending.
+    final loading = (invitesAsync.isLoading && !invitesAsync.hasValue) ||
+        (connectionsAsync.isLoading && !connectionsAsync.hasValue);
     final isEmpty = !loading &&
         invites.isEmpty &&
         connections.isEmpty &&
         suggestions.isEmpty;
+    // Nothing to show AND a load failed: that is an error, not an empty
+    // network. (With anything cached on screen, the list stays and
+    // pull-to-refresh retries.)
+    // Suggestions are a bonus: their failure alone leaves the true "empty
+    // network" pane.
+    final settled = !invitesAsync.isLoading && !connectionsAsync.isLoading;
+    final Object? loadError = isEmpty && settled
+        ? (invitesAsync.error ?? connectionsAsync.error)
+        : null;
+    void retry() {
+      ref.invalidate(invitationsProvider);
+      ref.invalidate(connectionsProvider);
+      ref.invalidate(suggestionsProvider);
+    }
 
     return Scaffold(
       backgroundColor: AppColors.appBg,
@@ -60,15 +81,32 @@ class NetworkTabScreen extends ConsumerWidget {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: () async {
+        onRefresh: () => refreshWithFeedback(context, () async {
+          // All three run to the end; the first failure is the one reported.
+          Object? failure;
+          Future<void> run(Future<void> Function() refresh) async {
+            try {
+              await refresh();
+            } catch (e) {
+              failure ??= e;
+            }
+          }
+
           await Future.wait([
-            ref.read(invitationsProvider.notifier).refresh(),
-            ref.read(connectionsProvider.notifier).refresh(),
-            ref.read(suggestionsProvider.notifier).refresh(),
+            run(() => ref.read(invitationsProvider.notifier).refresh(rethrowOnError: true)),
+            run(() => ref.read(connectionsProvider.notifier).refresh(rethrowOnError: true)),
+            run(() => ref.read(suggestionsProvider.notifier).refresh(rethrowOnError: true)),
           ]);
-        },
+          final e = failure;
+          if (e != null) throw e;
+        }),
         child: loading
             ? const SkeletonList()
+            : loadError != null
+                ? _ErrorPane(
+                    message: ErrorMessages.forApi(loadError),
+                    onRetry: retry,
+                  )
             : isEmpty
                 ? _EmptyNetwork(
                     onDiscover: () => context.push(AppRoutes.peopleSearch),
@@ -78,6 +116,7 @@ class NetworkTabScreen extends ConsumerWidget {
                     padding: EdgeInsets.only(
                       top: AppSpacing.md,
                       bottom: MediaQuery.paddingOf(context).bottom +
+                          kMicButtonRise +
                           AppSpacing.xl,
                     ),
                     children: [
@@ -89,6 +128,13 @@ class NetworkTabScreen extends ConsumerWidget {
                       _ConnectionsPreview(
                         connections: connections,
                         previewCount: _connectionPreviewCount,
+                        // Failed with nothing cached: that is not "no
+                        // connections yet".
+                        error: connectionsAsync.hasError &&
+                                !connectionsAsync.hasValue
+                            ? connectionsAsync.error
+                            : null,
+                        onRetry: () => ref.invalidate(connectionsProvider),
                       ),
                       if (suggestions.isNotEmpty)
                         _SuggestionsPreview(
@@ -128,10 +174,15 @@ class _InvitationsAction extends StatelessWidget {
                   color: AppColors.red,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Text(
-                  count > 99 ? '99+' : '$count',
-                  textAlign: TextAlign.center,
-                  style: AppText.badge.copyWith(color: AppColors.white),
+                // Clamped as the tab bar badge is: at the largest text
+                // sizes it grew over the icon it sits on.
+                child: MediaQuery.withClampedTextScaling(
+                  maxScaleFactor: 1.3,
+                  child: Text(
+                    count > 99 ? '99+' : '$count',
+                    textAlign: TextAlign.center,
+                    style: AppText.badge.copyWith(color: AppColors.white),
+                  ),
                 ),
               ),
             ),
@@ -191,8 +242,8 @@ class _InvitationsPreview extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.only(
                 left: AppSpacing.xs, bottom: AppSpacing.sm),
-            child: Text(Strings.netInvitations.toUpperCase(),
-                style: AppText.label),
+            child: Semantics(header: true, child: Text(Strings.netInvitations.toUpperCase(),
+                style: AppText.label)),
           ),
           for (final (i, inv) in shown.indexed) ...[
             if (i > 0) const SizedBox(height: AppSpacing.sm),
@@ -224,9 +275,16 @@ class _InvitationsPreview extends ConsumerWidget {
 class _ConnectionsPreview extends StatelessWidget {
   final List<PersonCard> connections;
   final int previewCount;
+
+  /// Set when the connections call failed and there is nothing to show for
+  /// it: the section says so, with [onRetry], instead of "no connections".
+  final Object? error;
+  final VoidCallback? onRetry;
   const _ConnectionsPreview({
     required this.connections,
     required this.previewCount,
+    this.error,
+    this.onRetry,
   });
 
   @override
@@ -243,8 +301,8 @@ class _ConnectionsPreview extends StatelessWidget {
                 left: AppSpacing.xs, bottom: AppSpacing.sm),
             child: Row(
               children: [
-                Text(Strings.netYourConnections.toUpperCase(),
-                    style: AppText.label),
+                Semantics(header: true, child: Text(Strings.netYourConnections.toUpperCase(),
+                    style: AppText.label)),
                 const SizedBox(width: AppSpacing.sm),
                 if (connections.isNotEmpty)
                   Text('${connections.length}',
@@ -252,7 +310,27 @@ class _ConnectionsPreview extends StatelessWidget {
               ],
             ),
           ),
-          if (connections.isEmpty)
+          if (connections.isEmpty && error != null)
+            SectionCard(
+              key: const ValueKey('network-connections-error'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  InlineError(ErrorMessages.forApi(error)),
+                  const SizedBox(height: AppSpacing.sm),
+                  AppButton(
+                    key: const ValueKey('network-connections-retry'),
+                    label: Strings.retry,
+                    icon: Icons.refresh_rounded,
+                    variant: AppButtonVariant.ghost,
+                    expand: true,
+                    onPressed: onRetry,
+                  ),
+                ],
+              ),
+            )
+          else if (connections.isEmpty)
             SectionCard(
               child: Text(Strings.netEmptyConnections, style: AppText.caption),
             )
@@ -300,7 +378,7 @@ class _SuggestionsPreview extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(
                 left: AppSpacing.xs, bottom: AppSpacing.sm),
-            child: Text('RECOMMENDED FOR YOU', style: AppText.label),
+            child: Semantics(header: true, child: Text('RECOMMENDED FOR YOU', style: AppText.label)),
           ),
           for (final (i, p) in suggestions.take(previewCount).indexed)
             FadeSlideIn.staggered(i, SuggestionRow(person: p)),
@@ -341,6 +419,47 @@ class _SeeAllButton extends StatelessWidget {
   }
 }
 
+/// A failed first load. Scrollable so pull-to-refresh still works on it.
+class _ErrorPane extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+  const _ErrorPane({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      key: const ValueKey('network-error'),
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        SizedBox(height: MediaQuery.of(context).size.height * 0.22),
+        Padding(
+          padding: const EdgeInsets.all(AppSpacing.xl),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.wifi_off_rounded, size: 40, color: AppColors.textMuted),
+              const SizedBox(height: AppSpacing.md),
+              // Announced when it replaces the loading state.
+              Semantics(
+                container: true,
+                liveRegion: true,
+                child: Text(message, style: AppText.caption, textAlign: TextAlign.center),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              AppButton(
+                key: const ValueKey('network-retry'),
+                label: Strings.retry,
+                icon: Icons.refresh_rounded,
+                onPressed: onRetry,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _EmptyNetwork extends StatelessWidget {
   final VoidCallback onDiscover;
   const _EmptyNetwork({required this.onDiscover});
@@ -360,8 +479,13 @@ class _EmptyNetwork extends StatelessWidget {
                 Icon(Icons.people_outline,
                     size: 48, color: AppColors.gray400),
                 const SizedBox(height: AppSpacing.lg),
-                Text(Strings.netEmptyNetwork,
-                    style: AppText.body, textAlign: TextAlign.center),
+                // Announced when it replaces the loading state.
+                Semantics(
+                  container: true,
+                  liveRegion: true,
+                  child: Text(Strings.netEmptyNetwork,
+                      style: AppText.body, textAlign: TextAlign.center),
+                ),
                 const SizedBox(height: AppSpacing.lg),
                 AppButton(
                   label: Strings.netDiscoverPeople,

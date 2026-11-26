@@ -56,9 +56,13 @@ class _Engine implements VoiceAudioEngine {
 
   @override
   Future<Duration?> load(String pathOrUrl, {required bool isFile}) async {
+    if (failLoad) throw StateError('no audio');
     loaded.add(pathOrUrl);
     return const Duration(seconds: 10);
   }
+
+  /// The next loads throw, as a dead URL or a missing file does.
+  bool failLoad = false;
 
   @override
   Future<void> play() async {
@@ -90,13 +94,17 @@ class _Engine implements VoiceAudioEngine {
 }
 
 class _Native implements MediaNative {
+  @override
+  Future<bool> cameraAccessDenied() async => false;
+
   NetworkType network = NetworkType.wifi;
   final earpiece = <bool>[];
   final _prox = StreamController<bool>.broadcast();
   @override
   Future<VideoPoster?> videoPoster(String path, {int maxSide = 720}) async => null;
+  SaveToPhotosResult saveResult = SaveToPhotosResult.saved;
   @override
-  Future<bool> saveToPhotos(String path) async => true;
+  Future<SaveToPhotosResult> saveToPhotos(String path) async => saveResult;
   @override
   Future<bool?> scanDocument(String outputPath) async => null;
   @override
@@ -211,6 +219,34 @@ void main() {
       expect(find.byKey(const ValueKey('voice-play-icon')), findsOneWidget);
     });
 
+    testWidgets('a note that fails to load says so, and Play tries again', (tester) async {
+      final handle = tester.ensureSemantics();
+      engine.failLoad = true;
+      await tester.pumpWidget(app(bubble()));
+      await tester.tap(find.byKey(const ValueKey('voice-play-v1')));
+      await settle(tester);
+      // Not just back to a Play icon: the reason, announced, and a retry.
+      final line = find.byKey(const ValueKey('voice-failed-v1'));
+      expect(line, findsOneWidget);
+      expect(tester.widget<Text>(line).data, Strings.voiceLoadFailed);
+      expect(
+        tester.getSemantics(line).flagsCollection.isLiveRegion,
+        isTrue,
+      );
+      expect(find.bySemanticsLabel(Strings.voiceRetry), findsOneWidget);
+      expect(find.byKey(const ValueKey('voice-time-v1')), findsNothing);
+
+      // The same button retries; a load that works clears the message.
+      engine.failLoad = false;
+      await tester.tap(find.byKey(const ValueKey('voice-play-v1')));
+      await settle(tester);
+      expect(engine.loaded, ['/tmp/v1.m4a']);
+      expect(engine.plays, 1);
+      expect(line, findsNothing);
+      expect(find.byKey(const ValueKey('voice-time-v1')), findsOneWidget);
+      handle.dispose();
+    });
+
     testWidgets('dragging the waveform seeks to that fraction', (tester) async {
       await tester.pumpWidget(app(bubble()));
       await tester.tap(find.byKey(const ValueKey('voice-play-v1')));
@@ -300,8 +336,15 @@ void main() {
 
       await tester.enterText(find.byKey(const ValueKey('poll-option-1')), 'pizza');
       await tester.pump();
-      expect(_enabled(tester, send), isFalse,
+      // Duplicates keep Send enabled so that tapping it can say why not.
+      expect(_enabled(tester, send), isTrue);
+      await tester.ensureVisible(send);
+      await tester.tap(send);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('poll-error')), findsOneWidget,
           reason: 'duplicate options differ only by case');
+      expect(find.text(Strings.pollDuplicate), findsOneWidget);
+      expect(out, isNull);
 
       await tester.enterText(find.byKey(const ValueKey('poll-option-1')), 'Sushi');
       await tester.pump();
@@ -331,6 +374,63 @@ void main() {
       expect(out!.question, 'Lunch?');
       expect(out!.options, ['Pizza', 'Sushi']);
       expect(out!.multiple, isTrue);
+    });
+
+    testWidgets('a failed send keeps the sheet open with the draft and says why in the sheet', (tester) async {
+      var fail = true;
+      final sent = <PollDraft>[];
+      PollDraft? out;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => Center(
+              child: ElevatedButton(
+                key: const ValueKey('open'),
+                onPressed: () async => out = await showPollCreateSheet(
+                  ctx,
+                  onSend: (d) async {
+                    if (fail) throw Exception('offline');
+                    sent.add(d);
+                  },
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.byKey(const ValueKey('open')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('poll-question')), 'Lunch?');
+      await tester.enterText(find.byKey(const ValueKey('poll-option-0')), 'Pizza');
+      await tester.enterText(find.byKey(const ValueKey('poll-option-1')), 'Sushi');
+      await tester.pump();
+      final send = find.byKey(const ValueKey('poll-send'));
+      await tester.ensureVisible(send);
+      await tester.tap(send);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(PollCreateSheet), findsOneWidget, reason: 'still open');
+      expect(find.byKey(const ValueKey('poll-error')), findsOneWidget);
+      expect(find.text('Lunch?'), findsOneWidget, reason: 'draft intact');
+      expect(find.text('Sushi'), findsOneWidget);
+      expect(out, isNull);
+      // The error is a live region, so it is announced.
+      final handle = tester.ensureSemantics();
+      expect(
+        tester.getSemantics(find.byKey(const ValueKey('poll-error'))).flagsCollection.isLiveRegion,
+        isTrue,
+      );
+      handle.dispose();
+
+      // Retry once the connection is back: it sends and closes.
+      fail = false;
+      await tester.ensureVisible(send);
+      await tester.tap(send);
+      await tester.pumpAndSettle();
+      expect(find.byType(PollCreateSheet), findsNothing);
+      expect(sent.single.options, ['Pizza', 'Sushi']);
+      expect(out, isNotNull);
     });
 
     testWidgets('keyboard rule: tapping outside the question field dismisses the keypad', (tester) async {
@@ -628,7 +728,11 @@ void main() {
       expect(tester.widget<Text>(find.byKey(const ValueKey('storage-sent'))).data, '2 KB');
       expect(tester.widget<Text>(find.byKey(const ValueKey('storage-received'))).data, '5.0 MB');
       await tester.tap(find.byKey(const ValueKey('storage-reset-usage')));
-      await tester.pump();
+      await tester.pumpAndSettle();
+      // Resetting asks first; nothing is cleared until it is confirmed.
+      expect(usage.bytesSent, isNot(0));
+      await tester.tap(find.byKey(const ValueKey('storage-reset-confirm')));
+      await tester.pumpAndSettle();
       expect(usage.bytesSent, 0);
       expect(tester.widget<Text>(find.byKey(const ValueKey('storage-sent'))).data, '0 B');
       expect(tester.widget<Text>(find.byKey(const ValueKey('storage-received'))).data, '0 B');

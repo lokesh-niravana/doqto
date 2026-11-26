@@ -89,12 +89,17 @@ void main() {
       addTearDown(tester.view.reset);
       await pump(
         tester,
-        FittedBox(
-          fit: BoxFit.scaleDown,
+        // As the message menu hosts it: scrolled sideways, never scaled.
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
           child: ReactionTray(current: '🔥', onPick: (_) {}, onMore: () {}),
         ),
       );
       expect(tester.takeException(), isNull);
+      // Unscaled: the "more" target is still a full 44pt on a 320pt phone.
+      final more = tester.getSize(find.byKey(const ValueKey('reaction-more')));
+      expect(more.width, greaterThanOrEqualTo(44));
+      expect(more.height, greaterThanOrEqualTo(44));
     });
   });
 
@@ -235,6 +240,21 @@ void main() {
       await tester.pumpAndSettle();
       expect(result, '👏');
       expect(cache.recent, ['👏']);
+    });
+
+    testWidgets('cells are at least 44pt wide on a 402pt phone and a 320pt one', (tester) async {
+      for (final width in [402.0, 320.0]) {
+        tester.view.physicalSize = Size(width, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await open(tester, _MemCache());
+        await tester.enterText(find.byType(TextField), 'clap');
+        await tester.pumpAndSettle();
+        final cell = tester.getSize(find.byKey(const ValueKey('emoji-👏')));
+        expect(cell.width, greaterThanOrEqualTo(44), reason: 'width $width');
+        expect(cell.height, greaterThanOrEqualTo(44), reason: 'width $width');
+        await tester.pumpWidget(const SizedBox());
+      }
     });
 
     testWidgets('no match shows an empty state', (tester) async {

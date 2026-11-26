@@ -19,6 +19,9 @@ import '../../widgets/invitation_card.dart';
 import '../../widgets/member_row.dart';
 import '../../widgets/primary_button.dart';
 import '../../../core/utils/avatar_urls.dart';
+import '../home/main_shell.dart';
+import '../../../core/utils/async_retry.dart';
+import '../../widgets/refresh_feedback.dart';
 
 /// Full invitations inbox: Received (accept/ignore, optimistic) + Sent (pending
 /// with withdraw). Reachable from the Network tab's "See all" entry.
@@ -83,12 +86,12 @@ class _ReceivedList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(invitationsProvider);
-    return async.when(
+    return async.whenRetrying(
       skipLoadingOnReload: true,
       loading: () => const SkeletonList(),
       error: (e, _) => _ErrorPane(
         message: ErrorMessages.forApi(e),
-        onRetry: () => ref.read(invitationsProvider.notifier).refresh(),
+        onRetry: () => ref.invalidate(invitationsProvider),
       ),
       data: (invites) {
         if (invites.isEmpty) {
@@ -98,14 +101,17 @@ class _ReceivedList extends ConsumerWidget {
           );
         }
         return RefreshIndicator(
-          onRefresh: () => ref.read(invitationsProvider.notifier).refresh(),
+          onRefresh: () => refreshWithFeedback(
+            context,
+            () => ref.read(invitationsProvider.notifier).refresh(rethrowOnError: true),
+          ),
           child: ListView.separated(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: EdgeInsets.fromLTRB(
               AppSpacing.screenHorizontal,
               AppSpacing.md,
               AppSpacing.screenHorizontal,
-              MediaQuery.paddingOf(context).bottom + AppSpacing.xl,
+              MediaQuery.paddingOf(context).bottom + kMicButtonRise + AppSpacing.xl,
             ),
             itemCount: invites.length,
             separatorBuilder: (_, i) => const SizedBox(height: AppSpacing.sm),
@@ -146,7 +152,7 @@ class _SentList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(sentInvitationsProvider);
-    return async.when(
+    return async.whenRetrying(
       loading: () => const SkeletonList(),
       skipLoadingOnReload: true,
       error: (e, _) => _ErrorPane(
@@ -161,12 +167,15 @@ class _SentList extends ConsumerWidget {
           );
         }
         return RefreshIndicator(
-          onRefresh: () => ref.read(sentInvitationsProvider.notifier).refresh(),
+          onRefresh: () => refreshWithFeedback(
+            context,
+            () => ref.read(sentInvitationsProvider.notifier).refresh(rethrowOnError: true),
+          ),
           child: ListView.builder(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: EdgeInsets.only(
               top: AppSpacing.sm,
-              bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.xl,
+              bottom: MediaQuery.paddingOf(context).bottom + kMicButtonRise + AppSpacing.xl,
             ),
             itemCount: invites.length,
             itemBuilder: (context, i) => FadeSlideIn.staggered(
@@ -193,6 +202,26 @@ class _SentRowState extends ConsumerState<_SentRow> {
 
   Future<void> _withdraw() async {
     if (_withdrawing) return;
+    // Same question the profile's Connect button asks before withdrawing.
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        content: const Text(Strings.netWithdrawConfirm),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text(Strings.cancel),
+          ),
+          TextButton(
+            key: const ValueKey('withdraw-confirm'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.red),
+            child: const Text(Strings.netWithdraw),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted || _withdrawing) return;
     setState(() => _withdrawing = true);
     try {
       await ref
@@ -220,7 +249,16 @@ class _SentRowState extends ConsumerState<_SentRow> {
     final elapsed = widget.invitation.createdAt != null
         ? formatChatListTime(widget.invitation.createdAt!)
         : '';
-    return MemberRow(
+    final withdraw = AppButton(
+      label: Strings.netWithdraw,
+      variant: AppButtonVariant.ghost,
+      loading: _withdrawing,
+      onPressed: _withdraw,
+    );
+    // Past about 1.3x the button left some seven characters of the name: it
+    // moves to a line of its own under the row (as on Suggestions).
+    final large = MediaQuery.textScalerOf(context).scale(100) / 100 > 1.3;
+    final row = MemberRow(
       avatar: DoctorAvatar(
         initials: party?.initials ?? '?',
         colorIndex: party?.avatarIndex ?? 0,
@@ -234,12 +272,21 @@ class _SentRowState extends ConsumerState<_SentRow> {
       onTap: party != null
           ? () => context.push(AppRoutes.person(party.id))
           : null,
-      trailing: AppButton(
-        label: Strings.netWithdraw,
-        variant: AppButtonVariant.ghost,
-        loading: _withdrawing,
-        onPressed: _withdraw,
-      ),
+      trailing: large ? null : withdraw,
+    );
+    if (!large) return row;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        row,
+        Align(
+          alignment: AlignmentDirectional.centerEnd,
+          child: Padding(
+            padding: const EdgeInsetsDirectional.only(end: AppSpacing.sm),
+            child: withdraw,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -257,7 +304,12 @@ class _EmptyPane extends StatelessWidget {
         children: [
           Icon(icon, size: 48, color: AppColors.gray400),
           const SizedBox(height: AppSpacing.md),
-          Text(text, style: AppText.body, textAlign: TextAlign.center),
+          // Announced when it replaces the loading state.
+          Semantics(
+            container: true,
+            liveRegion: true,
+            child: Text(text, style: AppText.body, textAlign: TextAlign.center),
+          ),
         ],
       ),
     );
@@ -279,7 +331,12 @@ class _ErrorPane extends StatelessWidget {
           children: [
             Icon(Icons.wifi_off_rounded, size: 40, color: AppColors.textMuted),
             const SizedBox(height: AppSpacing.md),
-            Text(message, style: AppText.caption, textAlign: TextAlign.center),
+            // Announced when it replaces the loading state.
+            Semantics(
+              container: true,
+              liveRegion: true,
+              child: Text(message, style: AppText.caption, textAlign: TextAlign.center),
+            ),
             const SizedBox(height: AppSpacing.lg),
             AppButton(
                 label: Strings.retry,

@@ -19,6 +19,12 @@ enum AuthStage {
   unknown,
   signedOut,
 
+  /// Tokens are on the device but the launch check could not reach the
+  /// server (offline, timeout, 5xx). Nothing was cleared: the splash offers
+  /// Retry, and [AuthNotifier.bootstrap] runs again on app resume. Never a
+  /// reason to show the login screen.
+  unreachable,
+
   /// Batch 6: tokens issued, but this new device owes the two-step PIN.
   /// Every route but `/auth/pin/*` answers 403 until it is entered.
   pinRequired,
@@ -147,7 +153,18 @@ class AuthNotifier extends Notifier<AuthState> {
     } catch (_) {}
   }
 
-  Future<void> bootstrap() async {
+  Future<void>? _bootstrapInFlight;
+
+  /// Resolves the launch stage from the stored tokens. Safe to call again
+  /// (splash Retry, app resume): concurrent calls share one round-trip.
+  Future<void> bootstrap() {
+    final running = _bootstrapInFlight;
+    if (running != null) return running;
+    return _bootstrapInFlight =
+        _bootstrap().whenComplete(() => _bootstrapInFlight = null);
+  }
+
+  Future<void> _bootstrap() async {
     final tokens = ref.read(tokenStorageProvider);
     final access = await tokens.accessToken;
     final refresh = await tokens.refreshToken;
@@ -173,11 +190,20 @@ class AuthNotifier extends Notifier<AuthState> {
         state = const AuthState(AuthStage.pinRequired, null);
         return;
       }
-      await tokens.clear();
-      state = const AuthState(AuthStage.signedOut, null);
+      // Only the server can end a session: a 401 that survived the client's
+      // refresh attempt (the refresh token was rejected too), or one of the
+      // terminal codes. Offline, a timeout, a 5xx or anything else says
+      // nothing about the session, so the tokens stay.
+      if (e.status == 401 || sessionTerminalCodes.contains(e.detail)) {
+        await tokens.clear();
+        state = const AuthState(AuthStage.signedOut, null);
+        return;
+      }
+      state = const AuthState(AuthStage.unreachable, null);
     } catch (_) {
-      await tokens.clear();
-      state = const AuthState(AuthStage.signedOut, null);
+      // Not an answer from the server (a parse error, a plugin failure):
+      // keep the session and let the user retry.
+      state = const AuthState(AuthStage.unreachable, null);
     }
   }
 
@@ -226,9 +252,11 @@ class AuthNotifier extends Notifier<AuthState> {
       ref.read(orgProvider.notifier).setCurrent(org);
       return AuthStage.signedIn;
     } catch (_) {
-      // If we can't reach the backend right now, assume needs-org so the user
-      // isn't stuck on a broken chats screen.
-      return AuthStage.needsOrg;
+      // The org lookup failed (offline, server error). An org never gates the
+      // account, so carry on to chats — which has its own offline and retry
+      // states — rather than pinning the user to the org picker, which has
+      // no way back until the app is relaunched.
+      return AuthStage.signedIn;
     }
   }
 
@@ -304,6 +332,11 @@ class AuthNotifier extends Notifier<AuthState> {
   /// registered (or it has been a while), register again. This is what heals
   /// a phone that missed registration, without waiting for a cold start.
   void onAppResumed() {
+    // Launched with no connection: try the launch check again now.
+    if (state.stage == AuthStage.unreachable) {
+      unawaited(bootstrap());
+      return;
+    }
     if (state.user == null || state.stage == AuthStage.signedOut) return;
     if (state.stage == AuthStage.needsRegistration) return;
     final last = _pushSyncedAt;
@@ -324,7 +357,7 @@ class AuthNotifier extends Notifier<AuthState> {
     await _exchange(idToken);
   }
 
-  /// Google / Facebook / Apple. A null token means the user dismissed the
+  /// Google / Apple. A null token means the user dismissed the
   /// provider sheet — a normal outcome, so nothing changes and nothing throws.
   Future<void> signInWith(SocialProvider provider) async {
     final idToken = await ref.read(authBrokerProvider).signInWithSocial(provider);
@@ -397,6 +430,26 @@ class AuthNotifier extends Notifier<AuthState> {
     state = state.copyWith(user: user);
   }
 
+  /// App Store 5.1.1(v): delete the account from inside the app, in any
+  /// signed-in stage (including a half-finished registration).
+  ///
+  /// Order matters. Apple access is revoked first, while the account still
+  /// exists: if the person backs out of Apple's confirmation nothing has
+  /// happened yet, and false is returned. Then the Doqto account is deleted,
+  /// then the sign-in identity, then this device is signed out and wiped.
+  /// Throws when the revocation or the deletion itself fails — the account
+  /// is intact in that case and the caller offers a retry.
+  Future<bool> deleteAccount() async {
+    final broker = ref.read(authBrokerProvider);
+    if (!await broker.revokeAppleAccess()) return false;
+    await ref.read(userRepositoryProvider).deleteAccount();
+    try {
+      await broker.deleteIdentity();
+    } catch (_) {}
+    await signOut();
+    return true;
+  }
+
   Future<void> signOut() async {
     // Best-effort: stop pushes to this device before the session dies. Must
     // run while the access token is still valid; never blocks sign-out.
@@ -404,9 +457,11 @@ class AuthNotifier extends Notifier<AuthState> {
     _tokenRefreshSub = null;
     try {
       // FCM can stall (simulators, no APNs); never let it hold sign-out.
+      // existingToken, not getToken: leaving must never raise the iOS
+      // notification prompt (a half-registered account was never asked).
       final token = await ref
           .read(pushTokenProviderProvider)
-          .getToken()
+          .existingToken()
           .timeout(const Duration(seconds: 3));
       if (token != null && token.isNotEmpty) {
         await ref

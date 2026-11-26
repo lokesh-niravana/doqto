@@ -14,6 +14,8 @@ import '../../../data/models/message.dart';
 import '../../../state/compliance_state.dart';
 import '../../../state/org_state.dart';
 import '../../widgets/app_skeleton.dart';
+import '../../widgets/inline_error.dart';
+import '../../widgets/load_failed.dart';
 import '../../widgets/primary_button.dart';
 
 /// The audited read behind an approved break-glass request (batch 7).
@@ -75,12 +77,14 @@ class _BreakGlassThreadScreenState extends ConsumerState<BreakGlassThreadScreen>
 
   String _name(String userId) {
     final orgId = _orgId;
-    if (orgId == null) return userId;
-    final members = ref.read(orgMembersProvider(orgId)).asData?.value ?? const [];
+    if (orgId == null) return Strings.namePlaceholder;
+    final members = ref.read(orgMembersProvider(orgId)).asData?.value;
+    if (members == null) return Strings.namePlaceholder;
     for (final m in members) {
       if (m.id == userId) return m.fullName;
     }
-    return 'Member ${userId.substring(0, userId.length.clamp(0, 8))}';
+    // The other party in a chat with an org member need not be in the org.
+    return Strings.outsideOrgPerson;
   }
 
   @override
@@ -137,18 +141,9 @@ class _BreakGlassThreadScreenState extends ConsumerState<BreakGlassThreadScreen>
     if (_loading && _rows.isEmpty) return const SkeletonList();
     final error = _error;
     if (error != null && _rows.isEmpty) {
+      // Announced (live region inside LoadFailed) when it replaces the skeleton.
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.xl),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(ErrorMessages.forApi(error), style: AppText.caption, textAlign: TextAlign.center),
-              const SizedBox(height: AppSpacing.lg),
-              AppButton(label: Strings.retry, icon: Icons.refresh_rounded, onPressed: _load),
-            ],
-          ),
-        ),
+        child: LoadFailed(message: ErrorMessages.forApi(error), onRetry: _load),
       );
     }
     if (_rows.isEmpty) {
@@ -159,19 +154,32 @@ class _BreakGlassThreadScreenState extends ConsumerState<BreakGlassThreadScreen>
     final more = _more ? 1 : 0;
     return ListView.builder(
       key: const ValueKey('break-glass-list'),
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      // Explicit padding drops the automatic safe-area inset; add it back so
+      // the last row clears the home indicator.
+      padding: const EdgeInsets.all(AppSpacing.lg).copyWith(
+        bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom,
+      ),
       itemCount: _rows.length + more,
       itemBuilder: (_, i) {
         if (_more && i == 0) {
           return Padding(
             padding: const EdgeInsets.only(bottom: AppSpacing.md),
-            child: AppButton(
-              key: const ValueKey('break-glass-older'),
-              label: Strings.breakGlassOlder,
-              variant: AppButtonVariant.ghost,
-              loading: _loading,
-              expand: true,
-              onPressed: _loading ? null : () => _load(older: true),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // A failed "load older" with rows on screen: say so here,
+                // next to the button that retries it.
+                InlineError(error == null ? null : ErrorMessages.forApi(error)),
+                AppButton(
+                  key: const ValueKey('break-glass-older'),
+                  label: Strings.breakGlassOlder,
+                  variant: AppButtonVariant.ghost,
+                  loading: _loading,
+                  expand: true,
+                  onPressed: _loading ? null : () => _load(older: true),
+                ),
+              ],
             ),
           );
         }
@@ -222,17 +230,25 @@ class _Row extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
+            // A Wrap, not Row(Expanded, date): at large text the date drops
+            // to its own line instead of leaving six characters of the name.
+            SizedBox(
+              width: double.infinity,
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: AppSpacing.sm,
+                children: [
+                  Text(
                     system ? Strings.breakGlassSystem : senderName,
-                    style: AppText.label,
+                    // Brand teal is 4.47:1 on the gray fill of a system row.
+                    style: AppText.label.copyWith(color: AppColors.textSecondary),
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
-                ),
-                Text(when, style: AppText.timestamp),
-              ],
+                  Text(when, style: AppText.timestamp),
+                ],
+              ),
             ),
             const SizedBox(height: AppSpacing.xs),
             if (m.isDeleted)

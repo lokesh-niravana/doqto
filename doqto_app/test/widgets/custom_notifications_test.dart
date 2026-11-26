@@ -136,17 +136,13 @@ void main() {
     chat = _Chat();
   });
 
-  testWidgets('off by default; tone row disabled; mute shows Not muted',
+  testWidgets('off by default; no tone row; mute shows Not muted',
       (tester) async {
     await tester.pumpWidget(app());
     await tester.pumpAndSettle();
     expect(_switchOn(tester), isFalse);
-    expect(
-      tester
-          .widget<ListTile>(find.byKey(const ValueKey('chatnotif-row-tone')))
-          .enabled,
-      isFalse,
-    );
+    // Not drawn while off: no full-colour row with a chevron and a dead tap.
+    expect(find.byKey(const ValueKey('chatnotif-row-tone')), findsNothing);
     expect(find.byKey(const ValueKey('chatnotif-row-vibrate')), findsOneWidget);
     expect(
       tester
@@ -187,6 +183,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('chatnotif-switch-use_custom')));
     await tester.pumpAndSettle();
     expect(_switchOn(tester), isFalse);
+    expect(find.byKey(const ValueKey('chatnotif-row-tone')), findsNothing);
     expect(chat.patches.last.$2,
         {'custom_tone': null, 'custom_vibrate': null});
   }, variant: const TargetPlatformVariant({TargetPlatform.android}));

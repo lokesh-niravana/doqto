@@ -29,7 +29,8 @@ class _JoinOrgScreenState extends ConsumerState<JoinOrgScreen> {
 
   Future<void> _submit() async {
     if (!(_codeKey.currentState?.validate() ?? false)) return;
-    final code = _code.text.trim();
+    // The server compares the canonical `XXXX·1234` exactly.
+    final code = Validators.normalizeInviteCode(_code.text);
     setState(() {
       _loading = true;
       _error = null;
@@ -60,8 +61,14 @@ class _JoinOrgScreenState extends ConsumerState<JoinOrgScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Join Organization')),
-      body: Padding(
-        padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
+      // Scrolls when the keyboard (or a large text size) leaves too little
+      // room; looks the same otherwise.
+      body: SingleChildScrollView(
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last control clears the home indicator.
+        padding: const EdgeInsets.all(AppSpacing.screenHorizontal).copyWith(
+          bottom: AppSpacing.screenHorizontal + MediaQuery.paddingOf(context).bottom,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -74,7 +81,18 @@ class _JoinOrgScreenState extends ConsumerState<JoinOrgScreen> {
                 label: 'Invite code',
                 hint: 'APOL·4827',
                 style: AppText.inviteCode,
+                // Codes are upper-case letters and digits (APOL·4827).
+                textCapitalization: TextCapitalization.characters,
+                autocorrect: false,
+                // The middle dot is not on a phone keyboard: the formatter
+                // inserts it, so APOL4827 / apol.4827 / APOL-4827 all work.
+                inputFormatters: const [InviteCodeFormatter()],
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _submit(),
                 validator: Validators.inviteCode(),
+                // Exactly nine characters: a complete code puts the keyboard
+                // away by itself.
+                dismissOnValid: true,
                 onChanged: (_) {
                   if (_error != null) setState(() => _error = null);
                 },

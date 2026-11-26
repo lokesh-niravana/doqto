@@ -9,6 +9,7 @@ import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../data/models/compliance.dart';
+import '../../widgets/load_failed.dart';
 
 /// "Scheduled" from the thread menu (batch 7): my not-yet-sent scheduled
 /// messages in this chat, soonest first, each with Cancel. The server keeps
@@ -17,6 +18,9 @@ Future<void> showScheduledMessagesSheet(BuildContext context, String conversatio
   return showModalBottomSheet<void>(
     context: context,
     useRootNavigator: true,
+    // Sized to its content, up to 90% of the screen, and scrollable.
+    isScrollControlled: true,
+    useSafeArea: true,
     builder: (_) => _ScheduledSheet(conversationId: conversationId),
   );
 }
@@ -34,6 +38,11 @@ class _ScheduledSheetState extends ConsumerState<_ScheduledSheet> {
   Object? _error;
   final _cancelling = <String>{};
 
+  /// Result of the last cancel, shown as a line inside the sheet. A SnackBar
+  /// would be drawn by the screen underneath, where this sheet hides it.
+  String? _notice;
+  bool _noticeIsError = false;
+
   @override
   void initState() {
     super.initState();
@@ -41,6 +50,7 @@ class _ScheduledSheetState extends ConsumerState<_ScheduledSheet> {
   }
 
   Future<void> _load() async {
+    if (_error != null) setState(() => _error = null);
     try {
       final rows = await ref.read(complianceRepositoryProvider).scheduled(widget.conversationId);
       if (mounted) setState(() => _rows = rows);
@@ -50,15 +60,47 @@ class _ScheduledSheetState extends ConsumerState<_ScheduledSheet> {
   }
 
   Future<void> _cancel(ScheduledMessage s) async {
-    setState(() => _cancelling.add(s.id));
+    // Cancelling drops the message for good (there is no draft to recover).
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const ValueKey('scheduled-cancel-confirm'),
+        title: const Text(Strings.scheduledCancelConfirmTitle),
+        content: const Text(Strings.scheduledCancelConfirmBody),
+        actions: [
+          TextButton(
+            key: const ValueKey('scheduled-cancel-keep'),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text(Strings.scheduledCancelKeep),
+          ),
+          TextButton(
+            key: const ValueKey('scheduled-cancel-yes'),
+            style: TextButton.styleFrom(foregroundColor: AppColors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(Strings.scheduledCancelConfirm),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    setState(() {
+      _cancelling.add(s.id);
+      _notice = null;
+    });
     try {
       await ref.read(complianceRepositoryProvider).cancelScheduled(s.id);
       if (!mounted) return;
-      setState(() => _rows = [for (final r in _rows ?? const <ScheduledMessage>[]) if (r.id != s.id) r]);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text(Strings.scheduledCancelled)));
+      setState(() {
+        _rows = [for (final r in _rows ?? const <ScheduledMessage>[]) if (r.id != s.id) r];
+        _notice = Strings.scheduledCancelled;
+        _noticeIsError = false;
+      });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ErrorMessages.forApi(e))));
+      setState(() {
+        _notice = ErrorMessages.forApi(e);
+        _noticeIsError = true;
+      });
     } finally {
       if (mounted) setState(() => _cancelling.remove(s.id));
     }
@@ -68,6 +110,8 @@ class _ScheduledSheetState extends ConsumerState<_ScheduledSheet> {
   Widget build(BuildContext context) {
     final rows = _rows;
     return SafeArea(
+      child: ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.9),
       child: Padding(
         key: const ValueKey('scheduled-sheet'),
         padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
@@ -79,18 +123,52 @@ class _ScheduledSheetState extends ConsumerState<_ScheduledSheet> {
               padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.sm),
               child: Text(Strings.scheduledTitle, style: AppText.heading),
             ),
-            if (_error != null)
+            if (_notice != null)
               Padding(
-                padding: const EdgeInsets.all(AppSpacing.lg),
-                child: Text(ErrorMessages.forApi(_error!), style: AppText.caption),
+                padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.sm),
+                child: Semantics(
+                  liveRegion: true,
+                  child: Row(
+                    key: const ValueKey('scheduled-notice'),
+                    children: [
+                      Icon(
+                        _noticeIsError ? Icons.error_outline_rounded : Icons.check_circle_outline_rounded,
+                        size: 16,
+                        color: _noticeIsError ? AppColors.red : AppColors.greenDark,
+                      ),
+                      const SizedBox(width: AppSpacing.xs),
+                      Expanded(
+                        child: Text(
+                          _notice!,
+                          style: AppText.caption.copyWith(
+                            color: _noticeIsError ? AppColors.red : AppColors.greenDark,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            if (_error != null)
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Center(
+                    child: LoadFailed(message: ErrorMessages.forApi(_error!), onRetry: _load),
+                  ),
+                ),
               )
             else if (rows == null)
               const SizedBox(
                 height: 96,
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                child: Center(
+                  child: CircularProgressIndicator(strokeWidth: 2, semanticsLabel: Strings.loading),
+                ),
               )
             else if (rows.isEmpty)
-              Padding(
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Padding(
                 padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.lg),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -99,6 +177,8 @@ class _ScheduledSheetState extends ConsumerState<_ScheduledSheet> {
                     const SizedBox(height: AppSpacing.xs),
                     Text(Strings.scheduledEmptyHint, style: AppText.caption),
                   ],
+                ),
+              ),
                 ),
               )
             else
@@ -121,7 +201,10 @@ class _ScheduledSheetState extends ConsumerState<_ScheduledSheet> {
                         style: AppText.bodyPrimary,
                       ),
                       subtitle: Text(
-                        s.failed ? (s.error ?? Strings.scheduledFailed) : Strings.scheduledPending,
+                        // `error` is a server code: show a sentence, never the code.
+                        s.failed
+                            ? ErrorMessages.forCode(s.error, fallback: Strings.scheduledFailed)
+                            : Strings.scheduledPending,
                         style: AppText.caption.copyWith(color: s.failed ? AppColors.red : null),
                       ),
                       trailing: _cancelling.contains(s.id)
@@ -138,6 +221,7 @@ class _ScheduledSheetState extends ConsumerState<_ScheduledSheet> {
               ),
           ],
         ),
+      ),
       ),
     );
   }

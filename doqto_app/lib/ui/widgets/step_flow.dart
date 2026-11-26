@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/constants/strings.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/motion.dart';
 import '../../core/tokens/radii.dart';
@@ -43,7 +44,18 @@ class StepFlow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _ProgressRail(current: currentStep, total: stepTitles.length),
+        // The segments are only drawn; say where the person is.
+        Semantics(
+          container: true,
+          label: Strings.a11yStep(
+            currentStep + 1,
+            stepTitles.length,
+            stepTitles[currentStep.clamp(0, stepTitles.length - 1)],
+          ),
+          child: ExcludeSemantics(
+            child: _ProgressRail(current: currentStep, total: stepTitles.length),
+          ),
+        ),
         const SizedBox(height: AppSpacing.md),
         Expanded(
           child: AnimatedSwitcher(
@@ -157,9 +169,14 @@ class SelectableRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // A radio choice: VoiceOver hears which one is picked, not only sees the
+    // filled dot.
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-      child: Material(
+      child: Semantics(
+        inMutuallyExclusiveGroup: true,
+        checked: selected,
+        child: Material(
         color: Colors.transparent,
         child: InkWell(
           borderRadius: AppRadii.rMd,
@@ -220,6 +237,7 @@ class SelectableRow extends StatelessWidget {
               ],
             ),
           ),
+        ),
         ),
       ),
     );

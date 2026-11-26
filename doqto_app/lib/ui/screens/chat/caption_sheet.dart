@@ -51,6 +51,8 @@ Future<CaptionResult?> showCaptionSheet(
     context: context,
     useRootNavigator: true,
     isScrollControlled: true,
+    // Grows with the keyboard: keep it out from under the status bar / notch.
+    useSafeArea: true,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
     builder: (_) => CaptionSheet(previews: previews),
   );
@@ -112,6 +114,12 @@ class _CaptionSheetState extends State<CaptionSheet> {
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.only(bottom: bottom),
+        // Scrolls, anchored at the bottom: a four-line caption at a large
+        // text size with the keyboard up is taller than what is left of the
+        // screen, and the field and Send are what must stay in view.
+        child: SingleChildScrollView(
+        key: const ValueKey('caption-scroll'),
+        reverse: true,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -129,6 +137,7 @@ class _CaptionSheetState extends State<CaptionSheet> {
                   ),
                   IconButton(
                     key: const ValueKey('caption-close'),
+                    tooltip: Strings.a11yClose,
                     onPressed: () => Navigator.of(context).pop(),
                     icon: const Icon(Icons.close),
                   ),
@@ -155,44 +164,28 @@ class _CaptionSheetState extends State<CaptionSheet> {
                               children: [
                                 Image.file(File(p.imagePath!), key: ValueKey('caption-image-$i-${p.imagePath}'), fit: BoxFit.cover,
                                     errorBuilder: (_, _, _) => Icon(p.icon, color: AppColors.gray400, size: 40)),
+                                // 30pt discs, 44pt tap areas: the two targets
+                                // tile the bottom-right corner edge to edge.
                                 Positioned(
-                                  right: 40,
-                                  bottom: 4,
-                                  child: Material(
-                                    color: AppColors.gray900.withValues(alpha: 0.65),
-                                    shape: const CircleBorder(),
-                                    child: InkWell(
-                                      key: ValueKey('caption-edit-$i'),
-                                      customBorder: const CircleBorder(),
-                                      onTap: _cropping ? null : () => _edit(i),
-                                      child: Tooltip(
-                                        message: Strings.captionEdit,
-                                        child: const Padding(
-                                          padding: EdgeInsets.all(6),
-                                          child: Icon(Icons.edit_rounded, size: 18, color: AppColors.white),
-                                        ),
-                                      ),
-                                    ),
+                                  right: 44,
+                                  bottom: 0,
+                                  child: _OverlayButton(
+                                    key: ValueKey('caption-edit-$i'),
+                                    icon: Icons.edit_rounded,
+                                    label: Strings.captionEdit,
+                                    inset: const EdgeInsets.only(bottom: 4),
+                                    onTap: _cropping ? null : () => _edit(i),
                                   ),
                                 ),
                                 Positioned(
-                                  right: 4,
-                                  bottom: 4,
-                                  child: Material(
-                                    color: AppColors.gray900.withValues(alpha: 0.65),
-                                    shape: const CircleBorder(),
-                                    child: InkWell(
-                                      key: ValueKey('caption-crop-$i'),
-                                      customBorder: const CircleBorder(),
-                                      onTap: _cropping ? null : () => _crop(i),
-                                      child: Tooltip(
-                                        message: Strings.captionCrop,
-                                        child: const Padding(
-                                          padding: EdgeInsets.all(6),
-                                          child: Icon(Icons.crop_rounded, size: 18, color: AppColors.white),
-                                        ),
-                                      ),
-                                    ),
+                                  right: 0,
+                                  bottom: 0,
+                                  child: _OverlayButton(
+                                    key: ValueKey('caption-crop-$i'),
+                                    icon: Icons.crop_rounded,
+                                    label: Strings.captionCrop,
+                                    inset: const EdgeInsets.only(right: 4, bottom: 4),
+                                    onTap: _cropping ? null : () => _crop(i),
                                   ),
                                 ),
                               ],
@@ -222,6 +215,7 @@ class _CaptionSheetState extends State<CaptionSheet> {
                     child: AppTextField(
                       key: const ValueKey('caption-input'),
                       controller: _controller,
+                      semanticLabel: Strings.a11yCaption,
                       hint: Strings.mediaCaptionHint,
                       maxLength: Message.captionMaxLen,
                       maxLines: 4,
@@ -233,6 +227,7 @@ class _CaptionSheetState extends State<CaptionSheet> {
                     key: const ValueKey('caption-send'),
                     onTap: _send,
                     haptic: true,
+                    semanticLabel: Strings.chatSend,
                     child: Container(
                       width: 48,
                       height: 48,
@@ -244,6 +239,61 @@ class _CaptionSheetState extends State<CaptionSheet> {
               ),
             ),
           ],
+        ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Round 30pt button drawn over a preview, inside a 44pt tap area.
+class _OverlayButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  /// Where the disc sits from the tap area's bottom-right corner.
+  final EdgeInsets inset;
+  final VoidCallback? onTap;
+  const _OverlayButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.inset,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: label,
+      excludeFromSemantics: true,
+      child: Semantics(
+        container: true,
+        button: true,
+        enabled: onTap != null,
+        label: label,
+        onTap: onTap,
+        excludeSemantics: true,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Container(
+              alignment: Alignment.bottomRight,
+              padding: inset,
+              child: Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: AppColors.gray900.withValues(alpha: 0.65),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, size: 18, color: AppColors.white),
+              ),
+            ),
+          ),
         ),
       ),
     );

@@ -644,6 +644,11 @@ class AppLocalizationsEs extends AppLocalizations {
   String get helpOpenFailed => 'No se pudo abrir el enlace.';
 
   @override
+  String helpEmailCopied(String email) {
+    return 'Dirección de correo copiada: $email';
+  }
+
+  @override
   String get languageFooter =>
       'Cambia solo el idioma de Doqto. Los mensajes nunca se traducen.';
 

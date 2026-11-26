@@ -13,6 +13,8 @@ import '../../data/models/network_profile.dart';
 import 'doctor_avatar.dart';
 import 'member_row.dart';
 import '../../core/utils/avatar_urls.dart';
+import 'load_failed.dart';
+import '../../core/utils/async_retry.dart';
 
 /// "Message info" for one of my own messages: who has read it, who has only
 /// received it, who has neither — names, avatars, times. Fetched on open;
@@ -58,14 +60,13 @@ class _ReceiptsSheet extends ConsumerWidget {
               child: Text(Strings.groupMessageInfo, style: AppText.heading),
             ),
             Expanded(
-              child: async.when(
+              child: async.whenRetrying(
                 loading: () =>
-                    const Center(child: CircularProgressIndicator()),
+                    const Center(child: CircularProgressIndicator(semanticsLabel: Strings.loading)),
                 error: (e, _) => Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(AppSpacing.xl),
-                    child: Text(ErrorMessages.forApi(e),
-                        style: AppText.caption, textAlign: TextAlign.center),
+                  child: LoadFailed(
+                    message: ErrorMessages.forApi(e),
+                    onRetry: () => ref.invalidate(_receiptsProvider(message.id)),
                   ),
                 ),
                 data: (rows) {
@@ -113,7 +114,7 @@ class _ReceiptsSheet extends ConsumerWidget {
             children: [
               Icon(icon, size: 16, color: iconColor),
               const SizedBox(width: AppSpacing.xs),
-              Text('$label · ${rows.length}', style: AppText.label),
+              Semantics(header: true, child: Text('$label · ${rows.length}', style: AppText.label)),
             ],
           ),
         ),
@@ -133,7 +134,9 @@ class _ReceiptsSheet extends ConsumerWidget {
               size: AvatarSize.sm,
             ),
             title: r.fullName,
-            trailing: Text(_when(timeOf(r)), style: AppText.caption),
+            // Under the name, not beside it: a trailing date squeezed long
+            // names at large text sizes.
+            subtitle: timeOf(r) == null ? null : _when(timeOf(r)),
           ),
       ],
     );

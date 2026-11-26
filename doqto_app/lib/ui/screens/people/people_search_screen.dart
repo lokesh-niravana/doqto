@@ -13,8 +13,10 @@ import '../../../state/people_search_state.dart';
 import '../../widgets/app_pill.dart';
 import '../../widgets/app_skeleton.dart';
 import '../../widgets/fade_slide_in.dart';
+import '../../widgets/inline_error.dart';
 import '../../widgets/person_card_row.dart';
 import '../../widgets/inline_connect.dart';
+import '../../widgets/primary_button.dart';
 import '../../widgets/search_bar.dart';
 
 /// People search (M3). Opens on a browsable directory and narrows as you
@@ -44,17 +46,19 @@ class PeopleSearchScreen extends ConsumerWidget {
   }
 }
 
-class _Body extends StatelessWidget {
+class _Body extends ConsumerWidget {
   final PeopleSearchState state;
   const _Body({required this.state});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return switch (state) {
       PeopleSearchLoading() => const SkeletonList(),
       PeopleSearchError(:final error) => _Message(
           icon: Icons.wifi_off_rounded,
           text: ErrorMessages.forApi(error),
+          // Re-runs the same query.
+          onRetry: () => ref.read(peopleSearchProvider.notifier).refresh(),
         ),
       PeopleSearchResults(:final people, :final query) => people.isEmpty
           ? query.isEmpty
@@ -116,8 +120,38 @@ class _ResultsListState extends ConsumerState<_ResultsList> {
           top: AppSpacing.sm,
           bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.xl,
         ),
-        itemCount: people.length + (widget.results.loadingMore ? 1 : 0),
+        itemCount: people.length +
+            (widget.results.loadingMore || widget.results.moreError != null
+                ? 1
+                : 0),
         itemBuilder: (context, i) {
+          if (i >= people.length && !widget.results.loadingMore) {
+            // The next page failed with rows on screen: say so here, with
+            // the button that retries it.
+            return Padding(
+              key: const ValueKey('people-more-error'),
+              padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.md),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  InlineError(ErrorMessages.forApi(widget.results.moreError)),
+                  const SizedBox(height: AppSpacing.sm),
+                  AppButton(
+                    key: const ValueKey('people-more-retry'),
+                    label: Strings.retry,
+                    icon: Icons.refresh_rounded,
+                    variant: AppButtonVariant.ghost,
+                    expand: true,
+                    onPressed: () => ref
+                        .read(peopleSearchProvider.notifier)
+                        .loadMore(retry: true),
+                  ),
+                ],
+              ),
+            );
+          }
           if (i >= people.length) {
             return const Padding(
               padding: EdgeInsets.all(AppSpacing.lg),
@@ -125,20 +159,50 @@ class _ResultsListState extends ConsumerState<_ResultsList> {
                 child: SizedBox(
                   width: 20,
                   height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    semanticsLabel: Strings.loading,
+                  ),
                 ),
               ),
             );
           }
           final p = people[i];
+          void open() => context.push(AppRoutes.person(p.id));
+          // Past about 1.3x the Connect control left some seven characters
+          // of the name: it moves to a line of its own under the row (as on
+          // Suggestions). The small degree badge stays beside the name.
+          final large = MediaQuery.textScalerOf(context).scale(100) / 100 > 1.3;
+          if (p.degree == ConnectionDegree.first || !large) {
+            return FadeSlideIn.staggered(
+              i,
+              PersonCardRow(
+                person: p,
+                onTap: open,
+                trailing: p.degree == ConnectionDegree.first
+                    ? DegreeBadge.forDegree(p.degree)
+                    : InlineConnect(userId: p.id),
+              ),
+            );
+          }
           return FadeSlideIn.staggered(
             i,
-            PersonCardRow(
-              person: p,
-              onTap: () => context.push(AppRoutes.person(p.id)),
-              trailing: p.degree == ConnectionDegree.first
-                  ? DegreeBadge.forDegree(p.degree)
-                  : InlineConnect(userId: p.id),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                PersonCardRow(
+                  person: p,
+                  onTap: open,
+                  trailing: const SizedBox.shrink(),
+                ),
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: Padding(
+                    padding: const EdgeInsetsDirectional.only(end: AppSpacing.sm),
+                    child: InlineConnect(userId: p.id),
+                  ),
+                ),
+              ],
             ),
           );
         },
@@ -150,19 +214,36 @@ class _ResultsListState extends ConsumerState<_ResultsList> {
 class _Message extends StatelessWidget {
   final IconData icon;
   final String text;
-  const _Message({required this.icon, required this.text});
+  final VoidCallback? onRetry;
+  const _Message({required this.icon, required this.text, this.onRetry});
 
   @override
   Widget build(BuildContext context) {
+    // Scrolls: with the keyboard up and a large text size the button would
+    // otherwise sit under the keyboard.
     return Center(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(AppSpacing.xl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, size: 48, color: AppColors.gray400),
             const SizedBox(height: AppSpacing.md),
-            Text(text, style: AppText.body, textAlign: TextAlign.center),
+            // The failed-search pane is announced when it appears.
+            Semantics(
+              container: onRetry != null,
+              liveRegion: onRetry != null,
+              child: Text(text, style: AppText.body, textAlign: TextAlign.center),
+            ),
+            if (onRetry != null) ...[
+              const SizedBox(height: AppSpacing.lg),
+              AppButton(
+                key: const ValueKey('people-search-retry'),
+                label: Strings.retry,
+                icon: Icons.refresh_rounded,
+                onPressed: onRetry,
+              ),
+            ],
           ],
         ),
       ),
@@ -177,8 +258,10 @@ class _InviteInstead extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Scrolls: with the keyboard up and a large text size the button would
+    // otherwise sit under the keyboard.
     return Center(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(AppSpacing.xl),
         child: Column(
           mainAxisSize: MainAxisSize.min,

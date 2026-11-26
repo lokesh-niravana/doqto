@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import 'core/utils/app_orientation.dart';
 import 'core/constants/app_constants.dart';
 import 'core/constants/strings.dart';
 import 'core/di/providers.dart';
@@ -69,6 +70,9 @@ Future<void> main() async {
   // Device-local settings (theme, app lock, language…) — encrypted like the
   // rest, but NOT wiped on sign-out (settings_store.dart).
   await _openEncryptedBox(SettingsStore.boxName, cipher);
+  // Forms, lists and the chat thread are portrait layouts; rotating them
+  // only clips content behind the keyboard and the Dynamic Island.
+  await AppOrientation.lockPortrait();
   runApp(const ProviderScope(child: DoqtoApp()));
 }
 
@@ -153,12 +157,14 @@ class _DoqtoAppState extends ConsumerState<DoqtoApp>
       routerConfig: router,
       builder: (context, child) {
         // Font size S/M/L multiplies the platform's Dynamic Type scale rather
-        // than replacing it.
+        // than replacing it, and "Small" never takes text below 11pt.
         final mq = MediaQuery.of(context);
-        final systemScale = mq.textScaler.scale(1.0);
         return MediaQuery(
           data: mq.copyWith(
-            textScaler: TextScaler.linear(systemScale * settings.fontSize.factor),
+            textScaler: AppTextScaler(
+              system: mq.textScaler,
+              factor: settings.fontSize.factor,
+            ),
           ),
           child: ForceUpdateGate(
             child: AppLockGate(

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/spacing.dart';
@@ -177,7 +178,7 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
               ),
             )
           : pages == null
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator(semanticsLabel: Strings.loading))
           : LayoutBuilder(builder: (_, box) => _surface(pages, box)),
     );
   }

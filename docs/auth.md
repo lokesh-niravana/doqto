@@ -186,11 +186,15 @@ Facebook are offered.
 
 ### Facebook
 
-Needs a Meta app with **Business Verification** approved — days to weeks, and
-the only provider that is gated on someone else's review. Once it exists, its
-App ID and secret go into the Firebase Facebook provider, and the App ID plus
-client token go into `ios/Runner/Info.plist` and
-`android/app/src/main/AndroidManifest.xml` per `flutter_facebook_auth`'s setup.
+Not offered. The `flutter_facebook_auth` dependency was removed on 2026-11-26:
+the button had been compiled out for months, but the Facebook SDK was still
+linked and started at launch, and its privacy manifest declares tracking and
+an advertising Device ID, which contradicts the app's "no tracking"
+declaration to the App Store.
 
-Until then the Facebook button is on screen and will fail when tapped. Google,
-Apple and phone do not depend on it.
+To offer it later: a Meta app with **Business Verification** approved (days to
+weeks), its App ID and secret in the Firebase Facebook provider, the App ID
+plus client token in `ios/Runner/Info.plist` and
+`android/app/src/main/AndroidManifest.xml` per `flutter_facebook_auth`'s setup,
+the dependency and `SocialProvider.facebook` restored, and the App Store
+privacy answers updated for what the SDK collects.

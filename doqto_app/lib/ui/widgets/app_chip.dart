@@ -28,6 +28,8 @@ class AppChip extends StatelessWidget {
     this.avatar,
   });
 
+  static const double _minTarget = 44;
+
   @override
   Widget build(BuildContext context) {
     final fg = selected ? AppColors.medBlueDark : AppColors.gray600;
@@ -41,8 +43,11 @@ class AppChip extends StatelessWidget {
       decoration: BoxDecoration(
         color: selected ? AppColors.medBlueLight : AppColors.gray100,
         borderRadius: AppRadii.rFull,
+        // Brand teal at 1.5pt: the lighter medBlueMid outline was 2.44:1.
+        // Same width when unselected, so selecting never shifts the layout.
         border: Border.all(
-          color: selected ? AppColors.medBlueMid : Colors.transparent,
+          color: selected ? AppColors.medBlue : Colors.transparent,
+          width: 1.5,
         ),
       ),
       child: Row(
@@ -54,9 +59,13 @@ class AppChip extends StatelessWidget {
           ],
           Text(label, style: AppText.badge.copyWith(color: fg, fontSize: 12)),
           if (onDelete != null) ...[
-            const SizedBox(width: AppSpacing.xs),
+            // The cross is 14pt to look at and 44pt to touch, so a chip that
+            // can be removed is taller than a plain one. A touch area cannot
+            // extend past its own box, so the box has to be the full size.
             AppPressable(
               onTap: onDelete,
+              minTarget: true,
+              semanticLabel: 'Remove $label',
               child: Icon(Icons.close_rounded, size: 14, color: fg),
             ),
           ],
@@ -64,6 +73,15 @@ class AppChip extends StatelessWidget {
       ),
     );
     if (onTap == null) return chip;
-    return AppPressable(onTap: onTap, child: chip);
+    // The pill keeps its size, centred in a touch area at least 44pt each way
+    // (a short label like "All" is only about 40pt wide).
+    return AppPressable(
+      onTap: onTap,
+      selected: selected,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: _minTarget, minHeight: _minTarget),
+        child: Align(widthFactor: 1, heightFactor: 1, child: chip),
+      ),
+    );
   }
 }

@@ -205,6 +205,59 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('post-all_members')), findsOneWidget);
     expect(find.byKey(const ValueKey('post-admins_only')), findsOneWidget);
+    // The current choice is announced as selected, not only ticked.
+    expect(
+        tester.widget<ListTile>(find.byKey(const ValueKey('post-all_members'))).selected,
+        isTrue);
+    expect(
+        tester.widget<ListTile>(find.byKey(const ValueKey('post-admins_only'))).selected,
+        isFalse);
+  });
+
+  testWidgets('option sheet scrolls at a large text size on a small phone',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(320, 480));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(MediaQuery(
+      data: const MediaQueryData(
+          size: Size(320, 480), textScaler: TextScaler.linear(3)),
+      child: _app(_group(myRole: 'owner')),
+    ));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('setting-dm-policy')), 200,
+        scrollable: find.byType(Scrollable).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('setting-dm-policy')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('dm-open'), skipOffstage: false), findsOneWidget);
+  });
+
+  testWidgets('owner: a tap on the camera badge opens the photo sheet',
+      (tester) async {
+    await tall(tester);
+    await tester.pumpWidget(_app(_group(myRole: 'owner')));
+    await tester.pumpAndSettle();
+    final avatar = tester.getRect(find.byKey(const ValueKey('group-avatar')));
+    // The badge sits in the avatar's bottom-right corner.
+    await tester.tapAt(avatar.bottomRight - const Offset(8, 8));
+    await tester.pumpAndSettle();
+    expect(find.byType(BottomSheet), findsOneWidget);
+  });
+
+  testWidgets('owner: the group name is one button named for renaming',
+      (tester) async {
+    await tall(tester);
+    final handle = tester.ensureSemantics();
+    await tester.pumpWidget(_app(_group(myRole: 'owner')));
+    await tester.pumpAndSettle();
+    final name = tester.widget<Text>(find.descendant(
+        of: find.byKey(const ValueKey('group-name')),
+        matching: find.byType(Text)));
+    final node = tester.getSemantics(find.bySemanticsLabel('Rename group, ${name.data}'));
+    expect(node.flagsCollection.isButton, isTrue);
+    handle.dispose();
   });
 
   testWidgets('a pending invitee sees Accept / Decline and no Exit',

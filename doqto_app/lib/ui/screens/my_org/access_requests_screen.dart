@@ -20,8 +20,15 @@ import '../../../state/org_state.dart';
 import '../../widgets/app_pill.dart';
 import '../../widgets/app_skeleton.dart';
 import '../../widgets/app_text_field.dart';
+import '../../widgets/inline_error.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/section_card.dart';
+import '../../../core/utils/async_retry.dart';
+import '../../widgets/refresh_feedback.dart';
+
+const _rejectTitle = 'Reject this request?';
+const _rejectBodySuffix =
+    ' will not get access to this conversation and would have to ask again.';
 
 /// My Org → Access requests (batch 7, break-glass). Lists the org's requests
 /// newest first; a different admin approves or rejects a pending one; the
@@ -47,7 +54,7 @@ class AccessRequestsScreen extends ConsumerWidget {
             ),
       body: org == null
           ? const SizedBox.shrink()
-          : ref.watch(accessRequestsProvider(org.id)).when(
+          : ref.watch(accessRequestsProvider(org.id)).whenRetrying(
                 loading: () => const SkeletonList(),
                 error: (e, _) => _Error(
                   message: ErrorMessages.forApi(e),
@@ -56,8 +63,10 @@ class AccessRequestsScreen extends ConsumerWidget {
                 data: (rows) => rows.isEmpty
                     ? const _Empty()
                     : RefreshIndicator(
-                        onRefresh: () =>
-                            ref.read(accessRequestsProvider(org.id).notifier).refresh(),
+                        onRefresh: () => refreshWithFeedback(
+                          context,
+                          () => ref.read(accessRequestsProvider(org.id).notifier).refresh(rethrowOnError: true),
+                        ),
                         child: ListView.separated(
                           key: const ValueKey('access-requests-list'),
                           padding: EdgeInsets.fromLTRB(
@@ -100,14 +109,21 @@ class _RequestCard extends ConsumerStatefulWidget {
 }
 
 class _RequestCardState extends ConsumerState<_RequestCard> {
-  bool _busy = false;
+  /// The decision being sent (true = approve), null when idle. Only that
+  /// button spins; the other is disabled.
+  bool? _deciding;
+  bool get _busy => _deciding != null;
 
-  String _name(String userId, List<OrgMember> members, String? me) {
+  /// [members] is null while the member list is still loading: a neutral
+  /// placeholder then, and words — never a fragment of an id — for someone
+  /// who isn't in the list once it has loaded.
+  String _name(String userId, List<OrgMember>? members, String? me) {
     if (userId == me) return Strings.accessRequestYou;
+    if (members == null) return Strings.namePlaceholder;
     for (final m in members) {
       if (m.id == userId) return m.fullName;
     }
-    return userId.substring(0, userId.length.clamp(0, 8));
+    return Strings.formerMember;
   }
 
   Future<void> _decide(bool approve, String requesterName) async {
@@ -128,8 +144,28 @@ class _RequestCardState extends ConsumerState<_RequestCard> {
         ),
       );
       if (ok != true || !mounted) return;
+    } else {
+      // A rejection is final for this request (the requester has to file a
+      // new one), so it is confirmed like the approval is.
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text(_rejectTitle),
+          content: Text('$requesterName$_rejectBodySuffix'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text(Strings.cancel)),
+            TextButton(
+              key: const ValueKey('access-request-reject-confirm'),
+              onPressed: () => Navigator.pop(ctx, true),
+              style: TextButton.styleFrom(foregroundColor: AppColors.red),
+              child: const Text(Strings.accessRequestReject),
+            ),
+          ],
+        ),
+      );
+      if (ok != true || !mounted) return;
     }
-    setState(() => _busy = true);
+    setState(() => _deciding = approve);
     try {
       await ref
           .read(accessRequestsProvider(widget.orgId).notifier)
@@ -138,7 +174,7 @@ class _RequestCardState extends ConsumerState<_RequestCard> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ErrorMessages.forApi(e))));
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _deciding = null);
     }
   }
 
@@ -146,7 +182,7 @@ class _RequestCardState extends ConsumerState<_RequestCard> {
   Widget build(BuildContext context) {
     final r = widget.request;
     final me = ref.watch(authProvider).user?.id;
-    final members = ref.watch(orgMembersProvider(widget.orgId)).asData?.value ?? const [];
+    final members = ref.watch(orgMembersProvider(widget.orgId)).asData?.value;
     final conv = ref.watch(conversationsProvider).asData?.value.where((c) => c.id == r.conversationId).firstOrNull;
     final mine = r.requesterId == me;
     final when = DateFormat.yMMMd().add_jm().format(r.createdAt.toLocal());
@@ -160,7 +196,7 @@ class _RequestCardState extends ConsumerState<_RequestCard> {
             children: [
               Expanded(
                 child: Text(
-                  conv == null ? _conversationLabel(r.conversationId) : conversationTitle(conv),
+                  conv == null ? Strings.conversationNotMine : conversationTitle(conv),
                   style: AppText.bodyPrimary,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -188,7 +224,7 @@ class _RequestCardState extends ConsumerState<_RequestCard> {
                     key: ValueKey('access-request-reject-${r.id}'),
                     label: Strings.accessRequestReject,
                     variant: AppButtonVariant.danger,
-                    loading: _busy,
+                    loading: _deciding == false,
                     expand: true,
                     onPressed: _busy ? null : () => _decide(false, requester),
                   ),
@@ -198,7 +234,7 @@ class _RequestCardState extends ConsumerState<_RequestCard> {
                   child: AppButton(
                     key: ValueKey('access-request-approve-${r.id}'),
                     label: Strings.accessRequestApprove,
-                    loading: _busy,
+                    loading: _deciding == true,
                     expand: true,
                     onPressed: _busy ? null : () => _decide(true, requester),
                   ),
@@ -232,24 +268,29 @@ class _RequestCardState extends ConsumerState<_RequestCard> {
   }
 }
 
-String _conversationLabel(String id) => 'Conversation ${id.substring(0, id.length.clamp(0, 8))}';
-
 /// Title of a chat as the picker and the cards show it.
 String conversationTitle(Conversation c) =>
-    (c.displayName ?? c.name ?? '').trim().isEmpty ? _conversationLabel(c.id) : (c.displayName ?? c.name)!;
+    (c.displayName ?? c.name ?? '').trim().isEmpty ? Strings.conversationUnnamed : (c.displayName ?? c.name)!;
 
-/// Pick a conversation from my own chats, or paste an id; a reason is
-/// required. The server checks the conversation involves an org member.
+/// Pick a conversation from my own chats; a reason is required. The server
+/// checks the conversation involves an org member.
+///
+/// [conversationId] pre-selects a conversation the admin can't pick — the
+/// one a message report is about. It is sent, never shown: the field reads
+/// the chat's title when the admin is in it, "The reported conversation"
+/// otherwise.
 Future<void> showCreateAccessRequestSheet(
   BuildContext context,
   WidgetRef ref,
-  String orgId,
-) async {
+  String orgId, {
+  String? conversationId,
+}) async {
   final created = await showModalBottomSheet<AccessRequest>(
     context: context,
     isScrollControlled: true,
+    useSafeArea: true,
     useRootNavigator: true,
-    builder: (_) => _CreateSheet(orgId: orgId),
+    builder: (_) => _CreateSheet(orgId: orgId, presetConversationId: conversationId),
   );
   if (created != null && context.mounted) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -260,7 +301,8 @@ Future<void> showCreateAccessRequestSheet(
 
 class _CreateSheet extends ConsumerStatefulWidget {
   final String orgId;
-  const _CreateSheet({required this.orgId});
+  final String? presetConversationId;
+  const _CreateSheet({required this.orgId, this.presetConversationId});
 
   @override
   ConsumerState<_CreateSheet> createState() => _CreateSheetState();
@@ -274,7 +316,25 @@ class _CreateSheetState extends ConsumerState<_CreateSheet> {
   String? _convError;
   String? _reasonError;
   bool _busy = false;
+  String? _submitError;
   Conversation? _picked;
+
+  /// Opened from a report: the conversation is fixed, there is nothing to pick.
+  bool get _preset => widget.presetConversationId != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final id = widget.presetConversationId;
+    if (id == null) return;
+    final mine = ref
+        .read(conversationsProvider)
+        .asData
+        ?.value
+        .where((c) => c.id == id)
+        .firstOrNull;
+    _conv.text = mine == null ? Strings.accessRequestReportedConversation : conversationTitle(mine);
+  }
 
   @override
   void dispose() {
@@ -288,11 +348,19 @@ class _CreateSheetState extends ConsumerState<_CreateSheet> {
   Future<void> _pick() async {
     _convFocus.unfocus();
     _reasonFocus.unfocus();
-    final list = ref.read(conversationsProvider).asData?.value ?? const <Conversation>[];
     final picked = await showModalBottomSheet<Conversation>(
       context: context,
       useRootNavigator: true,
-      builder: (ctx) => SafeArea(
+      // Watches the chats: while they are still loading the sheet says so
+      // (a spinner), and fills in when they arrive — it used to read them
+      // once and show "no chats" for a list that simply hadn't loaded.
+      builder: (ctx) => Consumer(
+        builder: (ctx, ref, _) {
+        final convs = ref.watch(conversationsProvider);
+        final list = convs.valueOrNull ?? const <Conversation>[];
+        final loading = !convs.hasValue && convs.isLoading;
+        final failed = !convs.hasValue && convs.hasError && !convs.isLoading;
+        return SafeArea(
         child: ListView(
           key: const ValueKey('access-request-picker'),
           shrinkWrap: true,
@@ -304,18 +372,64 @@ class _CreateSheetState extends ConsumerState<_CreateSheet> {
             for (final c in list)
               ListTile(
                 key: ValueKey('access-request-pick-${c.id}'),
+                // The title only: an id means nothing to the person choosing.
                 title: Text(conversationTitle(c), style: AppText.bodyPrimary),
-                subtitle: Text(c.id, style: AppText.timestamp, overflow: TextOverflow.ellipsis),
                 onTap: () => Navigator.pop(ctx, c),
+              ),
+            if (loading)
+              const Padding(
+                key: ValueKey('access-request-picker-loading'),
+                padding: EdgeInsets.all(AppSpacing.xl),
+                child: Center(
+                  child: SizedBox.square(
+                    dimension: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      semanticsLabel: Strings.loading,
+                    ),
+                  ),
+                ),
+              )
+            else if (failed)
+              Padding(
+                key: const ValueKey('access-request-picker-failed'),
+                padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.sm),
+                child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: AppSpacing.sm,
+                  children: [
+                    Semantics(
+                      liveRegion: true,
+                      child: Text(Strings.chatsLoadFailed, style: AppText.caption),
+                    ),
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(44, 44),
+                        tapTargetSize: MaterialTapTargetSize.padded,
+                      ),
+                      onPressed: () => ref.invalidate(conversationsProvider),
+                      child: const Text(Strings.retry),
+                    ),
+                  ],
+                ),
+              )
+            else if (list.isEmpty)
+              Padding(
+                key: const ValueKey('access-request-picker-empty'),
+                padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+                child: Text(Strings.accessRequestNoChats, style: AppText.caption),
               ),
           ],
         ),
+        );
+        },
       ),
     );
     if (picked == null) return;
     setState(() {
+      // The field shows the chat's name; [_submit] sends its id.
       _picked = picked;
-      _conv.text = picked.id;
+      _conv.text = conversationTitle(picked);
       _convError = null;
     });
   }
@@ -323,14 +437,18 @@ class _CreateSheetState extends ConsumerState<_CreateSheet> {
   Future<void> _submit() async {
     _convFocus.unfocus();
     _reasonFocus.unfocus();
-    final convId = _conv.text.trim();
+    // The id travels with the choice; the field only ever shows a title.
+    final convId = widget.presetConversationId ?? _picked?.id ?? '';
     final reason = _reason.text.trim();
     setState(() {
       _convError = convId.isEmpty ? Strings.accessRequestConversationRequired : null;
       _reasonError = reason.isEmpty ? Strings.accessRequestReasonRequired : null;
     });
     if (_convError != null || _reasonError != null) return;
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _submitError = null;
+    });
     try {
       final created = await ref
           .read(accessRequestsProvider(widget.orgId).notifier)
@@ -339,14 +457,20 @@ class _CreateSheetState extends ConsumerState<_CreateSheet> {
       Navigator.of(context).pop(created);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ErrorMessages.forApi(e))));
+      // Shown in the sheet: a snackbar would sit underneath it, unseen.
+      setState(() {
+        _busy = false;
+        _submitError = ErrorMessages.forApi(e);
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.viewInsetsOf(context).bottom;
+    // Watched so my chats are loading (and stay loaded) while the sheet is
+    // up: the picker reads them, and it is the only way to choose one.
+    ref.watch(conversationsProvider);
     return Padding(
       padding: EdgeInsets.only(bottom: bottom),
       child: SafeArea(
@@ -368,27 +492,19 @@ class _CreateSheetState extends ConsumerState<_CreateSheet> {
                 label: Strings.accessRequestConversation,
                 hint: Strings.accessRequestConversationHint,
                 errorText: _convError,
-                onChanged: (_) {
-                  if (_picked != null && _conv.text.trim() != _picked!.id) {
-                    setState(() => _picked = null);
-                  }
-                },
-                suffix: IconButton(
-                  key: const ValueKey('access-request-pick'),
-                  tooltip: Strings.accessRequestPickConversation,
-                  icon: const Icon(Icons.chat_bubble_outline_rounded),
-                  onPressed: _pick,
-                ),
+                // Chosen, never typed: the field shows the chat's title and
+                // opens the picker. No keyboard, so nothing to dismiss.
+                readOnly: true,
+                onTap: _preset ? null : _pick,
+                suffix: _preset
+                    ? null
+                    : IconButton(
+                        key: const ValueKey('access-request-pick'),
+                        tooltip: Strings.accessRequestPickConversation,
+                        icon: const Icon(Icons.chat_bubble_outline_rounded),
+                        onPressed: _pick,
+                      ),
               ),
-              if (_picked != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: AppSpacing.xs, left: AppSpacing.xs),
-                  child: Text(
-                    conversationTitle(_picked!),
-                    key: const ValueKey('access-request-picked'),
-                    style: AppText.caption.copyWith(color: AppColors.medBlue),
-                  ),
-                ),
               const SizedBox(height: AppSpacing.md),
               AppTextField(
                 key: const ValueKey('access-request-reason'),
@@ -400,6 +516,10 @@ class _CreateSheetState extends ConsumerState<_CreateSheet> {
                 maxLines: 3,
                 maxLength: 500,
                 textCapitalization: TextCapitalization.sentences,
+              ),
+              Semantics(
+                liveRegion: true,
+                child: InlineError(_submitError, key: const ValueKey('access-request-submit-error')),
               ),
               const SizedBox(height: AppSpacing.lg),
               AppButton(
@@ -434,9 +554,19 @@ class _Empty extends StatelessWidget {
                 child: const Icon(Icons.lock_outline_rounded, color: AppColors.medBlue, size: 30),
               ),
               const SizedBox(height: AppSpacing.lg),
-              Text(Strings.accessRequestsEmpty, style: AppText.heading, textAlign: TextAlign.center),
-              const SizedBox(height: AppSpacing.sm),
-              Text(Strings.accessRequestsEmptyHint, style: AppText.body, textAlign: TextAlign.center),
+              // Announced when it replaces the loading state.
+              Semantics(
+                container: true,
+                liveRegion: true,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(Strings.accessRequestsEmpty, style: AppText.heading, textAlign: TextAlign.center),
+                    const SizedBox(height: AppSpacing.sm),
+                    Text(Strings.accessRequestsEmptyHint, style: AppText.body, textAlign: TextAlign.center),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -455,7 +585,12 @@ class _Error extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(message, style: AppText.caption, textAlign: TextAlign.center),
+              // Announced when it replaces the loading state.
+              Semantics(
+                container: true,
+                liveRegion: true,
+                child: Text(message, style: AppText.caption, textAlign: TextAlign.center),
+              ),
               const SizedBox(height: AppSpacing.lg),
               AppButton(label: Strings.retry, icon: Icons.refresh_rounded, onPressed: onRetry),
             ],

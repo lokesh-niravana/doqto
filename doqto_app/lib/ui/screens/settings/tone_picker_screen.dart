@@ -104,7 +104,12 @@ class _TonePickerScreenState extends ConsumerState<TonePickerScreen> {
       appBar: AppBar(title: Text(l.toneTitle)),
       body: ListView(
         key: const ValueKey('tone-list'),
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last row clears the home indicator.
+        padding: EdgeInsets.only(
+          top: AppSpacing.sm,
+          bottom: AppSpacing.sm + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(
@@ -118,6 +123,9 @@ class _TonePickerScreenState extends ConsumerState<TonePickerScreen> {
           for (final tone in NotificationTones.all)
             ListTile(
               key: ValueKey('tone-$tone'),
+              // The tick alone is silent to VoiceOver.
+              selected: tone == current,
+              selectedColor: AppColors.textPrimary,
               leading: Icon(
                 tone == NotificationTones.none
                     ? Icons.notifications_off_outlined

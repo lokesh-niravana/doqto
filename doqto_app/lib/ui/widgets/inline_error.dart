@@ -29,19 +29,27 @@ class InlineError extends StatelessWidget {
               key: ValueKey<String>(text),
               padding: const EdgeInsets.only(top: AppSpacing.sm),
               child: FadeSlideIn(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Icon(Icons.error_outline,
-                        size: 14, color: AppColors.red),
-                    const SizedBox(width: AppSpacing.xs + 2),
-                    Expanded(
-                      child: Text(
-                        text,
-                        style: AppText.caption.copyWith(color: AppColors.red),
+                // Announced when it appears, not only drawn.
+                child: Semantics(
+                  container: true,
+                  liveRegion: true,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.error_outline,
+                        size: 14,
+                        color: AppColors.red,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: AppSpacing.xs + 2),
+                      Expanded(
+                        child: Text(
+                          text,
+                          style: AppText.caption.copyWith(color: AppColors.red),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

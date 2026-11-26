@@ -17,6 +17,8 @@ import '../../widgets/app_text_field.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/inline_error.dart';
 import '../../widgets/primary_button.dart';
+import '../../widgets/confirm_sign_out.dart';
+import '../../../core/constants/strings.dart';
 
 /// Two-step PIN gate (batch 6): shown after OTP on a device that has not
 /// entered the account PIN yet. Six digits verify and route by the resolved
@@ -106,81 +108,101 @@ class _PinGateScreenState extends ConsumerState<PinGateScreen> {
         title: Text(l.pinGateTitle),
         automaticallyImplyLeading: false,
       ),
+      // Fills the screen as before (the Spacer pins the links to the bottom)
+      // and scrolls once the keyboard leaves less room than the content needs.
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: AppSpacing.xl),
-              FadeSlideIn.staggered(
-                0,
-                Text(l.pinGateTitle, style: AppText.display),
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              FadeSlideIn.staggered(
-                1,
-                Text(l.pinGateBody, style: AppText.caption),
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              FadeSlideIn.staggered(
-                2,
-                KeyedSubtree(
-                  key: const ValueKey('pin-gate-input'),
-                  child: AppTextField(
-                    key: _key,
-                    controller: _controller,
-                    hint: l.pinGateHint,
-                    keyboardType: TextInputType.number,
-                    obscure: true,
-                    maxLength: AppConstants.otpLength,
-                    autofocus: true,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    validator: Validators.otp(AppConstants.otpLength),
-                    dismissOnValid: true,
-                    onChanged: (v) {
-                      if (_error != null) setState(() => _error = null);
-                      if (v.length == AppConstants.otpLength) _verify();
-                    },
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: IntrinsicHeight(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const SizedBox(height: AppSpacing.xl),
+                      FadeSlideIn.staggered(
+                        0,
+                        Text(l.pinGateTitle, style: AppText.display),
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      FadeSlideIn.staggered(
+                        1,
+                        Text(l.pinGateBody, style: AppText.caption),
+                      ),
+                      const SizedBox(height: AppSpacing.lg),
+                      FadeSlideIn.staggered(
+                        2,
+                        KeyedSubtree(
+                          key: const ValueKey('pin-gate-input'),
+                          child: AppTextField(
+                            key: _key,
+                            controller: _controller,
+                            semanticLabel: Strings.a11yPin,
+                            hint: l.pinGateHint,
+                            keyboardType: TextInputType.number,
+                            obscure: true,
+                            maxLength: AppConstants.otpLength,
+                            autofocus: true,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            validator: Validators.pin(AppConstants.otpLength),
+                            dismissOnValid: true,
+                            onChanged: (v) {
+                              if (_error != null) setState(() => _error = null);
+                              if (v.length == AppConstants.otpLength) _verify();
+                            },
+                          ),
+                        ),
+                      ),
+                      InlineError(_error),
+                      if (clearsAt != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: AppSpacing.md),
+                          child: Text(
+                            l.pinGateResetPending(
+                              DateFormat.yMMMd().format(clearsAt.toLocal()),
+                            ),
+                            key: const ValueKey('pin-gate-pending'),
+                            style: AppText.body.copyWith(
+                              color: AppColors.amberText,
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: AppSpacing.lg),
+                      AppButton(
+                        key: const ValueKey('pin-gate-continue'),
+                        label: l.pinGateContinue,
+                        loading: _busy,
+                        expand: true,
+                        onPressed: _busy ? null : _verify,
+                      ),
+                      const Spacer(),
+                      if (clearsAt == null)
+                        TextButton(
+                          key: const ValueKey('pin-gate-forgot'),
+                          onPressed: _busy ? null : _forgot,
+                          child: Text(l.pinGateForgot),
+                        ),
+                      TextButton(
+                        key: const ValueKey('pin-gate-sign-out'),
+                        onPressed: () async {
+                          final auth = ref.read(authProvider.notifier);
+                          if (!await confirmSignOut(context)) return;
+                          await auth.signOut();
+                        },
+                        child: Text(
+                          l.settingsSignOut,
+                          style: TextStyle(color: AppColors.red),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              InlineError(_error),
-              if (clearsAt != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: AppSpacing.md),
-                  child: Text(
-                    l.pinGateResetPending(
-                      DateFormat.yMMMd().format(clearsAt.toLocal()),
-                    ),
-                    key: const ValueKey('pin-gate-pending'),
-                    style: AppText.body.copyWith(color: AppColors.amber),
-                  ),
-                ),
-              const SizedBox(height: AppSpacing.lg),
-              AppButton(
-                key: const ValueKey('pin-gate-continue'),
-                label: l.pinGateContinue,
-                loading: _busy,
-                expand: true,
-                onPressed: _busy ? null : _verify,
-              ),
-              const Spacer(),
-              if (clearsAt == null)
-                TextButton(
-                  key: const ValueKey('pin-gate-forgot'),
-                  onPressed: _busy ? null : _forgot,
-                  child: Text(l.pinGateForgot),
-                ),
-              TextButton(
-                key: const ValueKey('pin-gate-sign-out'),
-                onPressed: () => ref.read(authProvider.notifier).signOut(),
-                child: Text(
-                  l.settingsSignOut,
-                  style: TextStyle(color: AppColors.red),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),

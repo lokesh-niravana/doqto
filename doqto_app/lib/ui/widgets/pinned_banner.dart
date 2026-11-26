@@ -33,8 +33,11 @@ class PinnedBanner extends StatelessWidget {
     if (m == null) return Strings.chatPinnedMessage;
     return switch (m.type) {
       MessageType.image => 'Photo',
+      MessageType.video => Strings.mediaVideo,
       MessageType.voiceNote => 'Voice note',
       MessageType.file => m.fileName ?? 'File',
+      // A poll's text is its question; `content` alone was blank.
+      MessageType.poll => m.poll?.question ?? m.content ?? Strings.pollLabel,
       _ => plainText(m.content ?? '', nameFor: (id) => nameFor?.call(id) ?? 'someone'),
     };
   }
@@ -46,6 +49,8 @@ class PinnedBanner extends StatelessWidget {
       color: AppColors.surface,
       child: InkWell(
         onTap: onTap,
+        // The labelled button node below speaks for the strip.
+        excludeFromSemantics: true,
         child: Container(
           decoration: BoxDecoration(
             border: Border(bottom: BorderSide(color: AppColors.divider)),
@@ -58,7 +63,15 @@ class PinnedBanner extends StatelessWidget {
               const Icon(Icons.push_pin_rounded, size: 18, color: AppColors.medBlue),
               const SizedBox(width: AppSpacing.sm),
               Expanded(
-                child: Column(
+                // One button node for the tappable strip ("Pinned message ·
+                // name, preview"); Unpin stays its own node beside it.
+                child: Semantics(
+                  button: true,
+                  container: true,
+                  label: '${senderName == null ? Strings.chatPinnedMessage : '${Strings.chatPinnedMessage} · $senderName'}, $_preview',
+                  onTap: onTap,
+                  child: ExcludeSemantics(
+                    child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -81,6 +94,8 @@ class PinnedBanner extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
+                    ),
+                  ),
                 ),
               ),
               if (onUnpin != null)

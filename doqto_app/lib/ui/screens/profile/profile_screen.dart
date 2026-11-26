@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/constants/strings.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/tokens/colors.dart';
@@ -17,6 +18,7 @@ import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
 import '../../../core/utils/avatar_urls.dart';
+import '../../widgets/confirm_sign_out.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   /// When null, the screen shows the signed-in user in editable mode.
@@ -45,41 +47,27 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     }
   }
 
-  Future<void> _refresh() async {
+  /// [pulled] is the user's own pull-to-refresh: a failure is said then.
+  /// The automatic refresh on open stays silent — the cached user is shown.
+  Future<void> _refresh({bool pulled = false}) async {
     if (_refreshing) return;
     setState(() => _refreshing = true);
     try {
       final me = await ref.read(authRepositoryProvider).me();
       ref.read(authProvider.notifier).setUser(me);
     } catch (_) {
-      // silent — the existing cached user stays visible.
+      if (pulled && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(Strings.profileRefreshFailed)),
+        );
+      }
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
   }
 
   Future<void> _confirmAndSignOut() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Sign out?'),
-        content: const Text(
-          "You'll need to verify your phone to sign back in.",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: TextButton.styleFrom(foregroundColor: AppColors.red),
-            child: const Text('Sign out'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
+    if (!await confirmSignOut(context)) return;
     if (!mounted) return;
     setState(() => _signingOut = true);
     try {
@@ -103,7 +91,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (!_isSelf) return _MemberProfileView(member: widget.member!);
     final user = ref.watch(authProvider).user;
     if (user == null) {
-      return const Scaffold(body: _ProfileSkeleton());
+      // Keep the bar (and its back button) while the profile loads.
+      return Scaffold(
+        backgroundColor: AppColors.appBg,
+        appBar: AppBar(title: const Text('Profile')),
+        body: const _ProfileSkeleton(),
+      );
     }
     return Scaffold(
       backgroundColor: AppColors.appBg,
@@ -128,9 +121,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: _isSelf ? _refresh : () async {},
+        onRefresh: _isSelf ? () => _refresh(pulled: true) : () async {},
         child: ListView(
-          padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+          // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last row clears the home indicator.
+        padding: EdgeInsets.only(
+          top: AppSpacing.lg,
+          bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom,
+        ),
           children: [
             FadeSlideIn.staggered(0, _Header(user: user)),
             const SizedBox(height: AppSpacing.xl),
@@ -239,7 +237,12 @@ class _MemberProfileView extends StatelessWidget {
       backgroundColor: AppColors.appBg,
       appBar: AppBar(title: const Text('Doctor')),
       body: ListView(
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last row clears the home indicator.
+        padding: EdgeInsets.only(
+          top: AppSpacing.lg,
+          bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           Column(
             children: [
@@ -295,25 +298,33 @@ class _ProfileSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.screenHorizontal,
-        vertical: AppSpacing.xl,
+    // The grey blocks are only drawn; a screen reader hears "Loading" once.
+    return Semantics(
+      container: true,
+      label: Strings.loading,
+      liveRegion: true,
+      child: ExcludeSemantics(
+        child: ListView(
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.screenHorizontal,
+            vertical: AppSpacing.xl,
+          ),
+          children: [
+            Center(child: AppSkeleton.circle(size: 104)),
+            const SizedBox(height: AppSpacing.md),
+            Center(child: AppSkeleton.line(width: 160, height: 16)),
+            const SizedBox(height: AppSpacing.sm),
+            Center(child: AppSkeleton.line(width: 96)),
+            const SizedBox(height: AppSpacing.xl),
+            AppSkeleton.block(height: 88),
+            const SizedBox(height: AppSpacing.lg),
+            AppSkeleton.block(height: 120),
+            const SizedBox(height: AppSpacing.lg),
+            AppSkeleton.block(height: 120),
+          ],
+        ),
       ),
-      children: [
-        Center(child: AppSkeleton.circle(size: 104)),
-        const SizedBox(height: AppSpacing.md),
-        Center(child: AppSkeleton.line(width: 160, height: 16)),
-        const SizedBox(height: AppSpacing.sm),
-        Center(child: AppSkeleton.line(width: 96)),
-        const SizedBox(height: AppSpacing.xl),
-        AppSkeleton.block(height: 88),
-        const SizedBox(height: AppSpacing.lg),
-        AppSkeleton.block(height: 120),
-        const SizedBox(height: AppSpacing.lg),
-        AppSkeleton.block(height: 120),
-      ],
     );
   }
 }
@@ -365,7 +376,9 @@ class _Header extends StatelessWidget {
             children: [
               Icon(Icons.location_on_outlined, size: 14, color: AppColors.textMuted),
               const SizedBox(width: AppSpacing.xs),
-              Text(user.locationLabel!, style: AppText.caption),
+              Flexible(
+                child: Text(user.locationLabel!, style: AppText.caption),
+              ),
             ],
           ),
         ],
@@ -395,7 +408,7 @@ class _Section extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.only(left: AppSpacing.xs, bottom: AppSpacing.sm),
-            child: Text(title.toUpperCase(), style: AppText.label),
+            child: Semantics(header: true, child: Text(title.toUpperCase(), style: AppText.label)),
           ),
           Container(
             width: double.infinity,

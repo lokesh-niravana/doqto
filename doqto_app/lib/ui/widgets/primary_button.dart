@@ -43,7 +43,17 @@ class AppButton extends StatelessWidget {
           Icon(icon, size: 18, color: fg),
           const SizedBox(width: 8),
         ],
-        Text(label, style: AppText.button.copyWith(color: fg)),
+        // Wraps to two lines and then truncates, so a long or enlarged label
+        // never overflows the row; the 44pt-minimum container grows with it.
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 2,
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+            style: AppText.button.copyWith(color: fg),
+          ),
+        ),
       ],
     );
 
@@ -79,6 +89,8 @@ class AppButton extends StatelessWidget {
       onTap: loading ? null : onPressed,
       enabled: onPressed != null,
       haptic: variant == AppButtonVariant.primary,
+      // While loading the label is hidden behind the spinner; keep the name.
+      semanticLabel: loading ? label : null,
       child: Material(
         color: bg,
         borderRadius: AppRadii.rFull,

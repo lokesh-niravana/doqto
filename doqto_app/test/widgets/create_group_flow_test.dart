@@ -35,6 +35,20 @@ Widget _app({List<PersonCard>? people}) => ProviderScope(
     );
 
 void main() {
+  testWidgets('the description is a multi-line field with the 1000 limit',
+      (tester) async {
+    await tester.pumpWidget(_app());
+    await tester.pumpAndSettle();
+
+    final field = tester.widget<TextField>(find.byType(TextField).at(1));
+    expect(field.maxLines, 4);
+    expect(field.maxLength, 1000);
+    expect(field.keyboardType, TextInputType.multiline);
+    // Keyboard rule: a multi-line field has no "done" key, so tap-outside
+    // must still dismiss it.
+    expect(field.onTapOutside, isNotNull);
+  });
+
   testWidgets('advances Identity → Invite once a name is entered',
       (tester) async {
     await tester.pumpWidget(_app());

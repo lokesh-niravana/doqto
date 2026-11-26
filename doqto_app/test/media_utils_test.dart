@@ -179,6 +179,29 @@ void main() {
       final tight = groupIntoAlbums([_img('b', secs: 20), _img('a', secs: 10)], window: const Duration(seconds: 5));
       expect(tight, hasLength(2));
     });
+
+    test('a failed photo stays a single bubble, where Retry / Delete is reachable', () {
+      final failed = _img('p2', secs: 20).copyWith(status: MessageStatus.failed);
+      final rows = groupIntoAlbums([
+        _img('p4', secs: 40),
+        _img('p3', secs: 30),
+        failed,
+        _img('p1', secs: 10),
+      ]);
+      // p4+p3 still fold; the failed one and the photo after it stand alone.
+      expect(rows, hasLength(3));
+      expect(rows[0].isAlbum, isTrue);
+      expect(rows[1].isAlbum, isFalse);
+      expect(rows[1].first.id, 'p2');
+      expect(rows[2].isAlbum, isFalse);
+      // Two failed photos in a row are two bubbles, not an album of failures.
+      final both = groupIntoAlbums([
+        _img('b', secs: 20).copyWith(status: MessageStatus.failed),
+        _img('a', secs: 10).copyWith(status: MessageStatus.failed),
+      ]);
+      expect(both, hasLength(2));
+      expect(both.every((r) => !r.isAlbum), isTrue);
+    });
   });
 
   group('Waveform', () {

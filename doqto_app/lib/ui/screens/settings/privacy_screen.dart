@@ -14,6 +14,7 @@ import '../../widgets/app_skeleton.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/settings_rows.dart';
+import '../../../core/utils/async_retry.dart';
 
 /// Settings → Privacy (batch 2). Every row is a switch or a radio sheet; each
 /// change saves on its own with a one-field PATCH, flips at once and rolls
@@ -36,7 +37,7 @@ class PrivacyScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: AppColors.appBg,
       appBar: AppBar(title: const Text(Strings.privacyTitle)),
-      body: async.when(
+      body: async.whenRetrying(
         loading: () => const _PrivacySkeleton(),
         error: (e, _) =>
             _ErrorPane(onRetry: () => ref.invalidate(privacyProvider)),
@@ -73,7 +74,12 @@ class _PrivacyBody extends ConsumerWidget {
     final p = settings;
     return ListView(
       key: const ValueKey('privacy-list'),
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+      // Explicit padding drops the automatic safe-area inset; add it back so
+      // the last row clears the home indicator.
+      padding: EdgeInsets.only(
+        top: AppSpacing.lg,
+        bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom,
+      ),
       children: [
         FadeSlideIn.staggered(
           0,
@@ -317,10 +323,15 @@ class _ErrorPane extends StatelessWidget {
               color: AppColors.textMuted,
             ),
             const SizedBox(height: AppSpacing.md),
-            Text(
-              Strings.netErrorGeneric,
-              style: AppText.body,
-              textAlign: TextAlign.center,
+            // Announced when it replaces the loading state.
+            Semantics(
+              container: true,
+              liveRegion: true,
+              child: Text(
+                Strings.netErrorGeneric,
+                style: AppText.body,
+                textAlign: TextAlign.center,
+              ),
             ),
             const SizedBox(height: AppSpacing.lg),
             AppButton(
@@ -340,21 +351,29 @@ class _PrivacySkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.screenHorizontal,
-        vertical: AppSpacing.xl,
+    // The grey blocks are only drawn; a screen reader hears "Loading" once.
+    return Semantics(
+      container: true,
+      label: Strings.loading,
+      liveRegion: true,
+      child: ExcludeSemantics(
+        child: ListView(
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.screenHorizontal,
+            vertical: AppSpacing.xl,
+          ),
+          children: [
+            AppSkeleton.line(width: 120),
+            const SizedBox(height: AppSpacing.sm),
+            AppSkeleton.block(height: 220),
+            const SizedBox(height: AppSpacing.lg),
+            AppSkeleton.line(width: 96),
+            const SizedBox(height: AppSpacing.sm),
+            AppSkeleton.block(height: 180),
+          ],
+        ),
       ),
-      children: [
-        AppSkeleton.line(width: 120),
-        const SizedBox(height: AppSpacing.sm),
-        AppSkeleton.block(height: 220),
-        const SizedBox(height: AppSpacing.lg),
-        AppSkeleton.line(width: 96),
-        const SizedBox(height: AppSpacing.sm),
-        AppSkeleton.block(height: 180),
-      ],
     );
   }
 }

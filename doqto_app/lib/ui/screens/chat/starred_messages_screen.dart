@@ -13,10 +13,13 @@ import '../../../core/tokens/spacing.dart';
 import '../../../core/tokens/typography.dart';
 import '../../../core/utils/error_messages.dart';
 import '../../../core/utils/rich_text.dart';
+import '../../../data/models/conversation.dart';
 import '../../../data/models/message.dart';
 import '../../../state/auth_state.dart';
 import '../../../state/chat_state.dart';
 import '../../widgets/app_skeleton.dart';
+import '../../widgets/inline_error.dart';
+import '../../widgets/primary_button.dart';
 import '../../widgets/swipe_action_row.dart';
 
 /// My starred messages (batch 4), newest star first, across every chat — or
@@ -73,9 +76,13 @@ class _StarredMessagesScreenState extends ConsumerState<StarredMessagesScreen> {
     setState(() => _rows.removeWhere((x) => x.message.id == r.message.id));
     try {
       await ref.read(chatRepositoryProvider).setStarred(r.message.id, false);
-      // The open thread (if any) follows.
+      // The open thread (if any) follows — only where it holds the row;
+      // for one it has not loaded, star() would repeat the server call.
       if (ref.exists(messagesProvider(r.conversationId))) {
-        ref.read(messagesProvider(r.conversationId).notifier).star(r.message.id, false).catchError((_) {});
+        final thread = ref.read(messagesProvider(r.conversationId).notifier);
+        if (thread.messageById(r.message.id) != null) {
+          thread.star(r.message.id, false).catchError((_) {});
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -87,6 +94,15 @@ class _StarredMessagesScreenState extends ConsumerState<StarredMessagesScreen> {
   @override
   Widget build(BuildContext context) {
     final me = ref.watch(authProvider).user?.id;
+    // Mention names: me, and the other person of each direct chat. Anyone
+    // else reads "@someone" — never an id.
+    final names = <String, String>{
+      for (final c in ref.watch(conversationsProvider).asData?.value ?? const <Conversation>[])
+        if (c.type == ConversationType.direct && c.displayName != null)
+          for (final id in c.memberIds)
+            if (id != me) id: c.displayName!,
+    };
+    String nameFor(String id) => id == me ? Strings.chatYou : (names[id] ?? 'someone');
     return Scaffold(
       appBar: AppBar(title: const Text(Strings.chatStarredMessages)),
       body: _rows.isEmpty && _loading
@@ -106,16 +122,42 @@ class _StarredMessagesScreenState extends ConsumerState<StarredMessagesScreen> {
                     )
                   : NotificationListener<ScrollNotification>(
                       onNotification: (n) {
-                        if (!_loading && !_exhausted && n.metrics.pixels > n.metrics.maxScrollExtent - 300) {
+                        // A failed page waits for its Retry instead of refiring on scroll.
+                        if (!_loading && _error == null && !_exhausted && n.metrics.pixels > n.metrics.maxScrollExtent - 300) {
                           _loadMore();
                         }
                         return false;
                       },
                       child: ListView.separated(
                         key: const ValueKey('starred-list'),
-                        itemCount: _rows.length + (_loading ? 1 : 0),
+                        itemCount: _rows.length + (_loading || _error != null ? 1 : 0),
                         separatorBuilder: (_, _) => const Divider(height: 1, indent: AppSpacing.lg),
                         itemBuilder: (_, i) {
+                          if (i >= _rows.length && !_loading) {
+                            // The next page failed with rows on screen: say
+                            // so here, with the button that retries it.
+                            return Padding(
+                              key: const ValueKey('starred-more-error'),
+                              padding: const EdgeInsets.fromLTRB(
+                                  AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.md),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  InlineError(ErrorMessages.forApi(_error)),
+                                  const SizedBox(height: AppSpacing.sm),
+                                  AppButton(
+                                    key: const ValueKey('starred-more-retry'),
+                                    label: Strings.retry,
+                                    icon: Icons.refresh_rounded,
+                                    variant: AppButtonVariant.ghost,
+                                    expand: true,
+                                    onPressed: _loadMore,
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
                           if (i >= _rows.length) {
                             return const Padding(
                               padding: EdgeInsets.all(AppSpacing.md),
@@ -129,12 +171,15 @@ class _StarredMessagesScreenState extends ConsumerState<StarredMessagesScreen> {
                               key: ValueKey('starred-unstar-${r.message.id}'),
                               icon: Icons.star_outline_rounded,
                               label: Strings.chatUnstar,
-                              color: AppColors.amber,
+                              // White label: 7.09:1 here, 2.15:1 on bright amber.
+                              color: AppColors.amberText,
                               onTap: () => _unstar(r),
                             ),
                             child: _StarredRow(
                               row: r,
                               isMine: r.message.senderId == me,
+                              nameFor: nameFor,
+                              onUnstar: () => _unstar(r),
                               onTap: () => context.push(
                                 AppRoutes.chatAt(r.conversationId, r.message.id),
                               ),
@@ -151,17 +196,31 @@ class _StarredRow extends StatelessWidget {
   final StarredMessage row;
   final bool isMine;
   final VoidCallback onTap;
-  const _StarredRow({required this.row, required this.isMine, required this.onTap});
+  final VoidCallback onUnstar;
+  final String Function(String userId) nameFor;
+  const _StarredRow({
+    required this.row,
+    required this.isMine,
+    required this.onTap,
+    required this.onUnstar,
+    required this.nameFor,
+  });
 
   String get _preview {
     final m = row.message;
     if (m.isDeleted) return Strings.chatMessageDeleted;
-    return switch (m.type) {
+    final label = switch (m.type) {
       MessageType.image => '📷 Photo',
+      MessageType.video => '🎬 ${Strings.mediaVideo}',
       MessageType.voiceNote => '🎤 Voice note',
       MessageType.file => '📄 ${m.fileName ?? 'File'}',
-      _ => plainText(m.content ?? ''),
+      MessageType.poll => '📊 ${m.poll?.question ?? m.content ?? 'Poll'}',
+      _ => plainText(m.content ?? '', nameFor: nameFor),
     };
+    // A caption rides under media; a text row is its own content.
+    final caption = (m.caption ?? '').trim();
+    if (caption.isEmpty || m.type == MessageType.text) return label;
+    return label.isEmpty ? caption : '$label\n$caption';
   }
 
   @override
@@ -171,30 +230,65 @@ class _StarredRow extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.md),
-        child: Column(
+        padding: const EdgeInsets.only(left: AppSpacing.lg, right: AppSpacing.xs, top: AppSpacing.md, bottom: AppSpacing.md),
+        child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                const Icon(Icons.star_rounded, size: 16, color: AppColors.amber),
-                const SizedBox(width: AppSpacing.xs),
-                Expanded(
-                  child: Text(
-                    isMine ? '${Strings.chatYou} › $where' : where,
-                    style: AppText.caption.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+            Expanded(
+              child: _content(context, when, where),
+            ),
+            // Unstar without the swipe: a visible, labelled 48pt button.
+            IconButton(
+              key: ValueKey('starred-unstar-button-${row.message.id}'),
+              tooltip: Strings.chatUnstar,
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              icon: Icon(Icons.star_rounded, color: AppColors.amberText),
+              onPressed: onUnstar,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _content(BuildContext context, DateTime when, String where) {
+    return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Star and chat name share a line; the date sits beside them
+            // when it fits and drops to its own line at a large text size,
+            // instead of leaving a few characters of the name.
+            SizedBox(
+              width: double.infinity,
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: AppSpacing.sm,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.star_rounded, size: 16, color: AppColors.amberText),
+                      const SizedBox(width: AppSpacing.xs),
+                      Flexible(
+                        child: Text(
+                          isMine ? '${Strings.chatYou} › $where' : where,
+                          style: AppText.caption.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                Text(DateFormat.MMMd().add_jm().format(when), style: AppText.timestamp),
-              ],
+                  Text(DateFormat.MMMd().add_jm().format(when), style: AppText.timestamp),
+                ],
+              ),
             ),
             const SizedBox(height: AppSpacing.sm),
             Align(
               alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
               child: Container(
-                constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.8),
+                constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.7),
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
                 decoration: BoxDecoration(
                   color: isMine ? AppColors.medBlue : AppColors.white,
@@ -210,8 +304,6 @@ class _StarredRow extends StatelessWidget {
               ),
             ),
           ],
-        ),
-      ),
     );
   }
 }
@@ -232,9 +324,18 @@ class _Empty extends StatelessWidget {
             children: [
               Icon(icon, size: 48, color: AppColors.gray400),
               const SizedBox(height: AppSpacing.lg),
-              Text(title, style: AppText.heading, textAlign: TextAlign.center),
-              const SizedBox(height: AppSpacing.xs),
-              Text(body, style: AppText.caption, textAlign: TextAlign.center),
+              Semantics(
+                container: action != null,
+                liveRegion: action != null,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(title, style: AppText.heading, textAlign: TextAlign.center),
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(body, style: AppText.caption, textAlign: TextAlign.center),
+                  ],
+                ),
+              ),
               if (action != null)
                 TextButton(onPressed: action!.$2, child: Text(action!.$1)),
             ],

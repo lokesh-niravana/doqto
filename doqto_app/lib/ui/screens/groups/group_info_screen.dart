@@ -1,10 +1,12 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../../core/constants/strings.dart';
@@ -26,12 +28,15 @@ import '../../widgets/app_skeleton.dart';
 import '../../widgets/app_text_field.dart';
 import '../../widgets/doctor_avatar.dart';
 import '../../widgets/inline_banner.dart';
+import '../../widgets/load_failed.dart';
 import '../../widgets/member_row.dart';
 import '../../widgets/primary_button.dart';
+import '../../widgets/root_back_button.dart';
 import '../chat/chat_details_screen.dart' show kDisappearOptions;
 import 'group_add_members_sheet.dart';
 import '../../../core/utils/avatar_urls.dart';
 import '../media/image_crop_screen.dart';
+import '../../../core/utils/async_retry.dart';
 
 /// Group info, opened from the group chat's header (WhatsApp's "Group info"):
 /// who the group is, what it's for, who is in it, and the way out. A doctor
@@ -47,8 +52,12 @@ class GroupInfoScreen extends ConsumerWidget {
     final async = ref.watch(groupDetailProvider(groupId));
     return Scaffold(
       backgroundColor: AppColors.appBg,
-      appBar: AppBar(title: const Text(Strings.groupInfoTitle)),
-      body: async.when(
+      appBar: AppBar(
+        // Opened from a link this is the only route: still a way out.
+        leading: const RootBackButton(),
+        title: const Text(Strings.groupInfoTitle),
+      ),
+      body: async.whenRetrying(
         skipLoadingOnReload: true,
         skipLoadingOnRefresh: true,
         loading: () => const SkeletonList(),
@@ -125,6 +134,39 @@ class GroupInfoScreen extends ConsumerWidget {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
+const _revokeLinkConfirm =
+    'Revoke this invite link? Anyone who has it will no longer be able to join.';
+const _cancelInviteConfirm = 'Cancel this invite?';
+const _photoAccessOff =
+    'Photo access is turned off for Doqto. Turn it on in Settings.';
+const _cameraAccessOff =
+    'Camera access is turned off for Doqto. Turn it on in Settings.';
+const _openSettings = 'Open Settings';
+const _removeGroupPhotoConfirm =
+    'Remove the group photo? Everyone in the group will stop seeing it.';
+const _removeAction = 'Remove';
+const _kRenameGroup = 'Rename group';
+
+/// image_picker's codes for a picker the user has denied in iOS Settings.
+/// Returns true (and offers the way to Settings) when [e] is one of them.
+bool showPickerAccessDenied(ScaffoldMessengerState messenger, Object e) {
+  if (e is! PlatformException) return false;
+  final String message;
+  switch (e.code) {
+    case 'camera_access_denied':
+      message = _cameraAccessOff;
+    case 'photo_access_denied':
+      message = _photoAccessOff;
+    default:
+      return false;
+  }
+  messenger.showSnackBar(SnackBar(
+    content: Text(message),
+    action: SnackBarAction(label: _openSettings, onPressed: openAppSettings),
+  ));
+  return true;
+}
+
 void showApiError(ScaffoldMessengerState messenger, Object e) {
   messenger.showSnackBar(SnackBar(
     content: Text(ErrorMessages.forApi(e)),
@@ -137,6 +179,8 @@ Future<bool> confirmDialog(
   BuildContext context, {
   required String message,
   required String action,
+  // Dismiss label. Not "Cancel" when the action itself is a cancellation.
+  String dismiss = Strings.cancel,
 }) async {
   final ok = await showDialog<bool>(
     context: context,
@@ -144,8 +188,9 @@ Future<bool> confirmDialog(
       content: Text(message),
       actions: [
         TextButton(
+          key: const ValueKey('confirm-dismiss'),
           onPressed: () => Navigator.of(ctx).pop(false),
-          child: const Text(Strings.cancel),
+          child: Text(dismiss),
         ),
         TextButton(
           key: const ValueKey('confirm-action'),
@@ -174,10 +219,13 @@ Future<String?> _editTextDialog(
   return showDialog<String>(
     context: context,
     builder: (ctx) => AlertDialog(
+        scrollable: true,
       title: Text(title, style: AppText.subheading),
       content: AppTextField(
         key: fieldKey,
         controller: controller,
+        // The dialog's title is the only visible name the field has.
+        semanticLabel: title,
         maxLength: maxLength,
         autofocus: true,
         keyboardType: multiline ? TextInputType.multiline : TextInputType.text,
@@ -189,14 +237,18 @@ Future<String?> _editTextDialog(
           onPressed: () => Navigator.of(ctx).pop(),
           child: const Text(Strings.cancel),
         ),
-        TextButton(
-          key: const ValueKey('edit-save'),
-          onPressed: () {
-            final v = controller.text.trim();
-            if (required && v.isEmpty) return;
-            Navigator.of(ctx).pop(v);
+        // Save is disabled, not silently inert, while a required field is
+        // empty.
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: controller,
+          builder: (_, value, _) {
+            final v = value.text.trim();
+            return TextButton(
+              key: const ValueKey('edit-save'),
+              onPressed: required && v.isEmpty ? null : () => Navigator.of(ctx).pop(v),
+              child: const Text(Strings.save),
+            );
           },
-          child: const Text(Strings.save),
         ),
       ],
     ),
@@ -226,11 +278,20 @@ class _SectionLabel extends StatelessWidget {
           AppSpacing.sm,
           AppSpacing.xs,
         ),
-        child: Row(
-          children: [
-            Expanded(child: Text(text, style: AppText.label)),
-            ?trailing,
-          ],
+        // A Wrap, not Row[Expanded, trailing]: at a large text size the
+        // button drops to its own line instead of squeezing the label to a
+        // character or two per line.
+        child: SizedBox(
+          width: double.infinity,
+          child: Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: AppSpacing.sm,
+            children: [
+              Semantics(header: true, child: Text(text, style: AppText.label)),
+              ?trailing,
+            ],
+          ),
         ),
       );
 }
@@ -294,7 +355,7 @@ class _IdentityState extends ConsumerState<_Identity> {
       setState(() => _uploading = true);
       await _notifier.setAvatar(cropped);
     } catch (e) {
-      showApiError(messenger, e);
+      if (!showPickerAccessDenied(messenger, e)) showApiError(messenger, e);
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
@@ -317,8 +378,17 @@ class _IdentityState extends ConsumerState<_Identity> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadii.lg)),
       ),
+      // Sized to its content and scrollable, so nothing clips at large
+      // text or on a short screen.
+      isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
-        child: Column(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(ctx).height * 0.9,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
@@ -344,13 +414,21 @@ class _IdentityState extends ConsumerState<_Identity> {
                 leading: const Icon(Icons.delete_outline, color: AppColors.red),
                 title: Text(Strings.groupRemovePhoto,
                     style: AppText.body.copyWith(color: AppColors.red)),
-                onTap: () {
+                onTap: () async {
                   Navigator.pop(ctx);
-                  _removeAvatar();
+                  // Everyone in the group loses the photo, so ask first.
+                  final ok = await confirmDialog(
+                    context,
+                    message: _removeGroupPhotoConfirm,
+                    action: _removeAction,
+                  );
+                  if (ok && mounted) _removeAvatar();
                 },
               ),
             const SizedBox(height: AppSpacing.sm),
           ],
+        ),
+          ),
         ),
       ),
     );
@@ -372,63 +450,93 @@ class _IdentityState extends ConsumerState<_Identity> {
             Stack(
               alignment: Alignment.center,
               children: [
-                GestureDetector(
-                  key: const ValueKey('group-avatar'),
+                // The avatar alone has no name; managers hear a button.
+                Semantics(
+                  button: manage,
+                  label: manage ? Strings.groupChangePhoto : null,
+                  excludeSemantics: manage,
                   onTap: manage ? _openPhotoSheet : null,
-                  child: DoctorAvatar(
-                    initials: group.initials,
-                    colorIndex: group.avatarIndex,
-                    imageUrl: groupAvatarUrl(group.id, group.avatarUrl),
-                    size: AvatarSize.xxl,
-                    heroTag: 'group-avatar-${group.id}',
+                  // The camera badge lives inside the detector, and the
+                  // detector is opaque: a tap anywhere in the avatar's box,
+                  // badge and corners included, opens the photo sheet.
+                  child: GestureDetector(
+                    key: const ValueKey('group-avatar'),
+                    behavior: HitTestBehavior.opaque,
+                    excludeFromSemantics: true,
+                    onTap: manage ? _openPhotoSheet : null,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        DoctorAvatar(
+                          initials: group.initials,
+                          colorIndex: group.avatarIndex,
+                          imageUrl: groupAvatarUrl(group.id, group.avatarUrl),
+                          size: AvatarSize.xxl,
+                          heroTag: 'group-avatar-${group.id}',
+                        ),
+                        if (manage && !_uploading)
+                          Positioned(
+                            right: 0,
+                            bottom: 0,
+                            child: Container(
+                              padding: const EdgeInsets.all(AppSpacing.xs),
+                              decoration: const BoxDecoration(
+                                color: AppColors.medBlue,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.photo_camera,
+                                  size: 14, color: AppColors.white),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
                 if (_uploading)
                   const SizedBox(
                     width: 28,
                     height: 28,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                else if (manage)
-                  Positioned(
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      padding: const EdgeInsets.all(AppSpacing.xs),
-                      decoration: const BoxDecoration(
-                        color: AppColors.medBlue,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.photo_camera,
-                          size: 14, color: AppColors.white),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      semanticsLabel: Strings.loading,
                     ),
                   ),
               ],
             ),
             const SizedBox(height: AppSpacing.md),
-            InkWell(
-              key: const ValueKey('group-name'),
+            // Managers hear one button that says what a tap does; everyone
+            // else hears the plain name.
+            Semantics(
+              button: manage,
+              label: manage ? '$_kRenameGroup, ${group.name}' : null,
+              excludeSemantics: manage,
               onTap: manage ? _rename : null,
-              borderRadius: BorderRadius.circular(AppRadii.sm),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.sm,
-                  vertical: AppSpacing.xs,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(
-                      child: Text(group.name,
-                          style: AppText.heading,
-                          textAlign: TextAlign.center),
-                    ),
-                    if (manage) ...[
-                      const SizedBox(width: AppSpacing.xs),
-                      Icon(Icons.edit_outlined,
-                          size: 18, color: AppColors.textMuted),
+              child: InkWell(
+                key: const ValueKey('group-name'),
+                onTap: manage ? _rename : null,
+                borderRadius: BorderRadius.circular(AppRadii.sm),
+                child: Container(
+                  // 44pt tall target; the name keeps its size, centred in it.
+                  constraints: const BoxConstraints(minHeight: 44),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm,
+                    vertical: AppSpacing.xs,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(group.name,
+                            style: AppText.heading,
+                            textAlign: TextAlign.center),
+                      ),
+                      if (manage) ...[
+                        const SizedBox(width: AppSpacing.xs),
+                        Icon(Icons.edit_outlined,
+                            size: 18, color: AppColors.textMuted),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -484,6 +592,13 @@ class _InviteBannerState extends ConsumerState<_InviteBanner> {
 
   Future<void> _decline() async {
     if (_busy) return;
+    // Declining discards the invite; only a new one brings it back.
+    final ok = await confirmDialog(
+      context,
+      message: Strings.groupDeclineConfirm(widget.group.name),
+      action: Strings.groupDecline,
+    );
+    if (!ok || !mounted) return;
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -632,9 +747,18 @@ class _About extends ConsumerWidget {
                   ? Text(desc, style: AppText.body)
                   : InkWell(
                       onTap: () => _editDescription(context, ref),
-                      child: Text(
-                        Strings.groupAddDescription,
-                        style: AppText.body.copyWith(color: AppColors.medBlue),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 44),
+                        child: Align(
+                          alignment: AlignmentDirectional.centerStart,
+                          widthFactor: 1,
+                          heightFactor: 1,
+                          child: Text(
+                            Strings.groupAddDescription,
+                            style:
+                                AppText.body.copyWith(color: AppColors.medBlue),
+                          ),
+                        ),
                       ),
                     ),
             ),
@@ -676,27 +800,34 @@ class _Settings extends ConsumerWidget {
     final picked = await showModalBottomSheet<_Pick<T>>(
       context: context,
       showDragHandle: true,
+      // Scrolls so the last options stay reachable on a small phone at a
+      // large text size.
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.xs),
-              child: Text(title, style: AppText.heading),
-            ),
-            for (final e in options.entries)
-              ListTile(
-                key: keyFor?.call(e.key),
-                title: Text(e.value, style: AppText.bodyPrimary),
-                trailing: e.key == current
-                    ? const Icon(Icons.check, color: AppColors.medBlue)
-                    : null,
-                onTap: () => Navigator.of(ctx).pop(_Pick(e.key)),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.xs),
+                child: Text(title, style: AppText.heading),
               ),
-            const SizedBox(height: AppSpacing.sm),
-          ],
+              for (final e in options.entries)
+                ListTile(
+                  key: keyFor?.call(e.key),
+                  // Announced as selected, not only drawn as a check.
+                  selected: e.key == current,
+                  selectedColor: AppColors.textPrimary,
+                  title: Text(e.value, style: AppText.bodyPrimary),
+                  trailing: e.key == current
+                      ? const Icon(Icons.check, color: AppColors.medBlue)
+                      : null,
+                  onTap: () => Navigator.of(ctx).pop(_Pick(e.key)),
+                ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+          ),
         ),
       ),
     );
@@ -816,6 +947,13 @@ class _PendingInvites extends ConsumerWidget {
 
   Future<void> _cancel(BuildContext context, WidgetRef ref, GroupInvite i) async {
     final messenger = ScaffoldMessenger.of(context);
+    final ok = await confirmDialog(
+      context,
+      message: _cancelInviteConfirm,
+      action: Strings.groupInviteCancel,
+      dismiss: Strings.groupInviteKeep,
+    );
+    if (!ok) return;
     try {
       await ref.read(groupInvitesProvider(group.id).notifier).revoke(i.id);
       messenger.showSnackBar(
@@ -828,9 +966,29 @@ class _PendingInvites extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(groupInvitesProvider(group.id));
+    // A failed load is not "nobody is waiting": say so, with a way to retry.
+    if (async.hasError && !async.hasValue) {
+      return Padding(
+        padding: const EdgeInsets.only(top: AppSpacing.sm),
+        child: _Section(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const _SectionLabel(Strings.groupPendingInvitesLabel),
+              LoadFailed(
+                key: const ValueKey('pending-invites-failed'),
+                message: Strings.groupPendingInvitesFailed,
+                loading: async.isLoading,
+                onRetry: () => ref.invalidate(groupInvitesProvider(group.id)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     final invites = [
-      for (final i in ref.watch(groupInvitesProvider(group.id)).valueOrNull ??
-          const <GroupInvite>[])
+      for (final i in async.valueOrNull ?? const <GroupInvite>[])
         if (i.isDirect) i,
     ];
     if (invites.isEmpty) return const SizedBox.shrink();
@@ -902,6 +1060,7 @@ class _InviteLinks extends ConsumerWidget {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => const _CreateLinkSheet(),
     );
     if (result == null || !context.mounted) return;
@@ -937,6 +1096,12 @@ class _InviteLinks extends ConsumerWidget {
 
   Future<void> _revoke(BuildContext context, WidgetRef ref, GroupInvite i) async {
     final messenger = ScaffoldMessenger.of(context);
+    final ok = await confirmDialog(
+      context,
+      message: _revokeLinkConfirm,
+      action: Strings.groupLinkRevoke,
+    );
+    if (!ok) return;
     try {
       await ref.read(groupInvitesProvider(group.id).notifier).revoke(i.id);
       messenger.showSnackBar(
@@ -974,6 +1139,13 @@ class _InviteLinks extends ConsumerWidget {
                 width: 20,
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
+            )
+          else if (async.hasError && !async.hasValue)
+            // A failed load must not read as "No active invite links".
+            LoadFailed(
+              key: const ValueKey('invite-links-failed'),
+              message: Strings.groupInviteLinksFailed,
+              onRetry: () => ref.invalidate(groupInvitesProvider(group.id)),
             )
           else if (links.isEmpty)
             Padding(
@@ -1053,8 +1225,15 @@ class _CreateLinkSheetState extends State<_CreateLinkSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final bottom = MediaQuery.viewInsetsOf(context).bottom;
-    return Padding(
+    // Clear the keyboard when it is up, the home indicator when it is not
+    // (the keyboard already covers the indicator, so the larger one wins).
+    final bottom = math.max(
+      MediaQuery.viewInsetsOf(context).bottom,
+      MediaQuery.viewPaddingOf(context).bottom,
+    );
+    // Scrolls: with the number pad up at a large text size the form is
+    // taller than what is left of the screen.
+    return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
           AppSpacing.lg, 0, AppSpacing.lg, bottom + AppSpacing.lg),
       child: Column(
@@ -1148,7 +1327,7 @@ class _Members extends ConsumerWidget {
     final meId = ref.watch(authProvider).user?.id;
     final manage = group.canManage;
     return _Section(
-      child: async.when(
+      child: async.whenRetrying(
         skipLoadingOnReload: true,
         skipLoadingOnRefresh: true,
         loading: () => const SizedBox(height: 180, child: SkeletonList()),
@@ -1228,86 +1407,124 @@ Future<void> showMemberActionsSheet(
   final targetIsAdmin = member.role == GroupRole.admin;
   final canModerate = isOwner || (isAdmin && !targetIsOwner && !targetIsAdmin);
 
+  final messenger = ScaffoldMessenger.of(context);
+  // "Message" creates the thread while the sheet is still up, with a spinner
+  // on its row; closing first left the screen looking idle until the chat
+  // appeared. The sheet then closes with the new conversation's route.
+  var startingChat = false;
   final action = await showModalBottomSheet<String>(
     context: context,
     showDragHandle: true,
-    builder: (ctx) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          MemberRow(
-            avatar: DoctorAvatar(
-              initials: member.initials,
-              colorIndex: member.avatarIndex,
-              imageUrl: userAvatarUrl(member.userId, member.avatarUrl),
+    // Up to seven rows: taller than the default half-screen cap on a small
+    // phone, so the sheet may grow and scrolls when it still doesn't fit.
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setSheet) => SafeArea(
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            MemberRow(
+              avatar: DoctorAvatar(
+                initials: member.initials,
+                colorIndex: member.avatarIndex,
+                imageUrl: userAvatarUrl(member.userId, member.avatarUrl),
+              ),
+              title: member.fullName,
+              subtitle: member.specialty ?? member.headline,
             ),
-            title: member.fullName,
-            subtitle: member.specialty ?? member.headline,
-          ),
-          const Divider(height: 1),
-          ListTile(
-            key: const ValueKey('member-action-message'),
-            leading: const Icon(Icons.chat_bubble_outline),
-            title: const Text(Strings.groupMemberMessage),
-            onTap: () => Navigator.pop(ctx, 'message'),
-          ),
-          ListTile(
-            key: const ValueKey('member-action-profile'),
-            leading: const Icon(Icons.person_outline),
-            title: const Text(Strings.groupMemberViewProfile),
-            onTap: () => Navigator.pop(ctx, 'profile'),
-          ),
-          if (isOwner && !targetIsOwner)
+            const Divider(height: 1),
             ListTile(
-              key: const ValueKey('member-action-role'),
-              leading: const Icon(Icons.admin_panel_settings_outlined),
-              title: Text(targetIsAdmin
-                  ? Strings.groupMemberDemote
-                  : Strings.groupMemberPromote),
-              onTap: () => Navigator.pop(ctx, targetIsAdmin ? 'demote' : 'promote'),
+              key: const ValueKey('member-action-message'),
+              leading: const Icon(Icons.chat_bubble_outline),
+              title: const Text(Strings.groupMemberMessage),
+              trailing: startingChat
+                  ? const SizedBox.square(
+                      key: ValueKey('member-action-message-busy'),
+                      dimension: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        semanticsLabel: Strings.loading,
+                      ),
+                    )
+                  : null,
+              onTap: startingChat
+                  ? null
+                  : () async {
+                      setSheet(() => startingChat = true);
+                      try {
+                        final conv = await ref
+                            .read(chatRepositoryProvider)
+                            .createConversation(
+                              type: ConversationType.direct,
+                              name: null,
+                              memberIds: [member.userId],
+                            );
+                        if (ctx.mounted) {
+                          Navigator.pop(ctx, 'chat:${conv.id}');
+                        }
+                      } catch (e) {
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        showApiError(messenger, e);
+                      }
+                    },
             ),
-          if (isOwner && !targetIsOwner)
             ListTile(
-              key: const ValueKey('member-action-transfer'),
-              leading: const Icon(Icons.swap_horiz_rounded),
-              title: const Text(Strings.groupMemberTransfer),
-              onTap: () => Navigator.pop(ctx, 'transfer'),
+              key: const ValueKey('member-action-profile'),
+              leading: const Icon(Icons.person_outline),
+              title: const Text(Strings.groupMemberViewProfile),
+              onTap: () => Navigator.pop(ctx, 'profile'),
             ),
-          if (canModerate && !targetIsOwner) ...[
-            ListTile(
-              key: const ValueKey('member-action-remove'),
-              leading: const Icon(Icons.person_remove_outlined, color: AppColors.red),
-              title: Text(Strings.groupMemberRemove,
-                  style: AppText.body.copyWith(color: AppColors.red)),
-              onTap: () => Navigator.pop(ctx, 'remove'),
-            ),
-            ListTile(
-              key: const ValueKey('member-action-ban'),
-              leading: const Icon(Icons.block, color: AppColors.red),
-              title: Text(Strings.groupMemberBan,
-                  style: AppText.body.copyWith(color: AppColors.red)),
-              onTap: () => Navigator.pop(ctx, 'ban'),
-            ),
+            if (isOwner && !targetIsOwner)
+              ListTile(
+                key: const ValueKey('member-action-role'),
+                leading: const Icon(Icons.admin_panel_settings_outlined),
+                title: Text(targetIsAdmin
+                    ? Strings.groupMemberDemote
+                    : Strings.groupMemberPromote),
+                onTap: () => Navigator.pop(ctx, targetIsAdmin ? 'demote' : 'promote'),
+              ),
+            if (isOwner && !targetIsOwner)
+              ListTile(
+                key: const ValueKey('member-action-transfer'),
+                leading: const Icon(Icons.swap_horiz_rounded),
+                title: const Text(Strings.groupMemberTransfer),
+                onTap: () => Navigator.pop(ctx, 'transfer'),
+              ),
+            if (canModerate && !targetIsOwner) ...[
+              ListTile(
+                key: const ValueKey('member-action-remove'),
+                leading: const Icon(Icons.person_remove_outlined, color: AppColors.red),
+                title: Text(Strings.groupMemberRemove,
+                    style: AppText.body.copyWith(color: AppColors.red)),
+                onTap: () => Navigator.pop(ctx, 'remove'),
+              ),
+              ListTile(
+                key: const ValueKey('member-action-ban'),
+                leading: const Icon(Icons.block, color: AppColors.red),
+                title: Text(Strings.groupMemberBan,
+                    style: AppText.body.copyWith(color: AppColors.red)),
+                onTap: () => Navigator.pop(ctx, 'ban'),
+              ),
+            ],
+            const SizedBox(height: AppSpacing.sm),
           ],
-          const SizedBox(height: AppSpacing.sm),
-        ],
+        ),
+      ),
       ),
     ),
   );
   if (action == null || !context.mounted) return;
-  final messenger = ScaffoldMessenger.of(context);
+  if (action.startsWith('chat:')) {
+    context.push(AppRoutes.chat(action.substring('chat:'.length)));
+    return;
+  }
   final notifier = ref.read(groupDetailProvider(group.id).notifier);
   try {
     switch (action) {
       case 'profile':
         context.push(AppRoutes.person(member.userId));
-      case 'message':
-        final conv = await ref.read(chatRepositoryProvider).createConversation(
-              type: ConversationType.direct,
-              name: null,
-              memberIds: [member.userId],
-            );
-        if (context.mounted) context.push(AppRoutes.chat(conv.id));
       case 'promote':
         await notifier.changeRole(member.userId, GroupRole.admin);
       case 'demote':
@@ -1347,7 +1564,11 @@ class _InlineError extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(message, style: AppText.caption, textAlign: TextAlign.center),
+            Semantics(
+              container: true,
+              liveRegion: true,
+              child: Text(message, style: AppText.caption, textAlign: TextAlign.center),
+            ),
             const SizedBox(height: AppSpacing.md),
             AppButton(
               label: Strings.retry,

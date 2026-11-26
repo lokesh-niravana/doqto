@@ -21,6 +21,45 @@ enum AppFontSize {
       values.where((v) => v.wire == s).firstOrNull ?? AppFontSize.medium;
 }
 
+/// The app's text scaler: the platform's Dynamic Type scale times the in-app
+/// font size [factor], with a floor so "Small" never shrinks small print.
+///
+/// A plain `TextScaler.linear(system * 0.9)` took 11pt and 12pt text to 9.9pt
+/// and 10.8pt. Here text keeps at least `min(fontSize, minReadable)` points
+/// (times the system scale): 11pt stays 11, 12pt stops at 11, and 16pt body
+/// text still becomes 14.4.
+@immutable
+class AppTextScaler extends TextScaler {
+  final TextScaler system;
+  final double factor;
+
+  /// Apple's smallest legible text size.
+  static const double minReadable = 11;
+
+  const AppTextScaler({required this.system, required this.factor});
+
+  @override
+  double scale(double fontSize) {
+    final scaled = system.scale(fontSize) * factor;
+    if (factor >= 1) return scaled;
+    final floor = system.scale(fontSize < minReadable ? fontSize : minReadable);
+    return scaled > floor ? scaled : floor;
+  }
+
+  @override
+  double get textScaleFactor => system.scale(14) / 14 * factor;
+
+  @override
+  bool operator ==(Object other) =>
+      other is AppTextScaler && other.system == system && other.factor == factor;
+
+  @override
+  int get hashCode => Object.hash(system, factor);
+
+  @override
+  String toString() => 'AppTextScaler($system x $factor)';
+}
+
 /// App lock re-auth timeout (batch 6).
 enum AppLockTimeout {
   immediately(0),

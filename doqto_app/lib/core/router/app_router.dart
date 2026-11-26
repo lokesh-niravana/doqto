@@ -182,6 +182,10 @@ final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     navigatorKey: rootNavigatorKey,
     initialLocation: AppRoutes.splash,
+    // A link the app has no screen for (an old deep link, a mistyped URL)
+    // goes back through the splash, which routes by sign-in state, instead
+    // of go_router's bare "Page Not Found" page with no way out.
+    onException: (_, state, router) => router.go(AppRoutes.splash),
     routes: [
       // --- Pre-shell flows (full-screen, root navigator) ---
       GoRoute(
@@ -197,6 +201,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.otp,
         parentNavigatorKey: rootNavigatorKey,
+        // The code screen only makes sense straight after asking for a code.
+        // Reached any other way (a link, a restored route) there is no
+        // challenge to verify, so go back to sign-in instead of failing.
+        redirect: (_, state) =>
+            state.extra is PhoneChallenge ? null : AppRoutes.login,
         builder: (_, state) => OtpScreen(challenge: state.extra as PhoneChallenge),
       ),
       GoRoute(
@@ -528,6 +537,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       final auth = ref.read(authProvider);
       final loc = state.matchedLocation;
       if (auth.stage == AuthStage.unknown) return null;
+      // The launch check could not reach the server: the splash owns the
+      // "can't reach Doqto" pane and its Retry. Never the login screen.
+      if (auth.stage == AuthStage.unreachable) {
+        return loc == AppRoutes.splash ? null : AppRoutes.splash;
+      }
       final inAuthFlow = [
         AppRoutes.splash,
         AppRoutes.login,

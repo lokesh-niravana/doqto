@@ -129,9 +129,17 @@ class _AvatarStack extends StatelessWidget {
                     color: AppColors.gray100,
                     shape: BoxShape.circle,
                   ),
-                  child: Text(
-                    '+$overflow',
-                    style: AppText.badge.copyWith(color: AppColors.gray600),
+                  // The bubble stays 28pt; a long count or large text
+                  // shrinks to fit inside it instead of spilling out.
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      '+$overflow',
+                      maxLines: 1,
+                      softWrap: false,
+                      style: AppText.badge.copyWith(color: AppColors.gray600),
+                    ),
                   ),
                 ),
               ),

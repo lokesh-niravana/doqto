@@ -182,4 +182,54 @@ void main() {
     expect(out, isNull);
     expect(tmp.listSync().length, before);
   });
+
+  testWidgets('Cancel with edits asks first: Keep editing stays, Discard pops null', (tester) async {
+    final before = tmp.listSync().length;
+    final out = await open(tester, () async {
+      final (_, at) = canvasMap(tester);
+      await drag(tester, at(20, 60), at(180, 60));
+      await tester.tap(find.byKey(const ValueKey('markup-cancel')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Keep editing'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('markup-keep-editing')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('markup-canvas')), findsOneWidget);
+      expect(find.byKey(const ValueKey('markup-discard')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('markup-cancel')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('markup-discard')));
+    });
+    expect(out, isNull);
+    expect(tmp.listSync().length, before);
+  });
+
+  testWidgets('tool row fits a 320pt phone at 3x text; every tool stays 44pt', (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(3)),
+        child: child!,
+      ),
+      home: ImageMarkupScreen(source: source, outputDir: tmp),
+    ));
+    await tester.runAsync(() async {
+      for (var i = 0; i < 300 && !doneEnabled(tester); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await tester.pump();
+      }
+    });
+    expect(tester.takeException(), isNull);
+    for (final t in ['pen', 'highlighter', 'text', 'block', 'pixelate']) {
+      final r = tester.getRect(find.byKey(ValueKey('markup-tool-$t')));
+      expect(r.width, greaterThanOrEqualTo(44), reason: t);
+      expect(r.height, greaterThanOrEqualTo(44), reason: t);
+      expect(r.right, lessThanOrEqualTo(320), reason: t);
+    }
+  });
 }

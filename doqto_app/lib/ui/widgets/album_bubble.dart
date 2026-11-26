@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants/strings.dart';
 import '../../core/di/providers.dart';
+import '../../core/enums/app_enums.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/radii.dart';
 import '../../core/tokens/spacing.dart';
@@ -61,6 +62,15 @@ class AlbumBubble extends ConsumerWidget {
           onTap: () => onOpen(i),
           badge: badge,
           autoDownload: autoDownload,
+          // "Photo 2 of 5"; the last tile also says how many it stands for.
+          semanticLabel: [
+            Strings.mediaItemOf(
+              ordered[i].type == MessageType.video ? Strings.mediaVideo : Strings.mediaPhoto,
+              i + 1,
+              n,
+            ),
+            if (badge != null) Strings.mediaMoreCount(extra),
+          ].join(', '),
         );
 
     final half = (w - gap) / 2;
@@ -135,6 +145,7 @@ class _AlbumTile extends ConsumerStatefulWidget {
   final VoidCallback onTap;
   final String? badge;
   final bool autoDownload;
+  final String semanticLabel;
   const _AlbumTile({
     super.key,
     required this.message,
@@ -144,6 +155,7 @@ class _AlbumTile extends ConsumerStatefulWidget {
     required this.resolveUrl,
     required this.onTap,
     required this.autoDownload,
+    required this.semanticLabel,
     this.badge,
   });
 
@@ -204,15 +216,47 @@ class _AlbumTileState extends ConsumerState<_AlbumTile> {
     if (_failed) {
       body = AppPressable(
         onTap: _load,
-        child: Container(color: AppColors.gray100, child: Icon(Icons.broken_image_outlined, color: AppColors.gray400)),
+        semanticLabel: '${widget.semanticLabel}. ${Strings.mediaPhotoRetry}',
+        child: Container(
+          color: AppColors.gray100,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.broken_image_outlined, color: AppColors.gray400),
+              // The glyph alone does not say the tile can be tapped. The
+              // button's own label already covers it for VoiceOver.
+              ExcludeSemantics(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 2, 4, 0),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      Strings.mediaTapToRetry,
+                      maxLines: 1,
+                      style: AppText.caption.copyWith(color: AppColors.textSecondary),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       );
     } else if (file == null && _waiting) {
-      body = DownloadPlaceholder(width: widget.width, height: widget.height, label: '', onTap: _load);
+      // One button node, named for the photo and what a tap does.
+      body = DownloadPlaceholder(
+        width: widget.width,
+        height: widget.height,
+        label: '',
+        semanticLabel: '${widget.semanticLabel}. ${Strings.mediaTapToDownload}',
+        onTap: _load,
+      );
     } else if (file == null) {
       body = Container(color: AppColors.gray100, child: const Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))));
     } else {
       body = AppPressable(
         onTap: widget.onTap,
+        semanticLabel: widget.semanticLabel,
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -228,7 +272,7 @@ class _AlbumTileState extends ConsumerState<_AlbumTile> {
             ),
             if (widget.badge != null)
               Container(
-                color: AppColors.gray900.withValues(alpha: 0.55),
+                color: AppColors.gray900.withValues(alpha: kPhotoScrimAlpha),
                 alignment: Alignment.center,
                 child: Text(widget.badge!, key: const ValueKey('album-more'), style: AppText.heading.copyWith(color: AppColors.white)),
               )
@@ -241,7 +285,11 @@ class _AlbumTileState extends ConsumerState<_AlbumTile> {
     return SizedBox(
       width: widget.width,
       height: widget.height,
-      child: Semantics(label: Strings.mediaPhoto, child: body),
+      // The pressable states name themselves; the placeholders get the name
+      // here so a tile is never silent.
+      child: body is AppPressable || body is DownloadPlaceholder
+          ? body
+          : Semantics(label: widget.semanticLabel, child: body),
     );
   }
 }

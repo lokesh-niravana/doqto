@@ -85,6 +85,7 @@ Future<ContextMenuResult?> showMessageContextMenu(
     useRootNavigator: true,
     showDragHandle: true,
     isScrollControlled: true,
+    useSafeArea: true,
     builder: (ctx) => SafeArea(
       child: SingleChildScrollView(
         child: Column(
@@ -94,12 +95,17 @@ Future<ContextMenuResult?> showMessageContextMenu(
             if (reactable)
               Padding(
                 padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.sm),
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: ReactionTray(
-                    current: currentReaction,
-                    onPick: (e) => Navigator.of(ctx).pop(ContextMenuReaction(e)),
-                    onMore: () => Navigator.of(ctx).pop(const ContextMenuReaction(null)),
+                // Scrolls sideways on a narrow screen instead of scaling down:
+                // every reaction keeps its full 44pt target.
+                child: Center(
+                  child: SingleChildScrollView(
+                    key: const ValueKey('ctx-reaction-scroll'),
+                    scrollDirection: Axis.horizontal,
+                    child: ReactionTray(
+                      current: currentReaction,
+                      onPick: (e) => Navigator.of(ctx).pop(ContextMenuReaction(e)),
+                      onMore: () => Navigator.of(ctx).pop(const ContextMenuReaction(null)),
+                    ),
                   ),
                 ),
               ),

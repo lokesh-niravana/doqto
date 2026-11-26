@@ -18,6 +18,7 @@ import '../../widgets/fade_slide_in.dart';
 import '../../widgets/inline_error.dart';
 import '../../widgets/phone_field.dart';
 import '../../widgets/primary_button.dart';
+import '../../../core/constants/strings.dart';
 
 /// Settings → Change number (batch 6). Firebase verifies the new number
 /// (link to the current Firebase user), then `POST /me/change-phone` with
@@ -102,7 +103,11 @@ class _ChangeNumberScreenState extends ConsumerState<ChangeNumberScreen> {
       appBar: AppBar(title: Text(l.settingsChangeNumber)),
       body: ListView(
         key: const ValueKey('change-number-screen'),
-        padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last row clears the home indicator.
+        padding: const EdgeInsets.all(AppSpacing.screenHorizontal).copyWith(
+          bottom: AppSpacing.screenHorizontal + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           FadeSlideIn.staggered(
             0,
@@ -146,6 +151,9 @@ class _ChangeNumberScreenState extends ConsumerState<ChangeNumberScreen> {
               child: AppTextField(
                 key: _codeKey,
                 controller: _code,
+                autofillHints: const [AutofillHints.oneTimeCode],
+                textInputAction: TextInputAction.done,
+                semanticLabel: Strings.a11yVerificationCode,
                 hint: l.changeNumberCodeHint,
                 keyboardType: TextInputType.number,
                 maxLength: AppConstants.otpLength,

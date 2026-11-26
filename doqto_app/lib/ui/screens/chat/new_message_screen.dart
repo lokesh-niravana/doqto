@@ -96,7 +96,13 @@ class _NewMessageScreenState extends ConsumerState<NewMessageScreen> {
     final shownColleagues = colleagues.where(_match).toList();
     final total = connections.length + colleagues.length;
     final searching = _query.trim().isNotEmpty;
-    final loading = connectionsAsync.isLoading && !connectionsAsync.hasValue;
+    // Both lists feed this screen: wait for each one's first answer, and a
+    // failure of either with nothing to show is an error, not "no one yet".
+    final loading = (connectionsAsync.isLoading && !connectionsAsync.hasValue) ||
+        (membersAsync != null && membersAsync.isLoading && !membersAsync.hasValue);
+    final loadError = connectionsAsync.hasError
+        ? connectionsAsync.error
+        : (membersAsync != null && membersAsync.hasError ? membersAsync.error : null);
     final canGroup = org?.status == OrgStatus.active;
 
     return Scaffold(
@@ -116,12 +122,16 @@ class _NewMessageScreenState extends ConsumerState<NewMessageScreen> {
       ),
       body: loading
           ? const SkeletonList()
-          : connectionsAsync.hasError && total == 0
+          : loadError != null && total == 0
               ? _Message(
                   title: 'Couldn’t load your contacts',
-                  body: ErrorMessages.forApi(connectionsAsync.error!),
+                  body: ErrorMessages.forApi(loadError),
                   action: 'Retry',
-                  onAction: () => ref.invalidate(connectionsProvider),
+                  announce: true,
+                  onAction: () {
+                    ref.invalidate(connectionsProvider);
+                    if (org != null) ref.invalidate(orgMembersProvider(org.id));
+                  },
                 )
               : total == 0
                   ? _Message(
@@ -222,7 +232,7 @@ class _Header extends StatelessWidget {
           AppSpacing.screenHorizontal,
           AppSpacing.xs,
         ),
-        child: Text(text, style: AppText.label),
+        child: Semantics(header: true, child: Text(text, style: AppText.label)),
       );
 }
 
@@ -309,7 +319,11 @@ class _Message extends StatelessWidget {
     required this.onAction,
     this.link,
     this.onLink,
+    this.announce = false,
   });
+
+  /// True for the error pane: announced when it replaces the skeleton.
+  final bool announce;
   final String title;
   final String body;
   final String action;
@@ -326,9 +340,18 @@ class _Message extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(title, style: AppText.heading, textAlign: TextAlign.center),
-            const SizedBox(height: AppSpacing.sm),
-            Text(body, style: AppText.body, textAlign: TextAlign.center),
+            Semantics(
+              container: true,
+              liveRegion: announce,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title, style: AppText.heading, textAlign: TextAlign.center),
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(body, style: AppText.body, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
             const SizedBox(height: AppSpacing.lg),
             AppButton(label: action, onPressed: onAction),
             if (link != null)

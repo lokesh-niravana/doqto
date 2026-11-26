@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -40,22 +39,12 @@ void main() {
 
   setUp(() => opener = FakeUrlOpener());
 
-  /// Taps the inline span whose text is [label] inside the footer.
+  /// Taps the link button labelled [label] inside the footer.
   Future<void> tapSpan(WidgetTester tester, String label) async {
-    final rich = tester.widget<RichText>(find.descendant(
+    await tester.tap(find.descendant(
       of: find.byKey(const ValueKey('legal-footer')),
-      matching: find.byType(RichText),
+      matching: find.widgetWithText(TextButton, label),
     ));
-    TapGestureRecognizer? hit;
-    rich.text.visitChildren((span) {
-      if (span is TextSpan && span.text == label) {
-        hit = span.recognizer as TapGestureRecognizer?;
-        return false;
-      }
-      return true;
-    });
-    expect(hit, isNotNull, reason: 'no tappable "$label" span');
-    hit!.onTap!();
     await tester.pumpAndSettle();
   }
 
@@ -82,6 +71,17 @@ void main() {
       'https://doqto.ai/terms?v=test',
       'https://doqto.ai/privacy?v=test',
     ]);
+  });
+
+  testWidgets('each link is at least 44pt in both directions', (tester) async {
+    await pump(tester, const Scaffold(body: Center(child: LegalFooter())));
+    await tester.pumpAndSettle();
+
+    for (final label in [Strings.legalTerms, Strings.legalPrivacy]) {
+      final size = tester.getSize(find.widgetWithText(TextButton, label));
+      expect(size.height, greaterThanOrEqualTo(44), reason: label);
+      expect(size.width, greaterThanOrEqualTo(44), reason: label);
+    }
   });
 
   testWidgets('falls back to the built-in links before the backend answers', (tester) async {

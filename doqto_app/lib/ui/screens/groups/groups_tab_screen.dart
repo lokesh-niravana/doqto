@@ -15,9 +15,14 @@ import '../../widgets/app_pill.dart';
 import '../../widgets/app_skeleton.dart';
 import '../../widgets/doctor_avatar.dart';
 import '../../widgets/fade_slide_in.dart';
+import '../../widgets/inline_error.dart';
+import '../../widgets/refresh_feedback.dart';
 import '../../widgets/member_row.dart';
 import '../../widgets/primary_button.dart';
 import '../../../core/utils/avatar_urls.dart';
+import '../home/main_shell.dart';
+import 'group_info_screen.dart' show confirmDialog;
+import '../../../core/utils/async_retry.dart';
 
 /// The Groups tab: my groups only — groups are not discoverable by browsing.
 /// Create is a header action (the center FAB slot is owned by the mic).
@@ -44,7 +49,7 @@ class GroupsTabScreen extends ConsumerWidget {
 
   Widget _buildMyGroups(BuildContext context, WidgetRef ref) {
     final async = ref.watch(myGroupsProvider);
-    return async.when(
+    return async.whenRetrying(
       skipLoadingOnReload: true,
       skipLoadingOnRefresh: true,
       loading: () => const SkeletonList(),
@@ -53,7 +58,7 @@ class GroupsTabScreen extends ConsumerWidget {
         onRetry: () => ref.invalidate(myGroupsProvider),
       ),
       data: (data) {
-        if (data.isEmpty) {
+        if (data.isEmpty && data.invitedError == null) {
           return const _EmptyPane(
             icon: Icons.groups_outlined,
             text: Strings.netEmptyGroups,
@@ -61,16 +66,25 @@ class GroupsTabScreen extends ConsumerWidget {
         }
         // member first, then invited.
         final rows = <Group>[...data.member, ...data.invited];
+        // The invitations fetch failed on its own: one more row saying so.
+        final invitesFailed = data.invitedError != null;
         return RefreshIndicator(
-          onRefresh: () => ref.read(myGroupsProvider.notifier).refresh(),
+          onRefresh: () => refreshWithFeedback(
+            context,
+            () => ref
+                .read(myGroupsProvider.notifier)
+                .refresh(rethrowOnError: true),
+          ),
           child: ListView.builder(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: EdgeInsets.only(
               top: AppSpacing.sm,
-              bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.xl,
+              bottom: MediaQuery.paddingOf(context).bottom + kMicButtonRise + AppSpacing.xl,
             ),
-            itemCount: rows.length,
-            itemBuilder: (context, i) => FadeSlideIn.staggered(
+            itemCount: rows.length + (invitesFailed ? 1 : 0),
+            itemBuilder: (context, i) => i >= rows.length
+                ? const _InvitesFailedRow()
+                : FadeSlideIn.staggered(
               i,
               _GroupRow(
                 group: rows[i],
@@ -113,6 +127,13 @@ class _GroupRow extends ConsumerWidget {
   }
 
   Future<void> _decline(BuildContext context, WidgetRef ref) async {
+    // Declining discards the invite; only a new one brings it back.
+    final ok = await confirmDialog(
+      context,
+      message: Strings.groupDeclineConfirm(group.name),
+      action: Strings.groupDecline,
+    );
+    if (!ok || !context.mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     try {
       await ref.read(myGroupsProvider.notifier).declineInvite(group);
@@ -183,6 +204,57 @@ class _GroupRow extends ConsumerWidget {
   }
 }
 
+/// Closes the invitations section when its fetch failed while the member
+/// list loaded: without it the tab simply showed no invitations.
+class _InvitesFailedRow extends ConsumerStatefulWidget {
+  const _InvitesFailedRow();
+
+  @override
+  ConsumerState<_InvitesFailedRow> createState() => _InvitesFailedRowState();
+}
+
+class _InvitesFailedRowState extends ConsumerState<_InvitesFailedRow> {
+  bool _retrying = false;
+
+  Future<void> _retry() async {
+    if (_retrying) return;
+    setState(() => _retrying = true);
+    // On success the row goes with the error; on failure it stays put.
+    await ref.read(myGroupsProvider.notifier).refresh();
+    if (mounted) setState(() => _retrying = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      key: const ValueKey('group-invites-error'),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.screenHorizontal,
+        AppSpacing.sm,
+        AppSpacing.screenHorizontal,
+        AppSpacing.md,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const InlineError(Strings.groupInvitesLoadFailed),
+          const SizedBox(height: AppSpacing.sm),
+          AppButton(
+            key: const ValueKey('group-invites-retry'),
+            label: Strings.retry,
+            icon: Icons.refresh_rounded,
+            variant: AppButtonVariant.ghost,
+            expand: true,
+            loading: _retrying,
+            onPressed: _retrying ? null : _retry,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 String _memberCountLabel(int n) => n == 1 ? '1 member' : '$n members';
 
 class _EmptyPane extends StatelessWidget {
@@ -200,7 +272,12 @@ class _EmptyPane extends StatelessWidget {
           children: [
             Icon(icon, size: 48, color: AppColors.gray400),
             const SizedBox(height: AppSpacing.md),
-            Text(text, style: AppText.body, textAlign: TextAlign.center),
+            // Announced when it replaces the loading state.
+            Semantics(
+              container: true,
+              liveRegion: true,
+              child: Text(text, style: AppText.body, textAlign: TextAlign.center),
+            ),
           ],
         ),
       ),
@@ -223,7 +300,12 @@ class _ErrorPane extends StatelessWidget {
           children: [
             Icon(Icons.wifi_off_rounded, size: 40, color: AppColors.textMuted),
             const SizedBox(height: AppSpacing.md),
-            Text(message, style: AppText.caption, textAlign: TextAlign.center),
+            // Announced when it replaces the loading state.
+            Semantics(
+              container: true,
+              liveRegion: true,
+              child: Text(message, style: AppText.caption, textAlign: TextAlign.center),
+            ),
             const SizedBox(height: AppSpacing.lg),
             AppButton(
                 label: Strings.retry,

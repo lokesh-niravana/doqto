@@ -55,6 +55,9 @@ List<ThreadRow> groupIntoAlbums(
 
 bool _albumable(Message m) =>
     m.type == MessageType.image &&
+    // A failed photo stays a single bubble: only there can it be tapped for
+    // Retry / Delete. Inside an album tile that sheet is out of reach.
+    m.status != MessageStatus.failed &&
     !m.isDeleted &&
     m.replyTo == null &&
     m.replyToId == null &&

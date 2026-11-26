@@ -10,6 +10,7 @@ import '../../data/models/message.dart';
 import 'app_pressable.dart';
 import 'attachment_bubbles.dart';
 import 'doctor_avatar.dart';
+import 'message_bubble.dart' show kOnSentSecondaryAlpha;
 
 /// Poll message (batch 5 I): question, options with result bars, tap to
 /// vote / unvote, "View votes" when anyone has voted.
@@ -48,7 +49,7 @@ class PollBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final contrast = isMine ? AppColors.white : AppColors.textPrimary;
-    final sub = isMine ? AppColors.white.withValues(alpha: 0.75) : AppColors.textMuted;
+    final sub = isMine ? AppColors.white.withValues(alpha: kOnSentSecondaryAlpha) : AppColors.textMuted;
     final total = poll.voterCount;
     final maxVotes = poll.options.fold<int>(0, (a, o) => o.voteCount > a ? o.voteCount : a);
     final mine = (me == null ? const <String>[] : poll.myOptionIds(me!)).toSet();
@@ -86,6 +87,7 @@ class PollBubble extends StatelessWidget {
               key: ValueKey('poll-opt-${o.id}'),
               option: o,
               selected: mine.contains(o.id),
+              multiple: poll.multiple,
               fraction: maxVotes == 0 ? 0 : o.voteCount / maxVotes,
               percent: total == 0 ? 0 : (o.voteCount * 100 / total).round(),
               contrast: contrast,
@@ -139,6 +141,7 @@ class PollBubble extends StatelessWidget {
 class _PollOptionRow extends StatelessWidget {
   final PollOption option;
   final bool selected;
+  final bool multiple;
   final double fraction;
   final int percent;
   final Color contrast;
@@ -149,6 +152,7 @@ class _PollOptionRow extends StatelessWidget {
     super.key,
     required this.option,
     required this.selected,
+    required this.multiple,
     required this.fraction,
     required this.percent,
     required this.contrast,
@@ -160,12 +164,27 @@ class _PollOptionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final barColor = isMine ? AppColors.white : AppColors.medBlue;
-    return AppPressable(
+    // One node per option: a radio (single choice) or a checkbox (multiple),
+    // with its state and tally — the circle icon alone says none of that.
+    return Semantics(
+      container: true,
+      button: true,
+      inMutuallyExclusiveGroup: !multiple,
+      checked: selected,
+      enabled: onTap != null,
+      label: '${option.text}, ${option.voteCount} '
+          '${option.voteCount == 1 ? Strings.pollVote : Strings.pollVotes}',
       onTap: onTap,
+      excludeSemantics: true,
+      child: AppPressable(
+      onTap: onTap,
+      // 44pt row: the option text + bar alone come to ~37.
+      minTarget: true,
       child: Padding(
         padding: const EdgeInsets.only(bottom: AppSpacing.sm),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Row(
               children: [
@@ -202,6 +221,7 @@ class _PollOptionRow extends StatelessWidget {
           ],
         ),
       ),
+      ),
     );
   }
 }
@@ -217,6 +237,7 @@ Future<void> showPollVotersSheet({
     context: context,
     useRootNavigator: true,
     isScrollControlled: true,
+    useSafeArea: true,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
     builder: (ctx) => SafeArea(
       child: ConstrainedBox(

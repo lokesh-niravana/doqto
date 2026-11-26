@@ -1,4 +1,3 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -36,30 +35,40 @@ class LegalFooter extends ConsumerWidget {
       }
     }
 
+    // Each link is a real button with a 44pt touch area: a tap recogniser on
+    // a 12pt span is only as tall as its line of text (15.6pt).
+    Widget linkButton(String label, String url) => TextButton(
+          key: ValueKey('legal-link-$label'),
+          onPressed: () => open(url),
+          style: TextButton.styleFrom(
+            minimumSize: const Size(44, 44),
+            padding: EdgeInsets.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            foregroundColor: AppColors.medBlue,
+            textStyle: link,
+          ),
+          child: Text(label, style: link),
+        );
+
     return Semantics(
       key: const ValueKey('legal-footer'),
       container: true,
-      child: Text.rich(
-        TextSpan(
-          style: base,
-          children: [
-            const TextSpan(text: Strings.legalByContinuing),
-            TextSpan(
-              text: Strings.legalTerms,
-              style: link,
-              semanticsLabel: Strings.legalTerms,
-              recognizer: TapGestureRecognizer()..onTap = () => open(links.terms),
-            ),
-            const TextSpan(text: Strings.legalAnd),
-            TextSpan(
-              text: Strings.legalPrivacy,
-              style: link,
-              recognizer: TapGestureRecognizer()..onTap = () => open(links.privacy),
-            ),
-            const TextSpan(text: '.'),
-          ],
-        ),
-        textAlign: TextAlign.center,
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 4,
+        children: [
+          Text(Strings.legalByContinuing.trim(), style: base),
+          linkButton(Strings.legalTerms, links.terms),
+          Text(Strings.legalAnd.trim(), style: base),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              linkButton(Strings.legalPrivacy, links.privacy),
+              Text('.', style: base),
+            ],
+          ),
+        ],
       ),
     );
   }

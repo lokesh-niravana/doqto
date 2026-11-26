@@ -1,8 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../core/constants/specialties.dart';
 import '../../core/constants/strings.dart';
 import '../../core/tokens/colors.dart';
+import '../../core/tokens/motion.dart';
 import '../../core/tokens/radii.dart';
 import '../../core/tokens/spacing.dart';
 import '../../core/tokens/typography.dart';
@@ -43,7 +46,8 @@ class SpecialtyField extends StatefulWidget {
   State<SpecialtyField> createState() => _SpecialtyFieldState();
 }
 
-class _SpecialtyFieldState extends State<SpecialtyField> {
+class _SpecialtyFieldState extends State<SpecialtyField>
+    with WidgetsBindingObserver {
   /// What the dropdown shows. In "Other" mode that is the word Other, which is
   /// why it cannot be the caller's controller.
   late final TextEditingController _picker =
@@ -67,15 +71,49 @@ class _SpecialtyFieldState extends State<SpecialtyField> {
   /// had made them.
   bool _writingBack = false;
 
+  /// The dropdown field's box: the options list measures the room between
+  /// its bottom edge and the keyboard.
+  final GlobalKey _fieldKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onExternalValue);
+    _pickerFocus.addListener(_onPickerFocus);
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  /// The keyboard arriving shrinks the viewport, which is what gives the
+  /// form enough scroll range to bring the field to the top. (Read from the
+  /// binding: under a Scaffold, MediaQuery's keyboard inset is already
+  /// consumed and reads zero.)
+  @override
+  void didChangeMetrics() {
+    if (_pickerFocus.hasFocus) _scrollFieldToTop();
+  }
+
+  void _onPickerFocus() {
+    if (_pickerFocus.hasFocus) _scrollFieldToTop();
+  }
+
+  /// The options open downward, where the keyboard is. Put the field at the
+  /// top of the viewport so the list has the whole space above the keyboard.
+  void _scrollFieldToTop() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_pickerFocus.hasFocus) return;
+      Scrollable.ensureVisible(
+        context,
+        alignment: 0,
+        duration: AppMotion.maybe(context, AppMotion.micro),
+      );
+    });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_onExternalValue);
+    _pickerFocus.removeListener(_onPickerFocus);
     _picker.dispose();
     _custom.dispose();
     _pickerFocus.dispose();
@@ -157,6 +195,7 @@ class _SpecialtyFieldState extends State<SpecialtyField> {
           ),
           onSelected: _onSelected,
           fieldViewBuilder: (context, controller, focusNode, _) => AppTextField(
+            key: _fieldKey,
             controller: controller,
             focusNode: focusNode,
             label: widget.label,
@@ -167,7 +206,11 @@ class _SpecialtyFieldState extends State<SpecialtyField> {
           ),
           optionsViewBuilder: (context, onSelected, options) => Align(
             alignment: Alignment.topLeft,
-            child: _OptionsList(options: options, onSelected: onSelected),
+            child: _OptionsList(
+              options: options,
+              onSelected: onSelected,
+              fieldKey: _fieldKey,
+            ),
           ),
         ),
         if (_other) ...[
@@ -186,22 +229,78 @@ class _SpecialtyFieldState extends State<SpecialtyField> {
   }
 }
 
-class _OptionsList extends StatelessWidget {
+class _OptionsList extends StatefulWidget {
   final Iterable<String> options;
   final ValueChanged<String> onSelected;
 
-  const _OptionsList({required this.options, required this.onSelected});
+  /// The field the list hangs under.
+  final GlobalKey fieldKey;
+
+  const _OptionsList({
+    required this.options,
+    required this.onSelected,
+    required this.fieldKey,
+  });
+
+  @override
+  State<_OptionsList> createState() => _OptionsListState();
+}
+
+class _OptionsListState extends State<_OptionsList>
+    with WidgetsBindingObserver {
+  /// Tallest the list may be.
+  static const double _maxHeight = 260;
+
+  /// Never shorter than one row, however little room there is.
+  static const double _minHeight = kMinInteractiveDimension;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// The keyboard moved: measure again.
+  @override
+  void didChangeMetrics() {
+    if (mounted) setState(() {});
+  }
+
+  /// The room between the bottom of the field and the top of the keyboard
+  /// (or the bottom safe area). The overlay itself runs under the keyboard,
+  /// so without this cap the lower rows sit behind it.
+  ///
+  /// The insets come from the view, not MediaQuery: this list inherits the
+  /// field's MediaQuery, where a Scaffold has already zeroed the keyboard.
+  double _heightFor(BuildContext context) {
+    final box = widget.fieldKey.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.hasSize || !box.attached) return _maxHeight;
+    final media = MediaQueryData.fromView(View.of(context));
+    final fieldBottom = box.localToGlobal(Offset(0, box.size.height)).dy;
+    final visibleBottom = media.size.height -
+        math.max(media.viewInsets.bottom, media.viewPadding.bottom);
+    final room = visibleBottom - fieldBottom - AppSpacing.sm;
+    return room.clamp(_minHeight, _maxHeight);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final items = options.toList();
+    final items = widget.options.toList();
     return Material(
       elevation: 4,
       borderRadius: AppRadii.rMd,
       color: AppColors.surface,
       child: ConstrainedBox(
-        // 145 specialties would otherwise run off the screen.
-        constraints: const BoxConstraints(maxHeight: 260),
+        // 145 specialties would otherwise run off the screen, or behind the
+        // keyboard.
+        key: const ValueKey('specialty-options'),
+        constraints: BoxConstraints(maxHeight: _heightFor(context)),
         child: ListView.builder(
           padding: EdgeInsets.zero,
           shrinkWrap: true,
@@ -209,21 +308,24 @@ class _OptionsList extends StatelessWidget {
           itemBuilder: (context, i) {
             final option = items[i];
             final isOther = option == Specialties.other;
-            return InkWell(
-              onTap: () => onSelected(option),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.lg,
-                  vertical: AppSpacing.md,
-                ),
-                child: Text(
-                  isOther ? '$option…' : option,
-                  style: isOther
-                      ? AppText.bodyPrimary.copyWith(
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.w600,
-                        )
-                      : AppText.bodyPrimary,
+            return Semantics(
+              button: true,
+              child: InkWell(
+                onTap: () => widget.onSelected(option),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.lg,
+                    vertical: AppSpacing.md,
+                  ),
+                  child: Text(
+                    isOther ? '$option…' : option,
+                    style: isOther
+                        ? AppText.bodyPrimary.copyWith(
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w600,
+                          )
+                        : AppText.bodyPrimary,
+                  ),
                 ),
               ),
             );

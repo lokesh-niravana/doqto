@@ -19,6 +19,8 @@ import '../../widgets/member_row.dart';
 import '../../widgets/search_bar.dart';
 import '../../widgets/step_flow.dart';
 import '../../../core/utils/avatar_urls.dart';
+import '../../widgets/load_failed.dart';
+import '../../../core/utils/async_retry.dart';
 
 /// 2-step group creation: Identity → Invite. Chrome is the shared [StepFlow].
 /// Creates a real Group entity (POST /groups), then sends invites, then opens
@@ -84,20 +86,33 @@ class _CreateGroupFlowScreenState extends ConsumerState<CreateGroupFlowScreen> {
         name: _name.text.trim(),
         description: _description.text.trim(),
       );
-      // Send invites (best-effort — a failed invite doesn't undo the group).
+      // Send invites (best-effort — a failed invite doesn't undo the group,
+      // but the user is told about it once the group is open).
+      var failedInvites = 0;
       for (final id in _invitees) {
         try {
           await repo.inviteUser(group.id, id);
-        } catch (_) {}
+        } catch (_) {
+          failedInvites++;
+        }
       }
       ref.invalidate(myGroupsProvider);
       if (!mounted) return;
+      // The app-wide messenger outlives this page, so the notice shows on
+      // the group that opens next.
+      final messenger = ScaffoldMessenger.of(context);
       // Leave the full-screen flow, then open the new group inside the Groups
       // tab. The detail is a branch route, so it has to be pushed from the
       // shell — pushing it from this root-level page collides page keys.
       final router = GoRouter.of(context);
       router.pop();
       router.push(AppRoutes.group(group.id));
+      if (failedInvites > 0) {
+        messenger.showSnackBar(SnackBar(
+          content: Text(Strings.groupInvitesNotSent(failedInvites)),
+          backgroundColor: AppColors.red,
+        ));
+      }
     } catch (e) {
       if (mounted) {
         setState(() => _submitting = false);
@@ -157,6 +172,10 @@ class _CreateGroupFlowScreenState extends ConsumerState<CreateGroupFlowScreen> {
           label: Strings.groupsDescriptionLabel,
           textCapitalization: TextCapitalization.sentences,
           hint: Strings.groupsDescriptionHint,
+          // A description runs to a few sentences: room to see and edit it.
+          maxLines: 4,
+          maxLength: 1000,
+          keyboardType: TextInputType.multiline,
         ),
       ],
     );
@@ -167,8 +186,12 @@ class _CreateGroupFlowScreenState extends ConsumerState<CreateGroupFlowScreen> {
   // without connecting to them first.
   Widget _inviteStep() {
     final async = ref.watch(invitablePeopleProvider);
+    // With the keyboard up the intro would leave almost no room for results
+    // at a large text size; the search field says enough by then.
+    final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
     return Column(
       children: [
+        if (!keyboardUp)
         Padding(
           padding: const EdgeInsets.fromLTRB(
             AppSpacing.screenHorizontal,
@@ -190,10 +213,13 @@ class _CreateGroupFlowScreenState extends ConsumerState<CreateGroupFlowScreen> {
           onChanged: (q) => setState(() => _inviteQuery = q),
         ),
         Expanded(
-          child: async.when(
+          child: async.whenRetrying(
             loading: () => const SkeletonList(),
             error: (e, _) => Center(
-              child: Text(ErrorMessages.forApi(e), style: AppText.caption),
+              child: LoadFailed(
+                message: ErrorMessages.forApi(e),
+                onRetry: () => ref.invalidate(invitablePeopleProvider),
+              ),
             ),
             data: (people) {
               final q = _inviteQuery.trim().toLowerCase();

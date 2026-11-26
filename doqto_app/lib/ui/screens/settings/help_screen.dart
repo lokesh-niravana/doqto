@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
@@ -17,11 +18,32 @@ class HelpScreen extends ConsumerWidget {
   const HelpScreen({super.key});
 
   Future<void> _open(BuildContext context, WidgetRef ref, String url) async {
-    final ok = await ref.read(urlOpenerProvider).open(url);
-    if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(context.l10n.helpOpenFailed)));
+    bool ok;
+    try {
+      ok = await ref.read(urlOpenerProvider).open(url);
+    } catch (_) {
+      ok = false;
     }
+    if (ok || !context.mounted) return;
+    // No Mail account on this phone: the address is still useful, so put it
+    // on the clipboard rather than leaving a dead "Contact us" row.
+    final email = _emailOf(url);
+    if (email != null) {
+      await Clipboard.setData(ClipboardData(text: email));
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(context.l10n.helpEmailCopied(email))));
+      return;
+    }
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(context.l10n.helpOpenFailed)));
+  }
+
+  /// The address in a `mailto:` link, or null for any other URL.
+  static String? _emailOf(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.scheme != 'mailto' || uri.path.isEmpty) return null;
+    return uri.path;
   }
 
   @override
@@ -37,6 +59,11 @@ class HelpScreen extends ConsumerWidget {
             key: ValueKey('help-$name'),
             leading: Icon(icon, color: AppColors.medBlue),
             title: Text(title, style: AppText.bodyPrimary),
+            // The support address is shown, not just linked, so it can be
+            // read out or typed elsewhere.
+            subtitle: _emailOf(url) == null
+                ? null
+                : Text(_emailOf(url)!, style: AppText.caption),
             trailing: Icon(Icons.open_in_new_rounded, size: 18, color: AppColors.gray600),
             onTap: () => _open(context, ref, url),
           ),
@@ -50,7 +77,10 @@ class HelpScreen extends ConsumerWidget {
       appBar: AppBar(title: Text(l.settingsHelp)),
       body: ListView(
         key: const ValueKey('help-list'),
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        padding: EdgeInsets.only(
+          top: AppSpacing.lg,
+          bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           FadeSlideIn.staggered(
             0,

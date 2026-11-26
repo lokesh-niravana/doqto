@@ -13,6 +13,7 @@ import '../../widgets/app_skeleton.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/settings_rows.dart';
+import '../../../core/utils/async_retry.dart';
 
 /// My Org → Policies (batch 7). Admins get switches and pickers that save
 /// one key at a time (optimistic, rolled back with a toast); members get the
@@ -47,7 +48,7 @@ class OrgPoliciesScreen extends ConsumerWidget {
       ),
       body: org == null
           ? const SizedBox.shrink()
-          : ref.watch(orgPoliciesProvider(org.id)).when(
+          : ref.watch(orgPoliciesProvider(org.id)).whenRetrying(
                 loading: () => const SkeletonList(),
                 error: (e, _) => _ErrorPane(
                   message: ErrorMessages.forApi(e),
@@ -76,7 +77,14 @@ class _PoliciesBody extends ConsumerWidget {
     }
   }
 
-  Future<bool> _confirm(BuildContext context, {required String title, required String body}) async {
+  /// [destructive] paints the confirm button red: the change deletes messages
+  /// or lets them be deleted, and cannot be taken back.
+  Future<bool> _confirm(
+    BuildContext context, {
+    required String title,
+    required String body,
+    required bool destructive,
+  }) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -91,6 +99,7 @@ class _PoliciesBody extends ConsumerWidget {
           TextButton(
             key: const ValueKey('policy-confirm-ok'),
             onPressed: () => Navigator.pop(ctx, true),
+            style: destructive ? TextButton.styleFrom(foregroundColor: AppColors.red) : null,
             child: const Text(Strings.orgPolicyConfirm),
           ),
         ],
@@ -104,6 +113,8 @@ class _PoliciesBody extends ConsumerWidget {
       context,
       title: on ? Strings.orgPolicyLegalHoldOnTitle : Strings.orgPolicyLegalHoldOffTitle,
       body: on ? Strings.orgPolicyLegalHoldOnBody : Strings.orgPolicyLegalHoldOffBody,
+      // Turning the hold on only preserves; turning it off resumes deletion.
+      destructive: !on,
     );
     if (!ok || !context.mounted) return;
     await _save(context, ref, {'legal_hold': on});
@@ -116,6 +127,7 @@ class _PoliciesBody extends ConsumerWidget {
         context,
         title: Strings.orgPolicyRetentionTitle,
         body: Strings.orgPolicyRetentionBody(OrgPoliciesScreen.retentionLabel(days)),
+        destructive: true,
       );
       if (!ok || !context.mounted) return;
     }
@@ -341,7 +353,12 @@ class _ErrorPane extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(message, style: AppText.caption, textAlign: TextAlign.center),
+              // Announced when it replaces the loading state.
+              Semantics(
+                container: true,
+                liveRegion: true,
+                child: Text(message, style: AppText.caption, textAlign: TextAlign.center),
+              ),
               const SizedBox(height: AppSpacing.lg),
               AppButton(label: Strings.retry, icon: Icons.refresh_rounded, onPressed: onRetry),
             ],

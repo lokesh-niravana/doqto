@@ -18,6 +18,10 @@ import '../../widgets/primary_button.dart';
 import '../../widgets/report_message_sheet.dart' show reportReasonLabel;
 import '../../widgets/section_card.dart';
 import '../../widgets/settings_rows.dart';
+import 'access_requests_screen.dart' show showCreateAccessRequestSheet;
+import '../../../core/utils/async_retry.dart';
+import '../../widgets/app_pressable.dart';
+import '../../widgets/refresh_feedback.dart';
 
 String reportStatusLabel(ReportStatus s) => switch (s) {
       ReportStatus.open => Strings.orgReportStatusOpen,
@@ -81,7 +85,7 @@ class _OrgReportsScreenState extends ConsumerState<OrgReportsScreen> {
                   ),
                 ),
                 Expanded(
-                  child: ref.watch(orgReportsProvider(org.id)).when(
+                  child: ref.watch(orgReportsProvider(org.id)).whenRetrying(
                         loading: () => const SkeletonList(),
                         error: (e, _) => Center(
                           child: Padding(
@@ -89,7 +93,11 @@ class _OrgReportsScreenState extends ConsumerState<OrgReportsScreen> {
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text(ErrorMessages.forApi(e), style: AppText.caption, textAlign: TextAlign.center),
+                                Semantics(
+                                  container: true,
+                                  liveRegion: true,
+                                  child: Text(ErrorMessages.forApi(e), style: AppText.caption, textAlign: TextAlign.center),
+                                ),
                                 const SizedBox(height: AppSpacing.lg),
                                 AppButton(
                                   label: Strings.retry,
@@ -105,9 +113,14 @@ class _OrgReportsScreenState extends ConsumerState<OrgReportsScreen> {
                             for (final r in all)
                               if (_filter == null || r.status == _filter) r,
                           ];
-                          if (rows.isEmpty) return const _Empty();
+                          // Reports exist, none with the chosen status:
+                          // "No reports" would say the org has none.
+                          if (rows.isEmpty) return _Empty(filtered: all.isNotEmpty);
                           return RefreshIndicator(
-                            onRefresh: () => ref.read(orgReportsProvider(org.id).notifier).refresh(),
+                            onRefresh: () => refreshWithFeedback(
+                              context,
+                              () => ref.read(orgReportsProvider(org.id).notifier).refresh(rethrowOnError: true),
+                            ),
                             child: ListView.separated(
                               key: const ValueKey('reports-list'),
                               padding: EdgeInsets.fromLTRB(
@@ -157,36 +170,64 @@ class _ReportCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final r = report;
-    final members = ref.watch(orgMembersProvider(orgId)).asData?.value ?? const [];
+    // Null while loading: a neutral placeholder, then a name, or words for
+    // someone no longer in the list. Never a fragment of the id.
+    final members = ref.watch(orgMembersProvider(orgId)).asData?.value;
     String name(String id) {
+      if (members == null) return Strings.namePlaceholder;
       for (final m in members) {
         if (m.id == id) return m.fullName;
       }
-      return id.substring(0, id.length.clamp(0, 8));
+      return Strings.formerMember;
     }
 
     final when = DateFormat.yMMMd().add_jm().format(r.createdAt.toLocal());
     final details = (r.details ?? '').trim();
+    final conversationId = r.conversationId;
     return SectionCard(
       key: ValueKey('report-${r.id}'),
       onTap: () => _changeStatus(context, ref),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              AppPill(
-                key: ValueKey('report-reason-${r.id}'),
-                label: reportReasonLabel(r.reason),
-                tone: PillTone.brand,
-              ),
-              const Spacer(),
-              AppPill(
-                key: ValueKey('report-status-${r.id}'),
-                label: reportStatusLabel(r.status),
-                tone: _tone(r.status),
-              ),
-            ],
+          // Wraps onto a second line at a large text size instead of
+          // overflowing; one line, ends apart, when both pills fit.
+          SizedBox(
+            width: double.infinity,
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.xs,
+              children: [
+                AppPill(
+                  key: ValueKey('report-reason-${r.id}'),
+                  label: reportReasonLabel(r.reason),
+                  tone: PillTone.brand,
+                ),
+                // The visible, spoken way to change the status: the pill is
+                // a menu button (chevron, "Change status, Open"). Tapping
+                // the rest of the card still opens the same sheet.
+                AppPressable(
+                  key: ValueKey('report-status-change-${r.id}'),
+                  minTarget: true,
+                  semanticLabel:
+                      '${Strings.orgReportChangeStatus}, ${reportStatusLabel(r.status)}',
+                  onTap: () => _changeStatus(context, ref),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AppPill(
+                        key: ValueKey('report-status-${r.id}'),
+                        label: reportStatusLabel(r.status),
+                        tone: _tone(r.status),
+                      ),
+                      Icon(Icons.expand_more, size: 20, color: AppColors.gray600),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: AppSpacing.sm),
           Text(
@@ -205,6 +246,25 @@ class _ReportCard extends ConsumerWidget {
             const SizedBox(height: AppSpacing.xs),
             Text(Strings.orgReportContext(r.contextMessageIds.length), style: AppText.timestamp),
           ],
+          // A message report names a chat the admin usually isn't in and so
+          // can't pick: ask for access to it from here. Nothing to ask for on
+          // a report about a person.
+          if (r.subjectType == 'message' && conversationId != null) ...[
+            const SizedBox(height: AppSpacing.md),
+            AppButton(
+              key: ValueKey('report-request-access-${r.id}'),
+              label: Strings.accessRequestNew,
+              icon: Icons.lock_open_rounded,
+              variant: AppButtonVariant.secondary,
+              expand: true,
+              onPressed: () => showCreateAccessRequestSheet(
+                context,
+                ref,
+                orgId,
+                conversationId: conversationId,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -212,7 +272,9 @@ class _ReportCard extends ConsumerWidget {
 }
 
 class _Empty extends StatelessWidget {
-  const _Empty();
+  /// The status filter hid every report (there are some).
+  final bool filtered;
+  const _Empty({this.filtered = false});
 
   @override
   Widget build(BuildContext context) => Center(
@@ -228,9 +290,21 @@ class _Empty extends StatelessWidget {
                 child: const Icon(Icons.flag_outlined, color: AppColors.medBlue, size: 30),
               ),
               const SizedBox(height: AppSpacing.lg),
-              Text(Strings.orgReportsEmpty, style: AppText.heading, textAlign: TextAlign.center),
-              const SizedBox(height: AppSpacing.sm),
-              Text(Strings.orgReportsEmptyHint, style: AppText.body, textAlign: TextAlign.center),
+              // Announced when it replaces the loading state or the list.
+              Semantics(
+                container: true,
+                liveRegion: true,
+                child: Text(
+                  filtered ? Strings.orgReportsEmptyFiltered : Strings.orgReportsEmpty,
+                  key: const ValueKey('reports-empty-title'),
+                  style: AppText.heading,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              if (!filtered) ...[
+                const SizedBox(height: AppSpacing.sm),
+                Text(Strings.orgReportsEmptyHint, style: AppText.body, textAlign: TextAlign.center),
+              ],
             ],
           ),
         ),

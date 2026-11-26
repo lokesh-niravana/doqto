@@ -23,11 +23,16 @@ class ConnectButton extends ConsumerWidget {
   final VoidCallback? onMessage;
   final bool expand;
 
+  /// True while [onMessage] is creating / opening the thread: the Message
+  /// button shows its spinner instead of looking as if nothing happened.
+  final bool messageLoading;
+
   const ConnectButton({
     super.key,
     required this.userId,
     this.onMessage,
     this.expand = false,
+    this.messageLoading = false,
   });
 
   @override
@@ -48,6 +53,7 @@ class ConnectButton extends ConsumerWidget {
             label: Strings.netMessage,
             icon: Icons.chat_bubble_outline,
             expand: expand,
+            loading: messageLoading,
             onPressed: onMessage,
           );
         }
@@ -125,6 +131,7 @@ class ConnectButton extends ConsumerWidget {
           icon: Icons.chat_bubble_outline,
           variant: AppButtonVariant.secondary,
           expand: expand,
+          loading: messageLoading,
           onPressed: onMessage,
         );
 
@@ -140,8 +147,20 @@ class ConnectButton extends ConsumerWidget {
   ) async {
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
+      // Used inside the tab shell: over the tab bar and the raised mic
+      // button, not under them.
+      useRootNavigator: true,
+      // Sized to its content and scrollable, so nothing clips at large
+      // text or on a short screen.
+      isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
-        child: Column(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(ctx).height * 0.9,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Padding(
@@ -150,7 +169,7 @@ class ConnectButton extends ConsumerWidget {
             ),
             ListTile(
               leading: const Icon(Icons.undo, color: AppColors.red),
-              title: const Text(Strings.netWithdraw),
+              title: const Text(Strings.netWithdraw, style: TextStyle(color: AppColors.red)),
               onTap: () => Navigator.of(ctx).pop(true),
             ),
             ListTile(
@@ -159,6 +178,8 @@ class ConnectButton extends ConsumerWidget {
               onTap: () => Navigator.of(ctx).pop(false),
             ),
           ],
+        ),
+          ),
         ),
       ),
     );

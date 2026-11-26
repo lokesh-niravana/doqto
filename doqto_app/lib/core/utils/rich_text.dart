@@ -334,7 +334,9 @@ String plainText(String text, {String Function(String userId)? nameFor}) {
         for (final n in inlines) {
           sb.write(switch (n) {
             TextNode(:final text) => text,
-            MentionNode(:final userId) => '@${nameFor?.call(userId) ?? userId}',
+            // Never the raw id: with no resolver (or an unknown user) the
+            // mention reads "@someone".
+            MentionNode(:final userId) => '@${nameFor?.call(userId) ?? 'someone'}',
             LinkNode(:final text) => text,
             PhoneNode(:final text) => text,
           });

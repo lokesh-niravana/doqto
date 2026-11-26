@@ -75,6 +75,8 @@ class ErrorMessages {
     'refresh_failed':
         'We couldn\'t refresh your session. Please sign in again.',
     'session_revoked': 'Your session ended. Please sign in again.',
+    'account_suspended':
+        'This account has been suspended. Contact support@doqto.ai if you think this is a mistake.',
     'missing_authorization': 'Please sign in to continue.',
     // Settings (batch 6)
     'tone_invalid': 'That tone isn\'t available. Pick another one.',
@@ -94,7 +96,7 @@ class ErrorMessages {
 
     // Registration
     'npi_already_registered':
-        'This NPI is already on Doqto. Sign in from the previous screen, or contact your admin.',
+        "This NPI is already on Doqto. Tap 'Not you? Sign out' above and sign in with that account, or contact your admin.",
     'npi_invalid': 'NPI must be exactly 10 digits.',
     'phone_already_registered':
         'This number is already on another Doqto account. Use a different number, or sign out and sign in with this one.',
@@ -230,6 +232,9 @@ class ErrorMessages {
           return 'We couldn\'t find what you were looking for.';
         case 413:
           return 'That attachment is too large.';
+        case 422:
+          // The server rejected a field's value (FastAPI validation).
+          return 'Some details weren\'t accepted. Check them and try again.';
         case 429:
           return 'Too many requests — please slow down and try again.';
         case null:
@@ -241,7 +246,63 @@ class ErrorMessages {
     if (err is TimeoutException) {
       return 'The request took too long. Check your connection.';
     }
-    if (err is AuthBrokerException) return err.message;
-    return 'Something went wrong. Please try again.';
+    if (err is AuthBrokerException) return forAuth(err);
+    return _generic;
   }
+
+  static const String _generic = 'Something went wrong. Please try again.';
+
+  /// Sign-in broker (Firebase) error codes → plain sentences. The SDK's own
+  /// `message` is developer English ("The SMS verification code used to
+  /// create the phone auth credential is invalid...") or just the code, so
+  /// it is never shown.
+  static const Map<String, String> _byAuthCode = {
+    'invalid-verification-code': 'That code isn\'t right. Check it and try again.',
+    'invalid-verification-id': 'That code has expired. Request a new one.',
+    'session-expired': 'That code has expired. Request a new one.',
+    'code-expired': 'That code has expired. Request a new one.',
+    'too-many-requests':
+        'Too many attempts. Wait a few minutes and try again.',
+    'invalid-phone-number':
+        'That phone number doesn\'t look right. Check it and try again.',
+    'network-request-failed':
+        'Couldn\'t reach Doqto. Check your connection and try again.',
+    'quota-exceeded': 'We can\'t send codes right now. Please try again later.',
+    'credential-already-in-use':
+        'That sign-in is already linked to another Doqto account.',
+    'provider-already-linked':
+        'That sign-in is already linked to your account.',
+    'user-disabled':
+        'This account has been turned off. Contact Doqto support for help.',
+    'captcha-check-failed':
+        'We couldn\'t verify this device. Please try again.',
+    'missing-client-identifier':
+        'We couldn\'t verify this device. Please try again.',
+    'web-context-cancelled': 'Verification was cancelled. Please try again.',
+    'web-context-canceled': 'Verification was cancelled. Please try again.',
+  };
+
+  /// Codes whose message is written by hand in the app (not by an SDK) and
+  /// is already a sentence for the person: shown as it is.
+  static const Set<String> _authHandWritten = {
+    'no-authorization-code',
+    'apple-account-mismatch',
+  };
+
+  /// A sign-in error as a sentence: mapped by code, the hand-written app
+  /// messages as they are, anything else the generic line — never raw SDK
+  /// text or a bare code.
+  static String forAuth(AuthBrokerException err) {
+    final mapped = _byAuthCode[err.code];
+    if (mapped != null) return mapped;
+    if (_authHandWritten.contains(err.code) && err.message.isNotEmpty) {
+      return err.message;
+    }
+    return _generic;
+  }
+
+  /// A stored backend error code (a failed scheduled message keeps one) as a
+  /// sentence; [fallback] when the code is missing or not one we know.
+  static String forCode(String? code, {required String fallback}) =>
+      _byCode[code] ?? fallback;
 }

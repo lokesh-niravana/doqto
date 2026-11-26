@@ -102,7 +102,12 @@ class _StatusScreenState extends ConsumerState<StatusScreen> {
       appBar: AppBar(title: Text(l.statusTitle)),
       body: ListView(
         key: const ValueKey('status-list'),
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last row clears the home indicator.
+        padding: EdgeInsets.only(
+          top: AppSpacing.lg,
+          bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           SettingsSection(
             title: l.statusPresets,
@@ -112,6 +117,9 @@ class _StatusScreenState extends ConsumerState<StatusScreen> {
                   children: [
                     ListTile(
                       key: ValueKey('status-preset-${p.wire}'),
+                      // The tick alone is silent to VoiceOver.
+                      selected: _preset == p,
+                      selectedColor: AppColors.textPrimary,
                       title: Text(p.label, style: AppText.bodyPrimary),
                       trailing: _preset == p
                           ? const Icon(Icons.check, color: AppColors.medBlue)

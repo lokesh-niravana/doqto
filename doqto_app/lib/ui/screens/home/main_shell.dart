@@ -46,6 +46,12 @@ const List<_NavSpec> _navSpecs = [
       3),
 ];
 
+/// How far the centre mic button of the tab bar (58pt, docked on the bar's
+/// top edge) rises above the bar. `MediaQuery.padding.bottom` covers the bar
+/// only, so every list shown inside the shell adds this to keep its last row
+/// out from under the button.
+const double kMicButtonRise = 29;
+
 /// App shell: content runs edge-to-edge behind a floating frosted-glass nav
 /// bar (2025 chrome — no solid slabs, no notched FAB cutout). The mic action
 /// is a raised gradient button overlapping the bar. Four branches
@@ -60,9 +66,13 @@ class MainShell extends StatelessWidget {
     return Scaffold(
       extendBody: true, // content scrolls behind the translucent bar
       body: navigationShell,
-      floatingActionButton: _MicButton(
-        onPressed: () => context.push(AppRoutes.record),
-      ),
+      // Hidden while the keyboard is up: docked, it floated above the keys
+      // and covered search results.
+      floatingActionButton: MediaQuery.viewInsetsOf(context).bottom > 0
+          ? null
+          : _MicButton(
+              onPressed: () => context.push(AppRoutes.record),
+            ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       bottomNavigationBar: _FrostedNavBar(navigationShell: navigationShell),
     );
@@ -79,6 +89,7 @@ class _MicButton extends StatelessWidget {
     return AppPressable(
       onTap: onPressed,
       haptic: true,
+      semanticLabel: 'Record a voice message',
       child: Container(
         width: 58,
         height: 58,
@@ -139,6 +150,11 @@ class _FrostedNavBar extends ConsumerWidget {
             label: s.label,
             isSelected: current == s.branch,
             badgeCount: _badgeFor(s.branch, unread, invites),
+            // The Network badge counts invitations waiting for an answer,
+            // not unread messages.
+            badgeLabel: s.branch == 1
+                ? Strings.a11yTabPendingInvitations
+                : Strings.a11yTabUnread,
             onTap: () => _go(s.branch),
           ),
         );
@@ -159,14 +175,19 @@ class _FrostedNavBar extends ConsumerWidget {
           ),
           child: SafeArea(
             top: false,
-            child: SizedBox(
-              height: 64,
-              child: Row(
-                children: [
-                  for (final s in left) item(s),
-                  const SizedBox(width: 64), // clearance for the mic button
-                  for (final s in right) item(s),
-                ],
+            // A tab bar is a fixed-height control: its labels stop growing
+            // at 1.3x so they never clip (iOS tab bars do the same).
+            child: MediaQuery.withClampedTextScaling(
+              maxScaleFactor: 1.3,
+              child: SizedBox(
+                height: 64,
+                child: Row(
+                  children: [
+                    for (final s in left) item(s),
+                    const SizedBox(width: 64), // clearance for the mic button
+                    for (final s in right) item(s),
+                  ],
+                ),
               ),
             ),
           ),
@@ -182,6 +203,10 @@ class _NavItem extends StatelessWidget {
   final String label;
   final bool isSelected;
   final int badgeCount;
+
+  /// Spoken form of the badge: "Chats, 3 unread", "Network, 2 pending
+  /// invitations".
+  final String Function(String label, int count) badgeLabel;
   final VoidCallback onTap;
 
   const _NavItem({
@@ -191,15 +216,22 @@ class _NavItem extends StatelessWidget {
     required this.isSelected,
     required this.onTap,
     this.badgeCount = 0,
+    this.badgeLabel = Strings.a11yTabUnread,
   });
 
   @override
   Widget build(BuildContext context) {
-    final color = isSelected ? AppColors.medBlue : AppColors.gray400;
+    // On the pale teal pill the brand teal is 4.36:1; the badge teal keeps
+    // the selected tab teal at 5.53:1.
+    final color = isSelected ? AppColors.tealBadgeText : AppColors.gray400;
     final duration = AppMotion.maybe(context, AppMotion.micro);
     return AppPressable(
       onTap: onTap,
       minTarget: true,
+      // "Chats, 3 unread", selected — not a label plus a stray number; in
+      // the words of what that tab's badge counts.
+      semanticLabel: badgeCount > 0 ? badgeLabel(label, badgeCount) : label,
+      selected: isSelected,
       child: Center(
         // Active pill: tint + label weight animate in place (never shifts
         // layout) so the current tab is unmistakable.
@@ -241,7 +273,7 @@ class _NavItem extends StatelessWidget {
                           badgeCount > 99 ? '99+' : '$badgeCount',
                           textAlign: TextAlign.center,
                           style: AppText.badge
-                              .copyWith(color: AppColors.white, fontSize: 9),
+                              .copyWith(color: AppColors.white, fontSize: 11),
                         ),
                       ),
                     ),
@@ -257,7 +289,7 @@ class _NavItem extends StatelessWidget {
                   label,
                   maxLines: 1,
                   style: AppText.button.copyWith(
-                    fontSize: 10,
+                    fontSize: 11,
                     color: color,
                     fontWeight:
                         isSelected ? FontWeight.w700 : FontWeight.w600,

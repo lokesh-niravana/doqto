@@ -75,8 +75,9 @@ class AppText {
     color: AppColors.textMuted,
   );
 
+  // 11pt is the smallest size iOS text should be set at.
   static TextStyle get timestamp => GoogleFonts.dmSans(
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: FontWeight.w400,
     color: AppColors.textMuted,
   );

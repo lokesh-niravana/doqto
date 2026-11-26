@@ -65,13 +65,25 @@ class ChatThemePickerScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: AppColors.appBg,
       appBar: AppBar(title: Text(l.chatThemeTitle)),
-      body: GridView.count(
+      body: GridView(
         key: const ValueKey('chat-theme-grid'),
-        crossAxisCount: 2,
-        padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
-        mainAxisSpacing: AppSpacing.md,
-        crossAxisSpacing: AppSpacing.md,
-        childAspectRatio: 1.15,
+        // A fixed aspect ratio clipped the names at larger text sizes. The
+        // tile is 76pt of padding and gaps plus up to six lines of text (two
+        // preview bubbles, a two-line name, a two-line subtitle), so only
+        // the text part grows with the user's text size. With shorter
+        // names the preview takes the spare height.
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          mainAxisSpacing: AppSpacing.md,
+          crossAxisSpacing: AppSpacing.md,
+          mainAxisExtent: 76 + MediaQuery.textScalerOf(context).scale(108),
+        ),
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last row clears the home indicator.
+        padding: const EdgeInsets.all(AppSpacing.screenHorizontal).copyWith(
+          bottom: AppSpacing.screenHorizontal +
+              MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           _ThemeTile(
             key: const ValueKey('chat-theme-default'),
@@ -114,7 +126,12 @@ class _ThemeTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l = context.l10n;
-    return Material(
+    // The border and check mark are drawn only; say "selected" too.
+    return Semantics(
+      container: true,
+      button: true,
+      selected: selected,
+      child: Material(
       color: AppColors.surface,
       borderRadius: AppRadii.rLg,
       child: InkWell(
@@ -174,9 +191,9 @@ class _ThemeTile extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(name, style: AppText.subheading, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        Text(name, style: AppText.subheading, maxLines: 2, overflow: TextOverflow.ellipsis),
                         if (subtitle != null)
-                          Text(subtitle!, style: AppText.caption, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          Text(subtitle!, style: AppText.caption, maxLines: 2, overflow: TextOverflow.ellipsis),
                       ],
                     ),
                   ),
@@ -187,6 +204,7 @@ class _ThemeTile extends StatelessWidget {
             ],
           ),
         ),
+      ),
       ),
     );
   }

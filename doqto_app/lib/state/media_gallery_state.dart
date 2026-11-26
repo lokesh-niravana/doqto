@@ -16,6 +16,21 @@ class MediaGalleryNotifier extends FamilyAsyncNotifier<List<MediaGalleryItem>, G
 
   bool get hasMore => _cursor != null;
 
+  /// Why the last [loadMore] failed, until the next one starts. The tabs
+  /// show it under the rows with a Retry; the rows themselves stay.
+  Object? get loadMoreError => _loadMoreError;
+  Object? _loadMoreError;
+
+  /// A page is being fetched (the footer shows its spinner).
+  bool get loadingMore => _loadingMore;
+
+  // The footer reads the two getters above, which are not part of `state`:
+  // re-emit the same rows so the tab rebuilds.
+  void _touch() {
+    final rows = state.valueOrNull;
+    if (rows != null) state = AsyncData([...rows]);
+  }
+
   @override
   Future<List<MediaGalleryItem>> build(GalleryKey key) async {
     listenRealtime(
@@ -39,6 +54,7 @@ class MediaGalleryNotifier extends FamilyAsyncNotifier<List<MediaGalleryItem>, G
     try {
       final page = await ref.read(chatRepositoryProvider).listMedia(arg.conversationId, arg.kind);
       _cursor = page.nextCursor;
+      _loadMoreError = null; // page one again: the failed page is moot
       state = AsyncData(page.data);
     } catch (_) {}
   }
@@ -47,6 +63,10 @@ class MediaGalleryNotifier extends FamilyAsyncNotifier<List<MediaGalleryItem>, G
     final cursor = _cursor;
     if (cursor == null || _loadingMore) return;
     _loadingMore = true;
+    if (_loadMoreError != null) {
+      _loadMoreError = null;
+      _touch(); // the Retry row becomes the spinner
+    }
     try {
       final page = await ref
           .read(chatRepositoryProvider)
@@ -58,9 +78,11 @@ class MediaGalleryNotifier extends FamilyAsyncNotifier<List<MediaGalleryItem>, G
         ...current,
         ...page.data.where((i) => !ids.contains(i.message.id)),
       ]);
-    } catch (_) {
-    } finally {
       _loadingMore = false;
+    } catch (e) {
+      _loadingMore = false;
+      _loadMoreError = e;
+      _touch();
     }
   }
 

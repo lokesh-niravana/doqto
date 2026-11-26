@@ -98,7 +98,8 @@ class MentionController extends TextEditingController {
       return super.buildTextSpan(context: context, style: style, withComposing: withComposing);
     }
     final chip = (style ?? const TextStyle()).copyWith(
-      color: AppColors.medBlue,
+      // tealBadgeText on medBlueLight is 5.53:1 (medBlue was 4.36:1).
+      color: AppColors.tealBadgeText,
       fontWeight: FontWeight.w600,
       backgroundColor: AppColors.medBlueLight,
     );

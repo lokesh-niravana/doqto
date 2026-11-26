@@ -21,6 +21,9 @@ import '../../widgets/invite_code_card.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/section_card.dart';
 import '../../../core/utils/avatar_urls.dart';
+import '../home/main_shell.dart';
+import '../../../core/utils/async_retry.dart';
+import '../../widgets/refresh_feedback.dart';
 
 class MyOrgScreen extends ConsumerWidget {
   const MyOrgScreen({super.key});
@@ -35,7 +38,7 @@ class MyOrgScreen extends ConsumerWidget {
           ? const _NoOrg()
           : ref
                 .watch(orgMembersProvider(org.id))
-                .when(
+                .whenRetrying(
                   loading: () => const SkeletonList(),
                   error: (e, _) => Center(
                     child: Padding(
@@ -49,10 +52,14 @@ class MyOrgScreen extends ConsumerWidget {
                             color: AppColors.textMuted,
                           ),
                           const SizedBox(height: AppSpacing.md),
-                          Text(
-                            ErrorMessages.forApi(e),
-                            style: AppText.caption,
-                            textAlign: TextAlign.center,
+                          Semantics(
+                            container: true,
+                            liveRegion: true,
+                            child: Text(
+                              ErrorMessages.forApi(e),
+                              style: AppText.caption,
+                              textAlign: TextAlign.center,
+                            ),
                           ),
                           const SizedBox(height: AppSpacing.lg),
                           AppButton(
@@ -75,12 +82,17 @@ class MyOrgScreen extends ConsumerWidget {
                     final lead = pending ? 1 : 0;
                     return RefreshIndicator(
                       // Pull to re-check verification and members.
-                      onRefresh: () async {
-                        await ref
-                            .read(authProvider.notifier)
-                            .refreshOrgStatus();
-                        ref.invalidate(orgMembersProvider(org.id));
-                      },
+                      onRefresh: () => refreshWithFeedback(context, () async {
+                        // The members are re-asked whether or not the
+                        // status check got through.
+                        try {
+                          await ref
+                              .read(authProvider.notifier)
+                              .refreshOrgStatus();
+                        } finally {
+                          ref.invalidate(orgMembersProvider(org.id));
+                        }
+                      }),
                       child: ListView(
                         // extendBody: keep last row clear of the floating nav bar.
                         padding: EdgeInsets.fromLTRB(
@@ -88,6 +100,7 @@ class MyOrgScreen extends ConsumerWidget {
                           AppSpacing.screenHorizontal,
                           AppSpacing.screenHorizontal,
                           MediaQuery.paddingOf(context).bottom +
+                              kMicButtonRise +
                               AppSpacing.screenHorizontal,
                         ),
                         children: [
@@ -112,10 +125,10 @@ class MyOrgScreen extends ConsumerWidget {
                           const SizedBox(height: AppSpacing.xl),
                           FadeSlideIn.staggered(
                             lead + (isAdmin ? 2 : 1),
-                            Text(
+                            Semantics(header: true, child: Text(
                               'MEMBERS (${org.memberCount})',
                               style: AppText.label,
-                            ),
+                            )),
                           ),
                           const SizedBox(height: AppSpacing.sm),
                           for (final (i, m) in members.indexed)
@@ -144,7 +157,7 @@ class _AdminTools extends StatelessWidget {
   Widget build(BuildContext context) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(Strings.myOrgAdminSection.toUpperCase(), style: AppText.label),
+          Semantics(header: true, child: Text(Strings.myOrgAdminSection.toUpperCase(), style: AppText.label)),
           const SizedBox(height: AppSpacing.sm),
           SectionCard(
             padding: EdgeInsets.zero,
@@ -344,11 +357,11 @@ class _MemberRowState extends ConsumerState<_MemberRow> {
         trailing: widget.isSelf
             ? null
             : SizedBox(
-                width: 40,
-                height: 40,
+                width: 44,
+                height: 44,
                 child: _starting
                     ? const Padding(
-                        padding: EdgeInsets.all(AppSpacing.sm),
+                        padding: EdgeInsets.all(10),
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : IconButton(
@@ -373,7 +386,11 @@ class _NoOrg extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(AppSpacing.xl),
+        // extendBody: the inset is the floating nav bar plus the home
+        // indicator; keep the last button clear of both.
+        padding: const EdgeInsets.all(AppSpacing.xl).copyWith(
+          bottom: AppSpacing.xl + kMicButtonRise + MediaQuery.paddingOf(context).bottom,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

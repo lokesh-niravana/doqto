@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:mime/mime.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../../core/di/providers.dart';
 import '../../../core/chat_theme.dart';
@@ -65,6 +66,7 @@ import '../../widgets/message_context_menu.dart';
 import '../../widgets/message_text.dart';
 import '../../widgets/pinned_banner.dart';
 import '../../widgets/poll_bubble.dart';
+import '../../widgets/primary_button.dart';
 import '../../widgets/quote_strip.dart';
 import '../../widgets/reactions.dart';
 import '../../widgets/report_message_sheet.dart';
@@ -81,6 +83,10 @@ import 'forward_picker_sheet.dart';
 import 'poll_create_sheet.dart';
 import 'voice_recorder_panel.dart';
 import '../../../core/utils/avatar_urls.dart';
+import '../../widgets/load_failed.dart';
+import '../../widgets/root_back_button.dart';
+import '../../../core/utils/async_retry.dart';
+import '../../widgets/silent_hint.dart';
 
 /// Pin durations — mirror of PIN_DURATIONS_SEC on the backend.
 const List<(int, String)> kPinDurations = [
@@ -88,6 +94,11 @@ const List<(int, String)> kPinDurations = [
   (604800, '7 days'),
   (2592000, '30 days'),
 ];
+
+/// The star sits on the corner of the bubble. On a received bubble the
+/// amber text colour is 6.21:1 or better (brand amber was 2.15:1 on white);
+/// on a sent bubble a pale amber is 4.03:1 on the lightest theme.
+const Color _starOnSent = Color(0xFFFDE68A);
 
 class ChatThreadScreen extends ConsumerStatefulWidget {
   final String conversationId;
@@ -135,6 +146,9 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   // Composer edit mode: the sent message whose text is being replaced.
   Message? _editing;
 
+  /// An edit is on its way to the server (a second Send is ignored).
+  bool _editSubmitting = false;
+
   // ---- Batch 4 ------------------------------------------------------------
   // Composer reply mode: the message the next send quotes.
   ReplyPreview? _replyingTo;
@@ -154,6 +168,14 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   List<String> _hits = const [];
   int _hitIndex = -1;
   bool _searchBusy = false;
+
+  /// The last search could not page back (offline, server error): shown in
+  /// place of "No matches", which would be a false answer.
+  bool _searchFailed = false;
+
+  /// Why the last [_jumpTo] could not load its message, when it was a
+  /// failed fetch rather than a message that is gone.
+  Object? _jumpError;
   // Jump to first unread: the unread count when the thread opened and the
   // message the divider sits above (oldest unread).
   int? _unreadAtOpen;
@@ -255,7 +277,10 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     // pulls the next older page.
     _scroll.addListener(() {
       if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 400) {
-        ref.read(messagesProvider(widget.conversationId).notifier).loadOlder();
+        final older = ref.read(messagesProvider(widget.conversationId).notifier);
+        // After a failure the Retry row asks; scrolling does not hammer the
+        // server (and flicker the row) on every pixel.
+        if (older.olderLoadError == null) older.loadOlder();
       }
       final showJump = _scroll.position.pixels > _jumpThresholdPx;
       if (showJump != _showJump) {
@@ -308,34 +333,67 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     super.dispose();
   }
 
-  /// Tap on a failed bubble: offer retry / discard.
-  Future<void> _onFailedTap(String clientId) async {
+  /// Tap on a failed bubble: offer retry / discard. Long-press on any of my
+  /// unsent messages opens it too; one that is still sending gets no Retry
+  /// ([canRetry] false) — it is already on its way — only the delete.
+  Future<void> _onFailedTap(String clientId, {bool canRetry = true}) async {
     final notifier = ref.read(messagesProvider(widget.conversationId).notifier);
     final action = await showModalBottomSheet<String>(
       context: context,
+      // Sized to its content and scrollable, so nothing clips at large
+      // text or on a short screen.
+      isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
-        child: Column(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(ctx).height * 0.9,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (canRetry)
+              ListTile(
+                leading: const Icon(Icons.refresh, color: AppColors.medBlue),
+                title: const Text('Retry send'),
+                onTap: () => Navigator.pop(ctx, 'retry'),
+              ),
             ListTile(
-              leading: const Icon(Icons.refresh, color: AppColors.medBlue),
-              title: const Text('Retry send'),
-              onTap: () => Navigator.pop(ctx, 'retry'),
+              key: const ValueKey('unsent-delete'),
+              leading: const Icon(Icons.delete_outline, color: AppColors.red),
+              title: const Text('Delete message', style: TextStyle(color: AppColors.red)),
+              onTap: () => Navigator.pop(ctx, 'delete'),
             ),
             ListTile(
-              leading: const Icon(Icons.delete_outline, color: AppColors.red),
-              title: const Text('Delete message'),
-              onTap: () => Navigator.pop(ctx, 'delete'),
+              key: const ValueKey('failed-send-cancel'),
+              leading: const Icon(Icons.close),
+              title: const Text(Strings.cancel),
+              onTap: () => Navigator.pop(ctx),
             ),
           ],
         ),
+          ),
+        ),
       ),
     );
-    if (action == 'retry') await notifier.retry(clientId);
+    if (action == 'retry') {
+      final queued = await notifier.retry(clientId);
+      if (!queued) _toast(Strings.chatAttachmentGone);
+    }
     if (action == 'delete') await notifier.discard(clientId);
   }
 
+  /// A message of mine that has not reached the server (sending or failed):
+  /// its id is a client id. It cannot be starred, forwarded, reported or
+  /// deleted on the server — only retried or discarded from the outbox.
+  bool _unsent(Message m) => m.clientId != null && m.status != MessageStatus.sent;
+
+  /// Only messages the server has can be acted on in selection mode.
+  bool _canSelect(Message m) => m.status == MessageStatus.sent;
+
   void _toggleSelect(Message m) {
+    if (!_canSelect(m)) return;
     setState(
       () => _selected.contains(m.id)
           ? _selected.remove(m.id)
@@ -395,12 +453,19 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   /// WhatsApp's dialog: "Delete for me" always; "Delete for everyone" when
   /// every selected message is mine and inside the 48-hour window — or I am
   /// a group admin.
-  Future<void> _deleteSelected() async {
+  ///
+  /// Returns false when the dialog was dismissed (nothing deleted).
+  Future<bool> _deleteSelected() async {
     final me = ref.read(authProvider).user?.id;
     final sel = _selectedMessages();
-    if (me == null || sel.isEmpty) return;
+    if (me == null || sel.isEmpty) return false;
     final admin = _isGroupAdmin;
-    final forEveryone = sel.every((m) => m.canDelete(me: me, isAdmin: admin));
+    // Unsent rows should not be selectable; any that are get discarded
+    // from the outbox — the server has nothing to hide or delete for them.
+    final unsent = sel.where(_unsent).toList();
+    final sent = sel.where((m) => !_unsent(m)).toList();
+    final forEveryone =
+        sent.isNotEmpty && sent.every((m) => m.canDelete(me: me, isAdmin: admin));
     final choice = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -411,12 +476,14 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
           children: [
             TextButton(
               key: const ValueKey('delete-for-me'),
+              style: TextButton.styleFrom(foregroundColor: AppColors.red),
               onPressed: () => Navigator.pop(ctx, 'me'),
               child: const Text(Strings.chatDeleteForMe),
             ),
             if (forEveryone)
               TextButton(
                 key: const ValueKey('delete-for-everyone'),
+                style: TextButton.styleFrom(foregroundColor: AppColors.red),
                 onPressed: () => Navigator.pop(ctx, 'everyone'),
                 child: const Text(Strings.chatDeleteForEveryone),
               ),
@@ -428,21 +495,27 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         ),
       ),
     );
-    if (!mounted || choice == null) return;
+    if (!mounted || choice == null) return false;
     _clearSelection();
     if (_editing != null && sel.any((m) => m.id == _editing!.id)) _cancelEdit();
     final notifier = ref.read(messagesProvider(widget.conversationId).notifier);
     try {
-      if (choice == 'me') {
-        await notifier.hide([for (final m in sel) m.id]);
+      for (final m in unsent) {
+        await notifier.discard(m.clientId!);
+      }
+      if (sent.isEmpty) {
+        // nothing on the server
+      } else if (choice == 'me') {
+        await notifier.hide([for (final m in sent) m.id]);
       } else {
-        for (final m in sel) {
+        for (final m in sent) {
           await notifier.delete(m.id);
         }
       }
     } catch (e) {
       _toast(ErrorMessages.forApi(e));
     }
+    return true;
   }
 
   /// With exactly one of my own sent messages selected, "Message info"
@@ -477,10 +550,14 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     return AppBar(
       leading: IconButton(
         key: const ValueKey('select-close'),
+        tooltip: Strings.chatSelectionClear,
         icon: const Icon(Icons.close),
         onPressed: _clearSelection,
       ),
-      title: Text('${_selected.length}'),
+      title: Text(
+        '${_selected.length}',
+        semanticsLabel: Strings.a11ySelectedCount(_selected.length),
+      ),
       actions: [
         if (forwardable)
           IconButton(
@@ -497,7 +574,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
           IconButton(
             key: const ValueKey('select-star'),
             icon: Icon(sel.every((m) => m.starred) ? Icons.star_rounded : Icons.star_border_rounded),
-            tooltip: Strings.chatStar,
+            tooltip: sel.every((m) => m.starred) ? Strings.chatUnstar : Strings.chatStar,
             onPressed: () {
               final picked = _selectedMessages();
               final unstar = picked.every((m) => m.starred);
@@ -517,6 +594,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         if (editable != null)
           IconButton(
             key: const ValueKey('select-edit'),
+            tooltip: Strings.chatEdit,
             icon: const Icon(Icons.edit_outlined),
             onPressed: () {
               _clearSelection();
@@ -525,6 +603,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
           ),
         IconButton(
           key: const ValueKey('select-delete'),
+          tooltip: Strings.chatDelete,
           icon: const Icon(Icons.delete_outline),
           onPressed: _deleteSelected,
         ),
@@ -555,37 +634,54 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     _stopTyping();
   }
 
+  /// The edit strip and the edited text stay in the composer until the
+  /// server has taken the edit: on a failure the text is still there to
+  /// send again, not cleared behind an error toast.
   Future<void> _submitEdit(Message m, String text) async {
-    _cancelEdit();
-    if (text == m.content) return; // nothing changed
+    if (text == m.content) {
+      _cancelEdit(); // nothing changed
+      return;
+    }
+    if (_editSubmitting) return;
+    _editSubmitting = true;
     try {
       await ref
           .read(messagesProvider(widget.conversationId).notifier)
           .edit(m.id, text);
     } catch (e) {
       _toast(ErrorMessages.forApi(e));
+      return;
+    } finally {
+      _editSubmitting = false;
     }
+    if (mounted && _editing?.id == m.id) _cancelEdit();
   }
 
   /// Every earlier version of an edited message, newest first — either side.
   Future<void> _showEditHistory(Message m) async {
-    final future = ref.read(chatRepositoryProvider).messageEdits(m.id);
+    Future<List<MessageEdit>> load() => ref.read(chatRepositoryProvider).messageEdits(m.id);
+    var future = load();
     await showModalBottomSheet<void>(
       context: context,
       builder: (ctx) => SafeArea(
-        child: FutureBuilder<List<MessageEdit>>(
+        child: StatefulBuilder(builder: (ctx, setSheet) => FutureBuilder<List<MessageEdit>>(
           future: future,
           builder: (ctx, snap) {
-            if (snap.hasError) {
-              return Padding(
-                padding: const EdgeInsets.all(AppSpacing.lg),
-                child: Text(ErrorMessages.forApi(snap.error)),
+            if (snap.hasError && snap.connectionState == ConnectionState.done) {
+              return SizedBox(
+                width: double.infinity,
+                child: LoadFailed(
+                  message: ErrorMessages.forApi(snap.error),
+                  onRetry: () => setSheet(() => future = load()),
+                ),
               );
             }
-            if (!snap.hasData) {
+            if (!snap.hasData || snap.connectionState != ConnectionState.done) {
               return const SizedBox(
                 height: 120,
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                child: Center(
+                  child: CircularProgressIndicator(strokeWidth: 2, semanticsLabel: Strings.loading),
+                ),
               );
             }
             final edits = snap.data!.reversed.toList();
@@ -617,7 +713,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
               ],
             );
           },
-        ),
+        )),
       ),
     );
   }
@@ -728,6 +824,12 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     final me = ref.read(authProvider).user?.id;
     if (me == null) return;
     HapticFeedback.mediumImpact();
+    // Not on the server yet: the normal menu's Delete / Report / Select all
+    // act on a server id. Deleting it means taking it out of the outbox.
+    if (_unsent(m)) {
+      await _onFailedTap(m.clientId!, canRetry: m.status == MessageStatus.failed);
+      return;
+    }
     final conv = _conv;
     final pinned = conv?.activePinnedMessageId() == m.id;
     final canPin = conv != null &&
@@ -742,7 +844,11 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       if (own && !m.isDeleted) MessageAction.info,
       if (m.canEdit(me: me)) MessageAction.edit,
       if (!m.isDeleted || own) MessageAction.delete,
-      if (!own && !m.isDeleted && m.type != MessageType.system) MessageAction.report,
+      if (m.senderId != me &&
+          m.status == MessageStatus.sent &&
+          !m.isDeleted &&
+          m.type != MessageType.system)
+        MessageAction.report,
       MessageAction.select,
     ];
     final result = await showMessageContextMenu(
@@ -780,8 +886,11 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
           case MessageAction.edit:
             _startEdit(m);
           case MessageAction.delete:
+            // Selected only so the dialog has its subject: backing out of
+            // the dialog must not leave the thread in selection mode.
             setState(() => _selected.add(m.id));
-            await _deleteSelected();
+            final deleted = await _deleteSelected();
+            if (!deleted && mounted) setState(() => _selected.remove(m.id));
           case MessageAction.report:
             await _report(m);
           case MessageAction.select:
@@ -830,7 +939,30 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     }
   }
 
+  /// The pin is shared: taking it down removes it for everyone in the chat,
+  /// so both ways in (the banner's close button, the message menu) ask first.
   Future<void> _unpin() async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const ValueKey('unpin-confirm'),
+        title: const Text(Strings.chatUnpinConfirmTitle),
+        content: const Text(Strings.chatUnpinConfirmBody),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text(Strings.cancel),
+          ),
+          TextButton(
+            key: const ValueKey('unpin-confirm-yes'),
+            style: TextButton.styleFrom(foregroundColor: AppColors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(Strings.chatUnpinMessage),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
     try {
       await ref.read(conversationsProvider.notifier).unpinMessage(widget.conversationId);
       _toast(Strings.chatUnpinnedToastMessage);
@@ -987,14 +1119,34 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     });
   }
 
+  /// [_jumpTo], and say so when the message can't be reached (deleted,
+  /// expired, or cleared) instead of doing nothing.
+  Future<void> _jumpOrExplain(String messageId) async {
+    // A jump already in flight also returns false; that one will land.
+    if (_jumping) return;
+    final found = await _jumpTo(messageId);
+    if (found || !mounted) return;
+    final err = _jumpError;
+    // A page that failed to load is not a deleted message.
+    _toast(err != null ? ErrorMessages.forApi(err) : Strings.chatMessageGone);
+  }
+
   /// Bring [messageId] into view: load older pages until it is held, then
   /// step the list up until its row is built and ensureVisible can finish.
+  /// False when it is not reachable; [_jumpError] is set when that was a
+  /// failed fetch.
   Future<bool> _jumpTo(String messageId, {double alignment = 0.5, bool highlight = true}) async {
     if (_jumping) return false;
     _jumping = true;
+    _jumpError = null;
     try {
       final notifier = ref.read(messagesProvider(widget.conversationId).notifier);
-      if (!await notifier.ensureLoaded(messageId)) return false;
+      try {
+        if (!await notifier.ensureLoaded(messageId)) return false;
+      } catch (e) {
+        _jumpError = e;
+        return false;
+      }
       if (!mounted) return false;
       for (var step = 0; step < 400; step++) {
         final ctx = _rowKey(messageId).currentContext;
@@ -1044,7 +1196,11 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     }
     var id = oldestUnread(msgs);
     if (id == null) {
-      await notifier.loadOlderWhile((loaded) => oldestUnread(loaded) == null);
+      try {
+        await notifier.loadOlderWhile((loaded) => oldestUnread(loaded) == null);
+      } catch (_) {
+        // The thread's "Couldn't load earlier messages" row reports it.
+      }
       id = oldestUnread(ref.read(messagesProvider(widget.conversationId)).value ?? const []);
     }
     if (id == null || !mounted) return;
@@ -1059,6 +1215,8 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       _searchQuery = '';
       _hits = const [];
       _hitIndex = -1;
+      _searchBusy = false;
+      _searchFailed = false;
     });
     _searchInput.clear();
     WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
@@ -1072,6 +1230,8 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       _searchQuery = '';
       _hits = const [];
       _hitIndex = -1;
+      _searchBusy = false;
+      _searchFailed = false;
       _highlightId = null;
     });
   }
@@ -1105,25 +1265,37 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         _searchQuery = '';
         _hits = const [];
         _hitIndex = -1;
+        _searchBusy = false;
+        _searchFailed = false;
       });
       return;
     }
     setState(() {
       _searchQuery = q;
       _searchBusy = true;
+      _searchFailed = false;
     });
     final notifier = ref.read(messagesProvider(widget.conversationId).notifier);
     var hits = _findHits(ref.read(messagesProvider(widget.conversationId)).value ?? const [], q);
+    var failed = false;
     if (hits.isEmpty) {
       // Nothing on screen: pull older pages until a hit or history ends.
-      await notifier.loadOlderWhile((loaded) => _findHits(loaded, q).isEmpty);
+      try {
+        await notifier.loadOlderWhile((loaded) => _findHits(loaded, q).isEmpty);
+      } catch (_) {
+        failed = true;
+      }
       hits = _findHits(ref.read(messagesProvider(widget.conversationId)).value ?? const [], q);
     }
-    if (!mounted || _searchQuery != q) return;
+    if (!mounted) return;
+    // A newer query took over (it resets the spinner itself), or the query
+    // was cleared / search closed (which already did).
+    if (_searchQuery != q) return;
     setState(() {
       _hits = hits;
       _hitIndex = hits.isEmpty ? -1 : 0;
       _searchBusy = false;
+      _searchFailed = failed && hits.isEmpty;
     });
     if (hits.isNotEmpty) await _jumpTo(hits.first);
   }
@@ -1140,9 +1312,14 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     if (!notifier.hasMore) return;
     setState(() => _searchBusy = true);
     final before = _hits.length;
-    await notifier.loadOlderWhile(
-      (loaded) => _findHits(loaded, _searchQuery).length <= before,
-    );
+    Object? failure;
+    try {
+      await notifier.loadOlderWhile(
+        (loaded) => _findHits(loaded, _searchQuery).length <= before,
+      );
+    } catch (e) {
+      failure = e;
+    }
     if (!mounted) return;
     final hits = _findHits(ref.read(messagesProvider(widget.conversationId)).value ?? const [], _searchQuery);
     setState(() {
@@ -1150,6 +1327,10 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       _searchBusy = false;
       if (hits.length > before) _hitIndex = before;
     });
+    if (failure != null && hits.length <= before) {
+      _toast(ErrorMessages.forApi(failure));
+      return;
+    }
     if (hits.length > before) await _jumpTo(hits[before]);
   }
 
@@ -1171,9 +1352,16 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       helpText: Strings.chatJumpToDate.toUpperCase(),
     );
     if (picked == null || !mounted) return;
-    final id = await ref
-        .read(messagesProvider(widget.conversationId).notifier)
-        .jumpToDate(DateTime.utc(picked.year, picked.month, picked.day));
+    final String? id;
+    try {
+      id = await ref
+          .read(messagesProvider(widget.conversationId).notifier)
+          .jumpToDate(DateTime.utc(picked.year, picked.month, picked.day));
+    } catch (e) {
+      // Not "nothing on that day": the day could not be fetched.
+      if (mounted) _toast(ErrorMessages.forApi(e));
+      return;
+    }
     if (!mounted) return;
     if (id == null) {
       _toast(Strings.chatJumpToDateNone);
@@ -1184,49 +1372,95 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
 
   /// Search-mode app bar: query field, hit counter, older / newer, calendar.
   PreferredSizeWidget _searchBar() {
-    final counter = _searchQuery.isEmpty
+    // Only "n/m" rides in the bar. "No matches" is a phrase: at a large text
+    // size it squeezed the field, so it gets a line of its own underneath.
+    final none = _searchQuery.isNotEmpty && _hits.isEmpty && !_searchBusy;
+    // Enabled only while there is somewhere older to go: another loaded
+    // hit, or history still to pull. At the oldest hit it did nothing.
+    final canOlder = _searchQuery.isNotEmpty &&
+        !_searchBusy &&
+        (_hitIndex + 1 < _hits.length ||
+            ref.read(messagesProvider(widget.conversationId).notifier).hasMore);
+    final counter = _searchQuery.isEmpty || _hits.isEmpty
         ? ''
-        : _hits.isEmpty
-            ? Strings.chatSearchNone
-            : '${_hitIndex + 1}/${_hits.length}';
+        : '${_hitIndex + 1}/${_hits.length}';
+    final noneHeight =
+        MediaQuery.textScalerOf(context).scale(AppText.caption.fontSize ?? 13) * 1.4 + AppSpacing.sm;
     return AppBar(
+      bottom: !none
+          ? null
+          : PreferredSize(
+              preferredSize: Size.fromHeight(noneHeight),
+              child: Container(
+                height: noneHeight,
+                width: double.infinity,
+                alignment: Alignment.topCenter,
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                child: Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    _searchFailed
+                        ? Strings.chatOlderLoadFailed
+                        : Strings.chatSearchNone,
+                    key: const ValueKey('search-counter'),
+                    style: AppText.caption,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ),
       leading: IconButton(
         key: const ValueKey('search-close'),
-        icon: const Icon(Icons.arrow_back),
+        tooltip: Strings.chatSearchClose,
+        icon: const BackButtonIcon(),
         onPressed: _exitSearch,
       ),
       titleSpacing: 0,
-      title: TextField(
-        key: const ValueKey('thread-search-field'),
-        controller: _searchInput,
-        focusNode: _searchFocus,
-        autofocus: true,
-        textInputAction: TextInputAction.search,
-        onTapOutside: (_) => _searchFocus.unfocus(),
-        decoration: const InputDecoration(
-          hintText: Strings.chatSearchHint,
-          border: InputBorder.none,
-          isDense: true,
+      title: Semantics(
+        label: Strings.chatSearchHint,
+        child: TextField(
+          key: const ValueKey('thread-search-field'),
+          controller: _searchInput,
+          focusNode: _searchFocus,
+          autofocus: true,
+          textInputAction: TextInputAction.search,
+          onTapOutside: (_) => _searchFocus.unfocus(),
+          decoration: const InputDecoration(
+            hint: SilentHint(Strings.chatSearchHint),
+            border: InputBorder.none,
+            isDense: true,
+          ),
+          onChanged: _onSearchChanged,
+          onSubmitted: (v) => _runSearch(v),
         ),
-        onChanged: _onSearchChanged,
-        onSubmitted: (v) => _runSearch(v),
       ),
       actions: [
         if (_searchBusy)
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-            child: Center(child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))),
+            child: Center(child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, semanticsLabel: Strings.loading))),
           )
         else if (counter.isNotEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
-            child: Center(child: Text(counter, key: const ValueKey('search-counter'), style: AppText.caption)),
+            // Announced as it changes, and read as "2 of 5", not "2 slash 5".
+            child: Center(
+              child: Semantics(
+                container: true,
+                liveRegion: true,
+                label: Strings.a11ySearchHit(_hitIndex + 1, _hits.length),
+                child: ExcludeSemantics(
+                  child: Text(counter, key: const ValueKey('search-counter'), style: AppText.caption),
+                ),
+              ),
+            ),
           ),
         IconButton(
           key: const ValueKey('search-older'),
           tooltip: 'Older',
           icon: const Icon(Icons.keyboard_arrow_up_rounded),
-          onPressed: _searchQuery.isEmpty ? null : _searchOlder,
+          onPressed: canOlder ? _searchOlder : null,
         ),
         IconButton(
           key: const ValueKey('search-newer'),
@@ -1274,9 +1508,13 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     var zone = _deviceZone;
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
+      // Scrolls, and may grow past half the screen: title, three rows and
+      // the button overflowed on a 320x568 phone and at large text.
+      isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) => SafeArea(
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.all(AppSpacing.md),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1313,9 +1551,28 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                 ),
                 ListTile(
                   leading: const Icon(Icons.public, color: AppColors.medBlue),
-                  title: DropdownButton<String>(
+                  title: Semantics(
+                    label: Strings.a11yTimeZone,
+                    child: DropdownButton<String>(
+                    key: const ValueKey('schedule-time-zone'),
                     value: zone,
                     isExpanded: true,
+                    // With `itemHeight: null` the closed button is only as
+                    // tall as its child: keep it a full touch target.
+                    selectedItemBuilder: (context) => [
+                      for (final z in _zones)
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            minHeight: kMinInteractiveDimension,
+                          ),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(z.replaceAll('_', ' ')),
+                          ),
+                        ),
+                    ],
+                    // Rows grow with the text size instead of clipping at 48pt.
+                    itemHeight: null,
                     underline: const SizedBox.shrink(),
                     items: [
                       for (final z in _zones)
@@ -1327,6 +1584,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                     onChanged: (z) {
                       if (z != null) setSheet(() => zone = z);
                     },
+                  ),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.sm),
@@ -1461,7 +1719,8 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
           limit: MediaLimits.multiPhotoMax,
         );
       }
-    } catch (_) {
+    } catch (e) {
+      if (e is PlatformException && await _handlePickerDenied(e)) return;
       _showError(source == 'camera' ? 'Camera not available on this device' : 'Could not open the photo library');
       return;
     }
@@ -1523,7 +1782,8 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         source: source == 'camera' ? ImageSource.camera : ImageSource.gallery,
         maxDuration: MediaLimits.videoMaxDuration,
       );
-    } catch (_) {
+    } catch (e) {
+      if (e is PlatformException && await _handlePickerDenied(e)) return;
       _showError(source == 'camera' ? 'Camera not available on this device' : 'Could not open the photo library');
       return;
     }
@@ -1594,6 +1854,13 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   Future<void> _scanDocument() async {
     final dir = await getTemporaryDirectory();
     final out = '${dir.path}/scan_${DateTime.now().millisecondsSinceEpoch}.pdf';
+    // The system scanner opens on a black screen when camera access has
+    // been refused and reports only "cancelled". Catch the refusal first and
+    // point at Settings, the one place it can be turned back on.
+    if (await _cameraRefused()) {
+      await _showAccessOff(camera: true);
+      return;
+    }
     final ok = await ref.read(mediaNativeProvider).scanDocument(out);
     if (!mounted) return;
     if (ok == null) {
@@ -1617,19 +1884,20 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   }
 
   Future<void> _createPoll() async {
-    final draft = await showPollCreateSheet(context);
-    if (draft == null || !mounted) return;
-    try {
-      await ref.read(messagesProvider(widget.conversationId).notifier).sendPoll(
-            question: draft.question,
-            options: draft.options,
-            multiple: draft.multiple,
-            replyTo: _replyingTo,
-          );
-      if (_replyingTo != null) setState(() => _replyingTo = null);
-    } catch (e) {
-      _showError(ErrorMessages.forApi(e));
-    }
+    // The sheet awaits the send: a failure shows inside it with the draft
+    // intact, not as a toast once the draft has gone.
+    final notifier = ref.read(messagesProvider(widget.conversationId).notifier);
+    final sent = await showPollCreateSheet(
+      context,
+      onSend: (draft) => notifier.sendPoll(
+        question: draft.question,
+        options: draft.options,
+        multiple: draft.multiple,
+        replyTo: _replyingTo,
+      ),
+    );
+    if (sent == null || !mounted) return;
+    if (_replyingTo != null) setState(() => _replyingTo = null);
   }
 
   Future<void> _vote(Message m, List<String> optionIds) async {
@@ -1754,6 +2022,17 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
     }
   }
 
+  /// What a tap on the mic does (the classic stop-review-send panel), for
+  /// assistive technology, which never reaches the pointer handlers.
+  void _openRecorderFromTap() {
+    if (_showRecorder) return;
+    _endHold();
+    setState(() {
+      _showRecorder = true;
+      _recorderHeld = false;
+    });
+  }
+
   void _endHold() {
     _holding = false;
     _micDown = null;
@@ -1799,34 +2078,90 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
   }) {
     return showModalBottomSheet<String>(
       context: context,
+      // Scrolls, and may grow past half the screen: the rows overflowed on a
+      // 320x568 phone and at large text otherwise.
+      isScrollControlled: true,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (sheetCtx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.lg,
-                AppSpacing.lg,
-                AppSpacing.lg,
-                AppSpacing.xs,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  AppSpacing.lg,
+                  AppSpacing.lg,
+                  AppSpacing.xs,
+                ),
+                child: Text(title, style: AppText.heading),
               ),
-              child: Text(title, style: AppText.heading),
-            ),
-            for (final o in options)
-              ListTile(
-                leading: Icon(o.icon, color: AppColors.medBlue),
-                title: Text(o.label, style: AppText.bodyPrimary),
-                onTap: () => Navigator.of(sheetCtx).pop(o.value),
-              ),
-            const SizedBox(height: AppSpacing.sm),
-          ],
+              for (final o in options)
+                ListTile(
+                  leading: Icon(o.icon, color: AppColors.medBlue),
+                  title: Text(o.label, style: AppText.bodyPrimary),
+                  onTap: () => Navigator.of(sheetCtx).pop(o.value),
+                ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  /// image_picker reports a refused permission as a PlatformException; that
+  /// is not "camera not available". Explains that access is off and offers
+  /// the one place it can be turned back on. True when [e] was a denial.
+  Future<bool> _handlePickerDenied(PlatformException e) async {
+    final camera = e.code == 'camera_access_denied';
+    if (!camera && e.code != 'photo_access_denied') return false;
+    await _showAccessOff(camera: camera);
+    return true;
+  }
+
+  /// True when the user has refused camera access (or it is restricted).
+  /// "Not asked yet" is false: the scanner asks by itself. False as well
+  /// when the status cannot be read.
+  /// Asked of iOS directly (AVCaptureDevice): permission_handler's camera
+  /// status is compiled out of this build and cannot tell.
+  Future<bool> _cameraRefused() async {
+    try {
+      return await ref.read(mediaNativeProvider).cameraAccessDenied();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _showAccessOff({required bool camera}) async {
+    if (!mounted) return;
+    final shouldOpen = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const ValueKey('picker-access-off'),
+        title: Text(
+          camera ? Strings.cameraAccessOffTitle : Strings.photoAccessOffTitle,
+        ),
+        content: Text(
+          camera ? Strings.cameraAccessOffBody : Strings.photoAccessOffBody,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text(Strings.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text(Strings.openSettings),
+          ),
+        ],
+      ),
+    );
+    if (shouldOpen == true) await openAppSettings();
   }
 
   void _showError(String message) {
@@ -1951,11 +2286,13 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
             left: AppSpacing.screenHorizontal + AppSpacing.xs,
             bottom: 2,
           ),
-          child: Text(
-            sender.fullName,
-            style: AppText.timestamp.copyWith(
-              color: AppColors.avatarColorFor(sender.avatarIndex),
-              fontWeight: FontWeight.w600,
+          child: WallpaperLabel(
+            child: Text(
+              sender.fullName,
+              style: AppText.timestamp.copyWith(
+                color: senderNameColor(sender.avatarIndex),
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
@@ -1987,14 +2324,18 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       );
     }
     if (m.reactions.isNotEmpty && !m.isDeleted) {
-      content = Column(
-        mainAxisSize: MainAxisSize.min,
+      // The pill's row is 32pt under the bubble with the pill drawn 6pt up
+      // into it. Its tap area is 44pt tall; the extra 12pt is laid over the
+      // bubble's bottom edge instead of pushing the next message down.
+      content = Stack(
         children: [
-          content,
-          Align(
-            alignment: side,
-            child: Transform.translate(
-              offset: const Offset(0, -6),
+          Padding(padding: const EdgeInsets.only(bottom: 32), child: content),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Align(
+              alignment: side,
               child: Padding(
                 padding: inset,
                 child: AbsorbPointer(
@@ -2020,14 +2361,35 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         behavior: HitTestBehavior.opaque,
         onLongPress: _selecting ? null : () => _onLongPress(m),
         onTap: _selecting ? () => _toggleSelect(m) : null,
-        child: AnimatedContainer(
-          duration: AppMotion.maybe(context, AppMotion.base),
-          color: selected
-              ? AppColors.medBlue.withValues(alpha: 0.18)
-              : highlighted
-                  ? AppColors.amber.withValues(alpha: 0.18)
-                  : Colors.transparent,
-          child: content,
+        // The tint is the only drawn sign of selection: say it too.
+        child: Semantics(
+          selected: _selecting ? selected : null,
+          child: AnimatedContainer(
+            duration: AppMotion.maybe(context, AppMotion.base),
+            // 8%: the 11pt text that sits on the row itself (sender name,
+            // "Forwarded") stays at 5.02:1 or better on every wallpaper.
+            // At 18% it fell to 3.6-4.5.
+            color: selected
+                ? AppColors.medBlue.withValues(alpha: 0.08)
+                : highlighted
+                    ? AppColors.amber.withValues(alpha: 0.18)
+                    : Colors.transparent,
+            // The 8% tint alone is 1.10:1 against an unselected row, so
+            // every row also carries a filled or empty check while selecting.
+            // A row that cannot be selected (not sent yet) gets no mark: an
+            // empty circle that never fills reads as a broken control.
+            child: _selecting && _canSelect(m)
+                ? Row(
+                    children: [
+                      _SelectionMark(
+                        key: ValueKey('select-mark-${m.id}'),
+                        selected: selected,
+                      ),
+                      Expanded(child: content),
+                    ],
+                  )
+                : content,
+          ),
         ),
       ),
     );
@@ -2162,10 +2524,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         );
       }
       if (m.status == MessageStatus.failed) {
-        return AppPressable(
-          onTap: () => _onFailedTap(m.clientId!),
-          child: bubble,
-        );
+        return _failedSend(m.clientId!, bubble);
       }
       return bubble;
     }
@@ -2194,14 +2553,16 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
         if (label != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(AppSpacing.lg + AppSpacing.xs, AppSpacing.xs, AppSpacing.lg + AppSpacing.xs, 0),
-            child: Row(
-              key: const ValueKey('forwarded-label'),
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.shortcut_rounded, size: 13, color: AppColors.textMuted),
-                const SizedBox(width: 3),
-                Text(label, style: AppText.timestamp.copyWith(color: AppColors.textMuted, fontStyle: FontStyle.italic)),
-              ],
+            child: WallpaperLabel(
+              child: Row(
+                key: const ValueKey('forwarded-label'),
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.shortcut_rounded, size: 13, color: AppColors.textSecondary),
+                  const SizedBox(width: 3),
+                  Text(label, style: AppText.timestamp.copyWith(color: AppColors.textSecondary, fontStyle: FontStyle.italic)),
+                ],
+              ),
             ),
           ),
         if (m.replyTo != null)
@@ -2214,7 +2575,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                 senderName: _quoteSender(m.replyTo!),
                 isMine: false,
                 nameFor: _nameFor,
-                onTap: () => _jumpTo(m.replyTo!.id),
+                onTap: () => _jumpOrExplain(m.replyTo!.id),
               ),
             ),
           ),
@@ -2226,7 +2587,19 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                 right: isMine ? AppSpacing.lg + 4 : null,
                 left: isMine ? null : AppSpacing.lg + 4,
                 top: AppSpacing.sm,
-                child: const Icon(Icons.star_rounded, key: ValueKey('bubble-star'), size: 14, color: AppColors.amber),
+                // On a photo or a video poster the star has no known
+                // background, so it carries its own white disc, as in the
+                // media gallery: amberText on white is 7.09:1.
+                child: m.type == MessageType.image || m.type == MessageType.video
+                    ? Container(
+                        key: const ValueKey('bubble-star-disc'),
+                        width: 18,
+                        height: 18,
+                        alignment: Alignment.center,
+                        decoration: const BoxDecoration(color: AppColors.white, shape: BoxShape.circle),
+                        child: Icon(Icons.star_rounded, key: const ValueKey('bubble-star'), size: 14, color: AppColors.amberText, semanticLabel: Strings.a11yStarred),
+                      )
+                    : Icon(Icons.star_rounded, key: const ValueKey('bubble-star'), size: 14, color: isMine ? _starOnSent : AppColors.amberText, semanticLabel: Strings.a11yStarred),
               ),
           ],
         ),
@@ -2340,7 +2713,16 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
             right: isMine ? AppSpacing.lg + 4 : null,
             left: isMine ? null : AppSpacing.lg + 4,
             top: AppSpacing.sm,
-            child: const Icon(Icons.star_rounded, key: ValueKey('bubble-star'), size: 14, color: AppColors.amber),
+            // The corner tile is a photo: the star carries its own white
+            // disc, as on a single photo (amberText on white is 7.09:1).
+            child: Container(
+              key: const ValueKey('bubble-star-disc'),
+              width: 18,
+              height: 18,
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(color: AppColors.white, shape: BoxShape.circle),
+              child: Icon(Icons.star_rounded, key: const ValueKey('bubble-star'), size: 14, color: AppColors.amberText, semanticLabel: Strings.a11yStarred),
+            ),
           ),
       ],
     );
@@ -2351,9 +2733,11 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       children: [
         Padding(
           padding: const EdgeInsets.only(left: AppSpacing.screenHorizontal + AppSpacing.xs, bottom: 2),
-          child: Text(
-            sender.fullName,
-            style: AppText.timestamp.copyWith(color: AppColors.avatarColorFor(sender.avatarIndex), fontWeight: FontWeight.w600),
+          child: WallpaperLabel(
+            child: Text(
+              sender.fullName,
+              style: AppText.timestamp.copyWith(color: senderNameColor(sender.avatarIndex), fontWeight: FontWeight.w600),
+            ),
           ),
         ),
         decorated,
@@ -2389,7 +2773,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
       ),
       quote: m.replyTo,
       quoteSenderName: m.replyTo == null ? null : _quoteSender(m.replyTo!),
-      onQuoteTap: m.replyToId == null ? null : () => _jumpTo(m.replyToId!),
+      onQuoteTap: m.replyToId == null ? null : () => _jumpOrExplain(m.replyToId!),
       nameFor: _nameFor,
       forwardedLabel: _forwardedLabel(m),
       starred: m.starred,
@@ -2404,12 +2788,45 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
           : null,
     );
     if (m.status == MessageStatus.failed && m.clientId != null) {
-      return AppPressable(
-        onTap: () => _onFailedTap(m.clientId!),
-        child: bubble,
-      );
+      return _failedSend(m.clientId!, bubble);
     }
     return bubble;
+  }
+
+  /// A failed send: the bubble plus a line in words under it. The 15pt "!"
+  /// in the bubble's corner was the only sign that the message had not gone
+  /// and that tapping it does something. The whole block opens the
+  /// retry / discard sheet.
+  Widget _failedSend(String clientId, Widget bubble) {
+    return AppPressable(
+      onTap: () => _onFailedTap(clientId),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          bubble,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg,
+              0,
+              AppSpacing.lg + AppSpacing.xs,
+              AppSpacing.xs,
+            ),
+            child: WallpaperLabel(
+              child: Text(
+                Strings.chatNotSentRetry,
+                key: ValueKey('failed-send-hint-$clientId'),
+                textAlign: TextAlign.end,
+                style: AppText.timestamp.copyWith(
+                  color: AppColors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _jumpToBottom() {
@@ -2551,6 +2968,8 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
             : _searching
             ? _searchBar()
             : AppBar(
+                // Opened from a link this is the only route: still a way out.
+                leading: const RootBackButton(),
                 titleSpacing: 0,
                 actions: [
                   IconButton(
@@ -2565,10 +2984,25 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                     onSelected: (v) {
                       if (v == 'scheduled') {
                         showScheduledMessagesSheet(context, widget.conversationId);
+                      } else if (v == 'schedule') {
+                        _openScheduleSheet();
                       }
                     },
-                    itemBuilder: (_) => const [
+                    itemBuilder: (_) => [
+                      // The visible route to scheduling; holding Send is the
+                      // shortcut. Enabled exactly when that long-press would
+                      // do something: there is a message typed.
                       PopupMenuItem(
+                        key: const ValueKey('thread-menu-schedule'),
+                        value: 'schedule',
+                        enabled: _hasText,
+                        child: const ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.more_time_rounded),
+                          title: Text(Strings.scheduleMessageMenu),
+                        ),
+                      ),
+                      const PopupMenuItem(
                         key: ValueKey('thread-menu-scheduled'),
                         value: 'scheduled',
                         child: ListTile(
@@ -2582,12 +3016,19 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                 ],
                 title: display == null
                     ? const Text('Chat')
-                    : InkWell(
+                    : Semantics(
+                        button: true,
+                        container: true,
+                        child: InkWell(
                         onTap: () => context.push(
                           groupId == null
                               ? AppRoutes.chatDetails(widget.conversationId)
                               : AppRoutes.groupInfo(groupId),
                         ),
+                        // The bare row is 28-38pt tall; fill the toolbar so
+                        // the tap target is at least 44pt.
+                        child: ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: kToolbarHeight),
                         child: Row(
                           children: [
                             DoctorAvatar(
@@ -2612,7 +3053,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                                       overflow: TextOverflow.ellipsis,
                                       style: subtitle == Strings.presenceOnline
                                           ? AppText.caption.copyWith(
-                                              color: AppColors.presenceOnline,
+                                              color: AppColors.greenDark,
                                               fontWeight: FontWeight.w600,
                                             )
                                           : AppText.caption,
@@ -2631,6 +3072,8 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                             ),
                           ],
                         ),
+                        ),
+                      ),
                       ),
               ),
         body: ChatThemeScope(
@@ -2645,13 +3088,22 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                 message: pinnedMsg,
                 senderName: pinnedMsg == null ? null : _nameFor(pinnedMsg.senderId),
                 nameFor: _nameFor,
-                onTap: () => _jumpTo(pinnedId),
+                onTap: () => _jumpOrExplain(pinnedId),
                 onUnpin: canUnpin ? _unpin : null,
               ),
             Expanded(
-              child: async.when(
-                loading: () => const Center(child: CircularProgressIndicator()),
-                error: (e, _) => Center(child: Text('$e')),
+              child: async.whenRetrying(
+                loading: () => const Center(child: CircularProgressIndicator(semanticsLabel: Strings.loading)),
+                error: (e, _) => _ThreadStatusPane(
+                  key: const ValueKey('thread-error'),
+                  icon: Icons.cloud_off_rounded,
+                  title: Strings.chatLoadFailedTitle,
+                  subtitle: ErrorMessages.forApi(e),
+                  actionLabel: Strings.retry,
+                  onAction: () => ref.invalidate(
+                    messagesProvider(widget.conversationId),
+                  ),
+                ),
                 data: (allMsgs) {
                   if (!_initialJumpDone && allMsgs.isNotEmpty) {
                     _initialJumpDone = true;
@@ -2659,7 +3111,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                       if (!mounted) return;
                       final target = widget.initialMessageId;
                       if (target != null) {
-                        _jumpTo(target);
+                        _jumpOrExplain(target);
                       } else {
                         _resolveUnread(allMsgs, me?.id);
                       }
@@ -2699,29 +3151,46 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                   };
                   return Stack(
                     children: [
+                      // Nothing sent yet (or everything has expired): say
+                      // so rather than leave a blank pane. Lives inside the
+                      // list area, so it never covers the composer.
+                      if (rows.isEmpty && !notifier.loadingOlder)
+                        Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(AppSpacing.xl),
+                            child: WallpaperLabel(
+                              child: Text(
+                                Strings.chatEmptyThread,
+                                key: const ValueKey('thread-empty'),
+                                textAlign: TextAlign.center,
+                                style: AppText.body.copyWith(
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       ListView.builder(
                         controller: _scroll,
                         reverse: true,
                         padding: const EdgeInsets.symmetric(
                           vertical: AppSpacing.sm,
                         ),
-                        // +1 row at the top (list end) for the older-page spinner.
-                        itemCount:
-                            rows.length + (notifier.loadingOlder ? 1 : 0),
+                        // +1 row at the top (list end) for the older-page
+                        // spinner, or the Retry row after a failed load.
+                        itemCount: rows.length +
+                            (notifier.loadingOlder ||
+                                    notifier.olderLoadError != null
+                                ? 1
+                                : 0),
                         itemBuilder: (_, ri) {
                           if (ri >= rows.length) {
-                            return const Padding(
-                              padding: EdgeInsets.all(AppSpacing.md),
-                              child: Center(
-                                child: SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                ),
-                              ),
-                            );
+                            if (!notifier.loadingOlder) {
+                              return _OlderLoadFailedRow(
+                                onRetry: notifier.loadOlder,
+                              );
+                            }
+                            return const _OlderLoadingRow();
                           }
                           final r = rows[ri];
                           final m = r.first;
@@ -2883,7 +3352,9 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                   Expanded(
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(minHeight: 44),
-                      child: TextField(
+                      child: Semantics(
+                        label: Strings.a11yMessageField,
+                        child: TextField(
                         key: const ValueKey('composer-input'),
                         controller: _input,
                         minLines: 1,
@@ -2897,7 +3368,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                         contextMenuBuilder: _composerContextMenu,
                         onTapOutside: (_) => FocusScope.of(context).unfocus(),
                         decoration: InputDecoration(
-                          hintText: Strings.chatMessageHint,
+                          hint: const SilentHint(Strings.chatMessageHint),
                           border: OutlineInputBorder(
                             borderRadius: AppRadii.rXl,
                           ),
@@ -2910,6 +3381,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                         onSubmitted: ref.watch(appSettingsProvider).enterIsSend
                             ? (_) => _send()
                             : null,
+                        ),
                       ),
                     ),
                   ),
@@ -2930,6 +3402,9 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                             key: const ValueKey('composer-send'),
                             haptic: true,
                             minTarget: true,
+                            semanticLabel: _editing != null
+                                ? Strings.chatSaveEdit
+                                : Strings.chatSend,
                             onTap: _send,
                             onLongPress: _openScheduleSheet,
                             child: Container(
@@ -2959,6 +3434,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                             children: [
                               IconButton(
                                 key: const ValueKey('composer-attach'),
+                                tooltip: Strings.chatAttach,
                                 onPressed: _pickAttachment,
                                 icon: const Icon(
                                   Icons.attach_file,
@@ -2968,9 +3444,15 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
                               // Tap → review panel; hold → record while
                               // held (pointer handled by the Listener above
                               // the composer, see _onComposerPointerDown).
+                              // The pointer Listener is invisible to a
+                              // screen reader, so the tap is declared here:
+                              // VoiceOver's double-tap opens the same
+                              // review panel a touch tap does.
                               Semantics(
+                                container: true,
                                 button: true,
                                 label: 'Record voice note',
+                                onTap: _openRecorderFromTap,
                                 child: SizedBox(
                                   key: _micKey,
                                   width: 48,
@@ -3026,6 +3508,7 @@ class _ChatThreadScreenState extends ConsumerState<ChatThreadScreen>
             ),
           ),
           IconButton(
+            tooltip: Strings.chatCancelEdit,
             onPressed: _cancelEdit,
             icon: const Icon(Icons.close, size: 20),
           ),
@@ -3174,6 +3657,9 @@ class _JumpToBottomPill extends StatelessWidget {
           child: AppPressable(
             onTap: onTap,
             minTarget: true,
+            semanticLabel: unreadCount > 0
+                ? Strings.chatJumpToLatestUnread(unreadCount)
+                : Strings.chatJumpToLatest,
             child: Container(
               padding: const EdgeInsets.symmetric(
                 horizontal: AppSpacing.md,
@@ -3217,6 +3703,201 @@ class _JumpToBottomPill extends StatelessWidget {
                 ],
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Centred icon + title + reason + action, for a thread that failed to load
+/// (the chat list's error pane, same shape).
+class _ThreadStatusPane extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String actionLabel;
+  final VoidCallback onAction;
+
+  const _ThreadStatusPane({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.actionLabel,
+    required this.onAction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Over a photo wallpaper the title and reason sit on an opaque card:
+    // drawn straight on a dark picture they were 1.49:1 and 4.02:1.
+    final onPhoto = ChatThemeScope.of(context).wallpaper.localPhoto != null;
+    Widget pane = Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 48, color: onPhoto ? AppColors.gray600 : AppColors.gray400),
+            const SizedBox(height: AppSpacing.lg),
+            // Announced when it replaces the loading state.
+            Semantics(
+              container: true,
+              liveRegion: true,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title, style: AppText.heading, textAlign: TextAlign.center),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(subtitle, style: AppText.caption, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            AppButton(label: actionLabel, onPressed: onAction),
+          ],
+        );
+    if (onPhoto) {
+      pane = Container(
+        key: const ValueKey('thread-status-card'),
+        padding: const EdgeInsets.all(AppSpacing.xl),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: AppRadii.rLg,
+        ),
+        child: pane,
+      );
+    }
+    return Center(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.symmetric(
+          horizontal: onPhoto ? AppSpacing.xl : AppSpacing.xxl,
+          vertical: AppSpacing.xl,
+        ),
+        child: pane,
+      ),
+    );
+  }
+}
+
+/// The leading check on a message row while selecting. On a photo wallpaper
+/// it sits on a white disc so it reads over any picture.
+class _SelectionMark extends StatelessWidget {
+  final bool selected;
+  const _SelectionMark({super.key, required this.selected});
+
+  @override
+  Widget build(BuildContext context) {
+    final onPhoto = ChatThemeScope.of(context).wallpaper.localPhoto != null;
+    final icon = Icon(
+      selected ? Icons.check_circle_rounded : Icons.radio_button_unchecked,
+      size: 22,
+      color: AppColors.medBlue,
+    );
+    return Padding(
+      padding: const EdgeInsets.only(left: AppSpacing.sm),
+      // The row's own Semantics already says "selected".
+      child: ExcludeSemantics(
+        child: onPhoto
+            ? DecoratedBox(
+                decoration: const BoxDecoration(
+                  color: AppColors.white,
+                  shape: BoxShape.circle,
+                ),
+                child: icon,
+              )
+            : icon,
+      ),
+    );
+  }
+}
+
+/// Top of the thread while an older page loads. Over a photo wallpaper the
+/// spinner sits on an opaque disc: a thin arc on a picture can vanish.
+class _OlderLoadingRow extends StatelessWidget {
+  const _OlderLoadingRow();
+
+  @override
+  Widget build(BuildContext context) {
+    final onPhoto = ChatThemeScope.of(context).wallpaper.localPhoto != null;
+    const spinner = SizedBox(
+      width: 18,
+      height: 18,
+      child: CircularProgressIndicator(
+        strokeWidth: 2,
+        semanticsLabel: Strings.loading,
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: Center(
+        child: onPhoto
+            ? DecoratedBox(
+                key: const ValueKey('older-loading-surface'),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  shape: BoxShape.circle,
+                ),
+                child: const Padding(
+                  padding: EdgeInsets.all(AppSpacing.sm),
+                  child: spinner,
+                ),
+              )
+            : spinner,
+      ),
+    );
+  }
+}
+
+/// Top of the thread after an older page failed to load: says so and offers
+/// Retry, instead of a spinner that vanishes as if history had ended.
+class _OlderLoadFailedRow extends StatelessWidget {
+  final VoidCallback onRetry;
+  const _OlderLoadFailedRow({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    // The line and its Retry always sit on an opaque card, as
+    // _ThreadStatusPane does. Drawn straight on a photo wallpaper they can't
+    // be read, and on the pale-teal solid the teal Retry was only 4.36:1.
+    final Widget content = Wrap(
+      key: const ValueKey('older-load-failed'),
+      alignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: AppSpacing.sm,
+      children: [
+        Semantics(
+          liveRegion: true,
+          child: Text(
+            Strings.chatOlderLoadFailed,
+            style: AppText.caption,
+            textAlign: TextAlign.center,
+          ),
+        ),
+        TextButton(
+          key: const ValueKey('older-load-retry'),
+          style: TextButton.styleFrom(
+            minimumSize: const Size(44, 44),
+            tapTargetSize: MaterialTapTargetSize.padded,
+          ),
+          onPressed: onRetry,
+          child: const Text(Strings.retry),
+        ),
+      ],
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.xs,
+      ),
+      child: Center(
+        child: DecoratedBox(
+          key: const ValueKey('older-load-failed-surface'),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: AppRadii.rLg,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+            child: content,
           ),
         ),
       ),

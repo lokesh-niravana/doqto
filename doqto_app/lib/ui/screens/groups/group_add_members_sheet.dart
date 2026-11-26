@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -13,10 +15,14 @@ import '../../../state/groups_state.dart';
 import '../../../state/network_state.dart';
 import '../../../state/org_state.dart';
 import '../../widgets/doctor_avatar.dart';
+import '../../widgets/load_failed.dart';
 import '../../widgets/member_row.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/search_bar.dart';
 import '../../../core/utils/avatar_urls.dart';
+
+const _kPeopleLoadFailed =
+    "Couldn't load people to add. Check your connection and try again.";
 
 /// Who an owner/admin can add: my connections, then org colleagues (the same
 /// pool as New message), minus people already in the group. Multi-select,
@@ -123,7 +129,14 @@ class _AddMembersSheetState extends ConsumerState<_AddMembersSheet> {
       ));
     }
     final shown = people.where(_match).toList();
-    final loading = connectionsAsync.isLoading && !connectionsAsync.hasValue;
+    // Either source still on its way with nothing to list yet is loading —
+    // not "everyone is already here", and not a failure being retried.
+    final loading = (connectionsAsync.isLoading && !connectionsAsync.hasValue) ||
+        (people.isEmpty && (membersAsync?.isLoading ?? false));
+    // A failed load is not "no one to add": say so and offer a retry. Only
+    // when nothing at all loaded; one working source still lists its people.
+    final failed = people.isEmpty &&
+        (connectionsAsync.hasError || (membersAsync?.hasError ?? false));
 
     return SizedBox(
       height: MediaQuery.sizeOf(context).height * 0.85,
@@ -150,12 +163,29 @@ class _AddMembersSheetState extends ConsumerState<_AddMembersSheet> {
           ),
           Expanded(
             child: loading
-                ? const Center(child: CircularProgressIndicator())
-                : people.isEmpty
+                ? const Center(
+                    child: CircularProgressIndicator(semanticsLabel: Strings.loading))
+                : failed
+                    ? Center(
+                        child: LoadFailed(
+                          message: _kPeopleLoadFailed,
+                          onRetry: () {
+                            ref.invalidate(connectionsProvider);
+                            if (org != null) ref.invalidate(orgMembersProvider(org.id));
+                          },
+                        ),
+                      )
+                    : people.isEmpty || shown.isEmpty
                     ? Center(
                         child: Padding(
                           padding: const EdgeInsets.all(AppSpacing.xl),
-                          child: Text(Strings.groupNoOneToAdd,
+                          child: Text(
+                              people.isEmpty
+                                  ? Strings.groupNoOneToAdd
+                                  : Strings.chatSearchNone,
+                              key: ValueKey(people.isEmpty
+                                  ? 'add-members-empty'
+                                  : 'add-members-no-matches'),
                               style: AppText.body, textAlign: TextAlign.center),
                         ),
                       )
@@ -191,7 +221,13 @@ class _AddMembersSheetState extends ConsumerState<_AddMembersSheet> {
               AppSpacing.lg,
               AppSpacing.sm,
               AppSpacing.lg,
-              AppSpacing.lg + MediaQuery.viewInsetsOf(context).bottom,
+              // Clear the keyboard when it is up, the home indicator when it
+              // is not (the keyboard covers the indicator, so the larger wins).
+              AppSpacing.lg +
+                  math.max(
+                    MediaQuery.viewInsetsOf(context).bottom,
+                    MediaQuery.viewPaddingOf(context).bottom,
+                  ),
             ),
             child: AppButton(
               key: const ValueKey('add-members-invite'),

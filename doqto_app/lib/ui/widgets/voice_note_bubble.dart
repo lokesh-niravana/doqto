@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/chat_theme.dart';
+import '../../core/constants/strings.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/radii.dart';
 import '../../core/tokens/spacing.dart';
@@ -13,6 +14,7 @@ import '../../data/models/message.dart';
 import '../../state/voice_playback_state.dart';
 import 'app_pressable.dart';
 import 'attachment_bubbles.dart';
+import 'message_bubble.dart' show kOnSentInset, kOnSentSecondaryAlpha;
 
 /// Voice note (batch 5): the recorded waveform, drag-to-scrub, elapsed /
 /// remaining time, a 1× / 1.5× / 2× pill, and auto-play of the next note
@@ -64,10 +66,16 @@ class VoiceNoteBubble extends ConsumerWidget {
     final chatTheme = ChatThemeScope.of(context);
     final bg = isMine ? chatTheme.sentBg : chatTheme.receivedBg;
     final contrast = isMine ? chatTheme.sentFg : AppColors.medBlue;
+    // Small text: the brand teal is under 4.5:1 on tinted received bubbles,
+    // so received notes use the muted text colour, as MessageBubble does.
+    final secondary = isMine
+        ? chatTheme.sentFg.withValues(alpha: kOnSentSecondaryAlpha)
+        : AppColors.textMuted;
     final receivedBorder = chatTheme.receivedBorder;
     final current = playback.isCurrent(messageId);
     final playing = playback.isPlaying(messageId);
     final loading = playback.isLoading(messageId);
+    final failed = playback.failedId == messageId;
     final progress = playback.progressOf(messageId, durationSec);
     final total = current && playback.duration > Duration.zero
         ? playback.duration
@@ -78,6 +86,20 @@ class VoiceNoteBubble extends ConsumerWidget {
         ? '${format(position)} / ${format(total)}'
         : format(total);
     final canPlay = resolve != null && status == MessageStatus.sent;
+    // VoiceOver: the scrubber is a slider, moved 5 seconds per swipe.
+    Duration nudged(int seconds) {
+      final ms = (position.inMilliseconds + seconds * 1000).clamp(0, total.inMilliseconds);
+      return Duration(milliseconds: ms);
+    }
+
+    void nudge(int seconds) {
+      if (total <= Duration.zero) return;
+      playback.seekFraction(
+        messageId,
+        nudged(seconds).inMilliseconds / total.inMilliseconds,
+        durationSec,
+      );
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.xs),
@@ -104,6 +126,13 @@ class VoiceNoteBubble extends ConsumerWidget {
                           ? () => playback.toggle(messageId, conversationId, resolve!)
                           : null,
                       minTarget: true,
+                      semanticLabel: loading
+                          ? Strings.voiceLoading
+                          : playing
+                              ? Strings.voicePause
+                              : failed
+                                  ? Strings.voiceRetry
+                                  : Strings.voicePlay,
                       child: Container(
                         width: 38,
                         height: 38,
@@ -129,13 +158,28 @@ class VoiceNoteBubble extends ConsumerWidget {
                     ),
                     const SizedBox(width: AppSpacing.sm),
                     Expanded(
-                      child: WaveformScrubber(
-                        key: ValueKey('voice-wave-$messageId'),
-                        bars: Waveform.bars(waveform, seed: messageId),
-                        progress: progress,
-                        color: contrast,
-                        enabled: current,
-                        onSeek: (f) => playback.seekFraction(messageId, f, durationSec),
+                      child: Semantics(
+                        container: true,
+                        slider: true,
+                        label: Strings.voicePosition,
+                        value: Strings.voicePositionValue(format(position), format(total)),
+                        increasedValue: current
+                            ? Strings.voicePositionValue(format(nudged(5)), format(total))
+                            : null,
+                        decreasedValue: current
+                            ? Strings.voicePositionValue(format(nudged(-5)), format(total))
+                            : null,
+                        onIncrease: current ? () => nudge(5) : null,
+                        onDecrease: current ? () => nudge(-5) : null,
+                        excludeSemantics: true,
+                        child: WaveformScrubber(
+                          key: ValueKey('voice-wave-$messageId'),
+                          bars: Waveform.bars(waveform, seed: messageId),
+                          progress: progress,
+                          color: contrast,
+                          enabled: current,
+                          onSeek: (f) => playback.seekFraction(messageId, f, durationSec),
+                        ),
                       ),
                     ),
                     if (current) ...[
@@ -144,15 +188,21 @@ class VoiceNoteBubble extends ConsumerWidget {
                         key: const ValueKey('voice-speed'),
                         onTap: playback.cycleSpeed,
                         minTarget: true,
+                        semanticLabel: Strings.voiceSpeedLabel(_speedLabel(playback.speed)),
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: 3),
                           decoration: BoxDecoration(
-                            color: contrast.withValues(alpha: 0.18),
+                            // Sent: a darker inset under white text. Received:
+                            // the teal tint stays, with navy text on it.
+                            color: isMine ? kOnSentInset : contrast.withValues(alpha: 0.18),
                             borderRadius: AppRadii.rFull,
                           ),
                           child: Text(
                             _speedLabel(playback.speed),
-                            style: AppText.badge.copyWith(color: contrast, fontSize: 11),
+                            style: AppText.badge.copyWith(
+                              color: isMine ? contrast : AppColors.medBlueDark,
+                              fontSize: 11,
+                            ),
                           ),
                         ),
                       ),
@@ -165,11 +215,22 @@ class VoiceNoteBubble extends ConsumerWidget {
                 child: Row(
                   children: [
                     Expanded(
-                      child: Text(
-                        label,
-                        key: ValueKey('voice-time-$messageId'),
-                        style: AppText.timestamp.copyWith(color: contrast.withValues(alpha: 0.75)),
-                      ),
+                      child: failed
+                          // Announced when it appears; the Play button above
+                          // is the retry.
+                          ? Semantics(
+                              liveRegion: true,
+                              child: Text(
+                                Strings.voiceLoadFailed,
+                                key: ValueKey('voice-failed-$messageId'),
+                                style: AppText.timestamp.copyWith(color: secondary),
+                              ),
+                            )
+                          : Text(
+                              label,
+                              key: ValueKey('voice-time-$messageId'),
+                              style: AppText.timestamp.copyWith(color: secondary),
+                            ),
                     ),
                     BubbleFooter(
                       isMine: isMine,
@@ -191,7 +252,7 @@ class VoiceNoteBubble extends ConsumerWidget {
                     transcript!,
                     style: AppText.timestamp.copyWith(
                       fontStyle: FontStyle.italic,
-                      color: contrast.withValues(alpha: 0.75),
+                      color: secondary,
                       fontSize: 11,
                     ),
                   ),
@@ -225,7 +286,11 @@ class WaveformScrubber extends StatefulWidget {
     this.enabled = true,
     this.onSeek,
     this.height = 26,
+    this.hitHeight = 44,
   });
+
+  /// Height of the touch area; the bars are painted [height] tall, centred.
+  final double hitHeight;
 
   @override
   State<WaveformScrubber> createState() => _WaveformScrubberState();
@@ -258,9 +323,15 @@ class _WaveformScrubberState extends State<WaveformScrubber> {
           onHorizontalDragUpdate: widget.enabled ? (d) => _at(d.localPosition, c.maxWidth) : null,
           onHorizontalDragEnd: widget.enabled ? (_) => _commit() : null,
           onHorizontalDragCancel: widget.enabled ? () => setState(() => _dragging = null) : null,
-          child: CustomPaint(
-            size: Size(c.maxWidth, widget.height),
-            painter: _WavePainter(bars: widget.bars, progress: progress, color: widget.color),
+          child: SizedBox(
+            width: c.maxWidth,
+            height: widget.hitHeight < widget.height ? widget.height : widget.hitHeight,
+            child: Center(
+              child: CustomPaint(
+                size: Size(c.maxWidth, widget.height),
+                painter: _WavePainter(bars: widget.bars, progress: progress, color: widget.color),
+              ),
+            ),
           ),
         );
       },

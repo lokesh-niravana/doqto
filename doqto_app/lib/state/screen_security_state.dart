@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/di/providers.dart';
@@ -59,7 +60,12 @@ void showScreenshotToast({Duration duration = const Duration(seconds: 3)}) {
       right: AppSpacing.lg,
       bottom: MediaQuery.paddingOf(context).bottom + 96,
       child: IgnorePointer(
-        child: Material(
+        // A live region as well as the announcement below: TalkBack ignores
+        // announce events on newer Android versions.
+        child: Semantics(
+          container: true,
+          liveRegion: true,
+          child: Material(
           key: const ValueKey('screenshot-toast'),
           color: AppColors.gray800,
           borderRadius: AppRadii.rLg,
@@ -81,11 +87,24 @@ void showScreenshotToast({Duration duration = const Duration(seconds: 3)}) {
               ],
             ),
           ),
+          ),
         ),
       ),
     ),
   );
   overlay.insert(entry);
+  // An overlay entry is not a route or a SnackBar: nothing tells a screen
+  // reader it appeared, so say it.
+  final view = View.maybeOf(overlay.context);
+  if (view != null) {
+    unawaited(
+      SemanticsService.sendAnnouncement(
+        view,
+        screenshotToastText,
+        TextDirection.ltr,
+      ),
+    );
+  }
   Timer(duration, () {
     if (entry.mounted) entry.remove();
   });

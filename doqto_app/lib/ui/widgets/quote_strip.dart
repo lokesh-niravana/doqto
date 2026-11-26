@@ -8,6 +8,7 @@ import '../../core/tokens/spacing.dart';
 import '../../core/tokens/typography.dart';
 import '../../core/utils/rich_text.dart';
 import '../../data/models/message.dart';
+import 'message_bubble.dart' show kOnSentInset, kOnSentSecondaryAlpha;
 
 /// The quoted message inside a reply bubble and above the composer (batch 4):
 /// coloured bar, sender name, one-line preview with a type icon. [onTap]
@@ -41,21 +42,29 @@ class QuoteStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     final q = quote;
     final bar = isMine ? AppColors.white : AppColors.medBlue;
-    final bg = isMine ? AppColors.white.withValues(alpha: 0.18) : AppColors.gray100;
-    final nameColor = isMine ? AppColors.white : AppColors.medBlue;
-    final textColor = isMine ? AppColors.white.withValues(alpha: 0.85) : AppColors.textSecondary;
+    final bg = isMine ? kOnSentInset : AppColors.gray100;
+    // Brand teal is 4.47:1 on gray100; the badge teal is 5.67:1.
+    final nameColor = isMine ? AppColors.white : AppColors.tealBadgeText;
+    final textColor = isMine ? AppColors.white.withValues(alpha: kOnSentSecondaryAlpha) : AppColors.textSecondary;
     final preview = q == null
         ? Strings.chatMessageDeleted
         : q.type == MessageType.text
             ? plainText(q.preview ?? '', nameFor: (id) => nameFor?.call(id) ?? 'someone')
             : (q.preview ?? '');
     final deleted = q == null || q.preview == 'Message deleted';
-    return GestureDetector(
+    // Tappable (jumps to the quoted message): a button to a screen reader,
+    // not just text that happens to respond.
+    return Semantics(
+      button: onTap != null ? true : null,
+      child: GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Container(
         key: const ValueKey('quote-strip'),
         margin: const EdgeInsets.only(bottom: AppSpacing.xs + 2),
+        // With the margin below (also part of the tap area) a one-line quote
+        // is 44pt to touch; it was 42.9pt.
+        constraints: const BoxConstraints(minHeight: 44 - (AppSpacing.xs + 2)),
         decoration: BoxDecoration(
           color: bg,
           borderRadius: AppRadii.rSm,
@@ -101,12 +110,13 @@ class QuoteStrip extends StatelessWidget {
             if (onClose != null)
               IconButton(
                 key: const ValueKey('quote-close'),
-                visualDensity: VisualDensity.compact,
+                tooltip: Strings.chatCancelReply,
                 onPressed: onClose,
                 icon: Icon(Icons.close, size: 18, color: textColor),
               ),
           ],
         ),
+      ),
       ),
     );
   }

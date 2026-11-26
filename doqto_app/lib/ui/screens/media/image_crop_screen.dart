@@ -3,13 +3,16 @@ import 'dart:io';
 import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
 import '../../../core/constants/strings.dart';
 import '../../../core/tokens/colors.dart';
 import '../../../core/tokens/spacing.dart';
+import '../../../core/utils/crop_geometry.dart';
 import '../../../core/utils/image_metadata.dart';
+import '../../widgets/scrim_spinner.dart';
 
 /// Crop step before a picture leaves the phone: profile / group photos
 /// (circle mask, square output) and chat photos (free aspect with quick
@@ -67,6 +70,17 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
   bool _busy = false;
   double? _aspect;
 
+  // Where the crop rectangle and the picture are inside the canvas, as the
+  // crop widget last reported them. The 44pt corner targets are laid out
+  // from these (the package's own handles are 32pt and cannot be enlarged).
+  Rect? _cropRect;
+  Rect? _imageRect;
+
+  // A corner drag in progress: the rect it started from and how far the
+  // finger has travelled since.
+  Rect? _dragFrom;
+  Offset _dragDelta = Offset.zero;
+
   static const _presets = <(String, double?)>[
     (Strings.cropAspectFree, null),
     ('1:1', 1),
@@ -95,6 +109,63 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
       const SnackBar(content: Text(Strings.cropFailed)),
     );
     Navigator.of(context).pop(null);
+  }
+
+  /// Records what the crop widget reports. It calls back from gestures and
+  /// from its own async set-up, never during a build — but if that ever
+  /// changes, wait for the frame instead of calling setState inside one.
+  void _track(VoidCallback update) {
+    if (!mounted) return;
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(update);
+      });
+    } else {
+      setState(update);
+    }
+  }
+
+  void _dragCorner(CropCorner corner, Offset delta, Size viewport) {
+    final from = _dragFrom;
+    final image = _imageRect;
+    if (from == null || image == null) return;
+    _dragDelta += delta;
+    // Only the part of the picture that is on screen can be cropped to.
+    final bounds = image.intersect(Offset.zero & viewport);
+    _controller.cropRect = resizeCropRect(
+      rect: from,
+      corner: corner,
+      delta: _dragDelta,
+      bounds: bounds,
+      // The circle mask is a fixed 1:1 (set in initState).
+      aspectRatio: _aspect,
+    );
+  }
+
+  /// Four 44x44pt drag targets over the crop corners. They sit above the
+  /// crop widget's own 32pt handles (which stay as the visible dots) and
+  /// resize the rectangle through the controller.
+  List<Widget> _cornerTargets(Size viewport) {
+    final rect = _cropRect;
+    if (rect == null || _imageRect == null) return const [];
+    return [
+      for (final corner in CropCorner.values)
+        Positioned.fromRect(
+          rect: cropHandleTarget(corner.of(rect), viewport),
+          child: GestureDetector(
+            key: ValueKey('crop-handle-${corner.name}'),
+            behavior: HitTestBehavior.opaque,
+            excludeFromSemantics: true,
+            onPanStart: (_) {
+              _dragFrom = _cropRect;
+              _dragDelta = Offset.zero;
+            },
+            onPanUpdate: (d) => _dragCorner(corner, d.delta, viewport),
+            onPanEnd: (_) => _dragFrom = null,
+            onPanCancel: () => _dragFrom = null,
+          ),
+        ),
+    ];
   }
 
   void _reset() {
@@ -163,29 +234,46 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
         leading: TextButton(
           key: const ValueKey('crop-cancel'),
           onPressed: _busy ? null : () => Navigator.of(context).pop(null),
-          child: Text(
-            Strings.cropCancel,
-            style: body.copyWith(color: AppColors.white),
+          // One line always: the slot widens with the text size (below), and
+          // past its cap the word scales down instead of wrapping or clipping.
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              Strings.cropCancel,
+              maxLines: 1,
+              softWrap: false,
+              style: body.copyWith(color: AppColors.white),
+            ),
           ),
         ),
-        leadingWidth: 88,
-        title: Text(
-          widget.title ?? Strings.cropTitle,
-          style: (text.titleMedium ?? body).copyWith(color: AppColors.white, fontWeight: FontWeight.w700),
+        leadingWidth: (88 * MediaQuery.textScalerOf(context).scale(16) / 16).clamp(88.0, 144.0),
+        // Cancel grows to 144pt at large text; the title gives way by
+        // scaling down, and Reset is an icon, so nothing is squeezed out.
+        titleSpacing: 0,
+        centerTitle: false,
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            widget.title ?? Strings.cropTitle,
+            style: (text.titleMedium ?? body).copyWith(color: AppColors.white, fontWeight: FontWeight.w700),
+          ),
         ),
         actions: [
-          TextButton(
+          IconButton(
             key: const ValueKey('crop-reset'),
+            tooltip: Strings.cropReset,
             onPressed: ready ? _reset : null,
-            child: Text(
-              Strings.cropReset,
-              style: body.copyWith(
-                color: ready ? AppColors.white : AppColors.gray400,
-              ),
-            ),
+            color: AppColors.white,
+            disabledColor: AppColors.gray400,
+            icon: const Icon(Icons.restart_alt),
           ),
           TextButton(
             key: const ValueKey('crop-done'),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              minimumSize: const Size(48, 44),
+            ),
             onPressed: ready ? _done : null,
             child: Text(
               Strings.cropDone,
@@ -203,9 +291,13 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
             Expanded(
               child: bytes == null
                   ? const Center(
-                      child: CircularProgressIndicator(color: AppColors.white),
+                      child: CircularProgressIndicator(
+                        color: AppColors.white,
+                        semanticsLabel: Strings.loading,
+                      ),
                     )
-                  : Stack(
+                  : LayoutBuilder(
+                      builder: (context, box) => Stack(
                       fit: StackFit.expand,
                       children: [
                         Crop(
@@ -221,23 +313,23 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
                           onStatusChanged: (s) {
                             if (mounted) setState(() => _status = s);
                           },
+                          onMoved: (viewportRect, _) =>
+                              _track(() => _cropRect = viewportRect),
+                          onImageMoved: (imageRect) =>
+                              _track(() => _imageRect = imageRect),
                           onCropped: _onCropped,
-                          progressIndicator: const Center(
-                            child: CircularProgressIndicator(
-                              color: AppColors.white,
-                            ),
-                          ),
+                          progressIndicator: const Center(child: ScrimSpinner()),
                         ),
+                        if (ready) ..._cornerTargets(box.biggest),
                         if (_busy)
                           const ColoredBox(
                             color: Color(0x66000000),
-                            child: Center(
-                              child: CircularProgressIndicator(
-                                color: AppColors.white,
-                              ),
-                            ),
+                            // On a dark disc: white on the 40% scrim is under
+                            // 3:1 over a white photo.
+                            child: Center(child: ScrimSpinner()),
                           ),
                       ],
+                    ),
                     ),
             ),
             if (!widget.circle)

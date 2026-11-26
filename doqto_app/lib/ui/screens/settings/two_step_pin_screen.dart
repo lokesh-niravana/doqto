@@ -29,7 +29,11 @@ class TwoStepPinScreen extends ConsumerStatefulWidget {
 }
 
 class _TwoStepPinScreenState extends ConsumerState<TwoStepPinScreen> {
-  final _formKey = GlobalKey<FormState>();
+  // AppTextField is not a FormField, so a Form validates nothing: each
+  // field is validated through its own key.
+  final _currentKey = GlobalKey<AppTextFieldState>();
+  final _pinKey = GlobalKey<AppTextFieldState>();
+  final _confirmKey = GlobalKey<AppTextFieldState>();
   final _current = TextEditingController();
   final _pin = TextEditingController();
   final _confirm = TextEditingController();
@@ -57,7 +61,16 @@ class _TwoStepPinScreenState extends ConsumerState<TwoStepPinScreen> {
 
   Future<void> _save() async {
     final l = context.l10n;
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+    // Every field on screen, not just the first failure, so each shows its
+    // own message.
+    var valid = true;
+    for (final key in [
+      if (_mode != _PinMode.enable) _currentKey,
+      if (_mode != _PinMode.disable) ...[_pinKey, _confirmKey],
+    ]) {
+      if (!(key.currentState?.validate() ?? false)) valid = false;
+    }
+    if (!valid) return;
     if (_mode != _PinMode.disable && _pin.text != _confirm.text) {
       setState(() => _error = l.pinMismatch);
       return;
@@ -96,11 +109,19 @@ class _TwoStepPinScreenState extends ConsumerState<TwoStepPinScreen> {
     }
   }
 
-  Widget _pinField(TextEditingController c, String key, String label, {bool autofocus = false}) {
+  Widget _pinField(
+    GlobalKey<AppTextFieldState> fieldKey,
+    TextEditingController c,
+    String key,
+    String label, {
+    bool autofocus = false,
+  }) {
     return Padding(
+      // The ValueKey tests and finders use stays on the outside.
+      key: ValueKey(key),
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: AppTextField(
-        key: ValueKey(key),
+        key: fieldKey,
         controller: c,
         label: label,
         keyboardType: TextInputType.number,
@@ -108,7 +129,7 @@ class _TwoStepPinScreenState extends ConsumerState<TwoStepPinScreen> {
         autofocus: autofocus,
         maxLength: AppConstants.otpLength,
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        validator: Validators.otp(AppConstants.otpLength),
+        validator: Validators.pin(AppConstants.otpLength),
         dismissOnValid: true,
         onChanged: (_) {
           if (_error != null) setState(() => _error = null);
@@ -126,7 +147,11 @@ class _TwoStepPinScreenState extends ConsumerState<TwoStepPinScreen> {
       appBar: AppBar(title: Text(l.settingsTwoStep)),
       body: ListView(
         key: const ValueKey('pin-screen'),
-        padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last row clears the home indicator.
+        padding: const EdgeInsets.all(AppSpacing.screenHorizontal).copyWith(
+          bottom: AppSpacing.screenHorizontal + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           FadeSlideIn.staggered(
             0,
@@ -171,15 +196,14 @@ class _TwoStepPinScreenState extends ConsumerState<TwoStepPinScreen> {
             ],
           ] else
             Form(
-              key: _formKey,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   if (_mode != _PinMode.enable)
-                    _pinField(_current, 'pin-current', l.pinCurrent, autofocus: true),
+                    _pinField(_currentKey, _current, 'pin-current', l.pinCurrent, autofocus: true),
                   if (_mode != _PinMode.disable) ...[
-                    _pinField(_pin, 'pin-new', l.pinNew, autofocus: _mode == _PinMode.enable),
-                    _pinField(_confirm, 'pin-confirm', l.pinConfirm),
+                    _pinField(_pinKey, _pin, 'pin-new', l.pinNew, autofocus: _mode == _PinMode.enable),
+                    _pinField(_confirmKey, _confirm, 'pin-confirm', l.pinConfirm),
                   ],
                   InlineError(_error),
                   const SizedBox(height: AppSpacing.md),

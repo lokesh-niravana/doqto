@@ -7,7 +7,7 @@ import '../../core/tokens/spacing.dart';
 import '../../core/tokens/typography.dart';
 import 'app_pressable.dart';
 
-/// Slot-based 64pt person row: avatar / title+subtitle / trailing.
+/// Slot-based person row (64pt, taller at large text sizes): avatar / title+subtitle / trailing.
 ///
 /// Unification target for the private rows in my_org_screen and
 /// create_group_screen — those retrofits are deferred debt, not done in M0.
@@ -37,9 +37,13 @@ class MemberRow extends StatelessWidget {
       child: AnimatedContainer(
         duration: AppMotion.maybe(context, AppMotion.micro),
         curve: AppMotion.standard,
-        height: 64,
-        padding:
-            const EdgeInsets.symmetric(horizontal: AppSpacing.screenHorizontal),
+        // A minimum, not a fixed height: two lines at a large text size need
+        // more than 64pt.
+        constraints: const BoxConstraints(minHeight: 64),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.screenHorizontal,
+          vertical: AppSpacing.sm,
+        ),
         decoration: BoxDecoration(
           color: selected ? AppColors.medBlueLight : Colors.transparent,
           borderRadius: AppRadii.rMd,
@@ -50,6 +54,7 @@ class MemberRow extends StatelessWidget {
             const SizedBox(width: AppSpacing.md),
             Expanded(
               child: Column(
+                mainAxisSize: MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [

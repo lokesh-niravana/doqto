@@ -119,4 +119,38 @@ void main() {
     // A write from outside also ends "Other" mode.
     expect(find.byType(TextField), findsOneWidget);
   });
+
+  testWidgets('the options stop above the keyboard and the field scrolls to the top',
+      (tester) async {
+    const keyboard = 300.0;
+    // The real keyboard: an inset on the view, which the Scaffold consumes.
+    tester.view.viewInsets = FakeViewPadding(
+      bottom: keyboard * tester.view.devicePixelRatio,
+    );
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ListView(
+            children: [
+              const SizedBox(height: 200),
+              SpecialtyField(controller: controller, label: 'Specialty'),
+              const SizedBox(height: 600),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(TextField));
+    await tester.pumpAndSettle();
+
+    // Focus brought the field to the top of the viewport…
+    expect(tester.getTopLeft(find.byType(SpecialtyField)).dy, 0);
+    // …and the list ends above the keyboard, not behind it.
+    final screen = tester.getSize(find.byType(MaterialApp)).height;
+    final options = tester.getRect(find.byKey(const ValueKey('specialty-options')));
+    expect(options.height, greaterThan(100));
+    expect(options.bottom, lessThanOrEqualTo(screen - keyboard));
+  });
 }

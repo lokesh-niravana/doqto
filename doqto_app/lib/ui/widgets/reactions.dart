@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/constants/strings.dart';
 import '../../core/tokens/colors.dart';
 import '../../core/tokens/motion.dart';
 import '../../core/tokens/radii.dart';
@@ -116,9 +117,16 @@ class _TrayButton extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: selected ? AppColors.gray200 : Colors.transparent,
+                // gray200 on white is 1.36:1; the teal ring (5.03:1) is what
+                // marks my reaction.
+                border: selected ? Border.all(color: AppColors.medBlue, width: 1.5) : null,
               ),
               child: ExcludeSemantics(
-                child: Text(emoji, style: const TextStyle(fontSize: 26, height: 1.1)),
+                // Shrinks to the circle at large text sizes instead of clipping.
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(emoji, style: const TextStyle(fontSize: 26, height: 1.1)),
+                ),
               ),
             ),
           ),
@@ -137,6 +145,9 @@ class ReactionPills extends StatelessWidget {
 
   const ReactionPills({super.key, required this.reactions, required this.me, this.onTap});
 
+  /// Height of the tap area around the pill.
+  static const double targetHeight = 44;
+
   @override
   Widget build(BuildContext context) {
     if (reactions.isEmpty) return const SizedBox.shrink();
@@ -147,20 +158,23 @@ class ReactionPills extends StatelessWidget {
     ].join(', ');
     return Semantics(
       button: onTap != null,
-      label: 'Reactions: $spoken. Double tap to see who reacted.',
+      label: 'Reactions: $spoken${mine ? ', ${Strings.reactionIncludingYours}' : ''}. Double tap to see who reacted.',
       child: GestureDetector(
         key: const ValueKey('reaction-pills'),
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
         child: ConstrainedBox(
-          // Comfortable touch target without inflating the pill itself.
-          constraints: const BoxConstraints(minHeight: 32, minWidth: 44),
+          // 44pt touch target without inflating the pill itself; the thread
+          // overlaps the spare height onto the bubble (see [targetHeight]).
+          constraints: const BoxConstraints(minHeight: targetHeight, minWidth: 44),
           child: Center(
             widthFactor: 1,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: AppColors.white,
+                // Mine: a tinted fill as well as the border, so the state
+                // is not carried by a 1.5pt outline alone.
+                color: mine ? AppColors.medBlueLight : AppColors.white,
                 borderRadius: BorderRadius.circular(AppRadii.full),
                 border: Border.all(
                   color: mine ? AppColors.medBlue : AppColors.gray200,
@@ -181,7 +195,10 @@ class ReactionPills extends StatelessWidget {
                       Text(
                         '$total',
                         key: const ValueKey('reaction-total'),
-                        style: AppText.timestamp.copyWith(color: AppColors.gray600),
+                        style: AppText.timestamp.copyWith(
+                          // Navy on the pale-teal fill: 12:1.
+                          color: mine ? AppColors.medBlueDark : AppColors.gray600,
+                        ),
                       ),
                     ],
                   ],

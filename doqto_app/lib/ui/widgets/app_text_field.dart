@@ -8,6 +8,7 @@ import '../../core/tokens/spacing.dart';
 import '../../core/tokens/typography.dart';
 import '../../core/utils/validators.dart';
 import 'fade_slide_in.dart';
+import 'silent_hint.dart';
 
 /// Global reusable input field.
 ///
@@ -25,6 +26,12 @@ import 'fade_slide_in.dart';
 class AppTextField extends StatefulWidget {
   final TextEditingController? controller;
   final String? label;
+
+  /// The field's name for screen readers when there is no visible [label]
+  /// (a code box under a heading, a search field, a caption). The [hint] is
+  /// then drawn only: it would otherwise be the name, and it vanishes at the
+  /// first character.
+  final String? semanticLabel;
   final String? hint;
   final String? helperText;
   final String? errorText;
@@ -58,10 +65,24 @@ class AppTextField extends StatefulWidget {
   /// same tap-outside dismissal — the return key inserts a newline.
   final int maxLines;
 
+  /// What iOS may offer above the keyboard: the SMS code
+  /// ([AutofillHints.oneTimeCode]), the user's name, email, phone.
+  final Iterable<String>? autofillHints;
+
+  /// The return key: [TextInputAction.next] in a form moves to the next
+  /// field, [TextInputAction.done] closes the keyboard.
+  final TextInputAction? textInputAction;
+
+  final void Function(String)? onSubmitted;
+
+  /// False for codes and identifiers, which autocorrect only damages.
+  final bool autocorrect;
+
   const AppTextField({
     super.key,
     this.controller,
     this.label,
+    this.semanticLabel,
     this.hint,
     this.helperText,
     this.errorText,
@@ -78,7 +99,18 @@ class AppTextField extends StatefulWidget {
     this.suffix,
     this.focusNode,
     this.maxLines = 1,
+    this.autofillHints,
+    this.textInputAction,
+    this.onSubmitted,
+    this.autocorrect = true,
+    this.readOnly = false,
+    this.onTap,
   });
+
+  /// Shows a value the user chooses elsewhere (a picker) instead of typing:
+  /// no keyboard comes up. Pair with [onTap] to open the picker.
+  final bool readOnly;
+  final VoidCallback? onTap;
 
   @override
   State<AppTextField> createState() => AppTextFieldState();
@@ -150,8 +182,14 @@ class AppTextFieldState extends State<AppTextField> {
     final borderColor = hasError
         ? AppColors.red
         : _focused
-            ? AppColors.medBlue
-            : AppColors.gray200;
+        ? AppColors.medBlue
+        : AppColors.gray200;
+    final fieldStyle = widget.style ?? AppText.bodyPrimary;
+    // Named by semanticLabel alone: the placeholder is drawn, not read.
+    final silentHint =
+        widget.label == null &&
+        widget.semanticLabel != null &&
+        widget.hint != null;
     final noBorder = OutlineInputBorder(
       borderRadius: AppRadii.rMd,
       borderSide: BorderSide.none,
@@ -161,7 +199,10 @@ class AppTextFieldState extends State<AppTextField> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (widget.label != null) ...[
-          Text(widget.label!, style: AppText.subheading),
+          // Read as the field's own name below, not as loose text above it.
+          ExcludeSemantics(
+            child: Text(widget.label!, style: AppText.subheading),
+          ),
           const SizedBox(height: AppSpacing.sm),
         ],
         AnimatedContainer(
@@ -171,31 +212,49 @@ class AppTextFieldState extends State<AppTextField> {
             borderRadius: AppRadii.rMd,
             border: Border.all(color: borderColor, width: 1.5),
           ),
-          child: TextField(
-            controller: widget.controller,
-            focusNode: _focus,
-            keyboardType: widget.keyboardType,
-            textCapitalization: widget.textCapitalization ??
-                (widget.keyboardType == TextInputType.emailAddress
-                    ? TextCapitalization.none
-                    : TextCapitalization.words),
-            obscureText: widget.obscure,
-            maxLines: widget.obscure ? 1 : widget.maxLines,
-            maxLength: widget.maxLength,
-            inputFormatters: widget.inputFormatters,
-            onChanged: _onChanged,
-            autofocus: widget.autofocus,
-            // Tapping anywhere off the field dismisses the keyboard. Flutter's
-            // default only does this on desktop; on mobile focus would stick.
-            onTapOutside: (_) => _focus.unfocus(),
-            style: widget.style ?? AppText.bodyPrimary,
-            decoration: InputDecoration(
-              hintText: widget.hint,
-              counterText: '',
-              suffixIcon: widget.suffix,
-              border: noBorder,
-              enabledBorder: noBorder,
-              focusedBorder: noBorder,
+          child: Semantics(
+            label: widget.label ?? widget.semanticLabel,
+            child: TextField(
+              controller: widget.controller,
+              focusNode: _focus,
+              readOnly: widget.readOnly,
+              onTap: widget.onTap,
+              autofillHints: widget.autofillHints,
+              textInputAction: widget.textInputAction,
+              onSubmitted: widget.onSubmitted,
+              autocorrect: widget.autocorrect,
+              enableSuggestions: widget.autocorrect,
+              keyboardType: widget.keyboardType,
+              textCapitalization:
+                  widget.textCapitalization ??
+                  (widget.keyboardType == TextInputType.emailAddress
+                      ? TextCapitalization.none
+                      : TextCapitalization.words),
+              obscureText: widget.obscure,
+              maxLines: widget.obscure ? 1 : widget.maxLines,
+              maxLength: widget.maxLength,
+              inputFormatters: widget.inputFormatters,
+              onChanged: _onChanged,
+              autofocus: widget.autofocus,
+              // Tapping anywhere off the field dismisses the keyboard. Flutter's
+              // default only does this on desktop; on mobile focus would stick.
+              onTapOutside: (_) => _focus.unfocus(),
+              style: fieldStyle,
+              decoration: InputDecoration(
+                hintText: silentHint ? null : widget.hint,
+                hint: silentHint
+                    ? SilentHint(
+                        widget.hint!,
+                        fieldStyle: fieldStyle,
+                        maxLines: widget.obscure ? 1 : widget.maxLines,
+                      )
+                    : null,
+                counterText: '',
+                suffixIcon: widget.suffix,
+                border: noBorder,
+                enabledBorder: noBorder,
+                focusedBorder: noBorder,
+              ),
             ),
           ),
         ),
@@ -210,29 +269,38 @@ class AppTextFieldState extends State<AppTextField> {
                   key: ValueKey<String>(errorToShow),
                   padding: const EdgeInsets.only(top: AppSpacing.sm),
                   child: FadeSlideIn(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Icon(Icons.error_outline,
-                            size: 14, color: AppColors.red),
-                        const SizedBox(width: AppSpacing.xs + 2),
-                        Expanded(
-                          child: Text(
-                            errorToShow,
-                            style:
-                                AppText.caption.copyWith(color: AppColors.red),
+                    // Announced when it appears, not only drawn.
+                    child: Semantics(
+                      container: true,
+                      liveRegion: true,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(
+                            Icons.error_outline,
+                            size: 14,
+                            color: AppColors.red,
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: AppSpacing.xs + 2),
+                          Expanded(
+                            child: Text(
+                              errorToShow,
+                              style: AppText.caption.copyWith(
+                                color: AppColors.red,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 )
               : (widget.helperText != null && widget.helperText!.isNotEmpty)
-                  ? Padding(
-                      padding: const EdgeInsets.only(top: AppSpacing.xs),
-                      child: Text(widget.helperText!, style: AppText.caption),
-                    )
-                  : const SizedBox(width: double.infinity),
+              ? Padding(
+                  padding: const EdgeInsets.only(top: AppSpacing.xs),
+                  child: Text(widget.helperText!, style: AppText.caption),
+                )
+              : const SizedBox(width: double.infinity),
         ),
       ],
     );

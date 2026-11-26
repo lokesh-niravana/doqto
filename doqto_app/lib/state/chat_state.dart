@@ -90,7 +90,9 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     }
   }
 
-  Future<void> refresh() async {
+  /// [rethrowOnError]: a pull-to-refresh passes true so the screen can say
+  /// the refresh failed; the list is kept either way.
+  Future<void> refresh({bool rethrowOnError = false}) async {
     try {
       final list = await ref.read(chatRepositoryProvider).listConversations();
       await ref.read(chatCacheProvider).putConversations(list);
@@ -100,6 +102,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
       _scheduleAutoUnarchive(list);
     } catch (_) {
       // Offline refresh: keep showing what we have.
+      if (rethrowOnError) rethrow;
     }
   }
 
@@ -547,6 +550,11 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
   bool hasMore = true;
   bool loadingOlder = false;
 
+  /// Why the last older-page load failed; null when it worked (or none has
+  /// run). A failure is not "no more history": the thread shows a Retry row
+  /// while this is set, and the jump helpers below throw it.
+  Object? olderLoadError;
+
   /// Single-flight guard for forward catch-up.
   bool _catchingUp = false;
   static const _maxCatchUpPages = 10;
@@ -560,6 +568,12 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
   final _starInFlight = <String>{};
   final _starWanted = <String, bool>{};
   static const _maxJumpPages = 40;
+
+  /// Sends this notifier has on the wire right now, and the ones the user
+  /// discarded while they were ([discard]): a request that has left cannot
+  /// be recalled, so [_deliver] withdraws the message once it lands.
+  final _delivering = <String>{};
+  final _discardedInFlight = <String>{};
 
   @override
   Future<List<Message>> build(String conversationId) async {
@@ -899,37 +913,72 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
       return;
     }
     final progress = ref.read(uploadProgressProvider.notifier);
+    _delivering.add(entry.clientId);
     try {
+      final repo = ref.read(chatRepositoryProvider);
       final msg = await deliverOutboxEntry(
-        ref.read(chatRepositoryProvider),
+        repo,
         entry,
         onProgress: (f) => progress.set(entry.clientId, f),
       );
+      if (_discardedInFlight.remove(entry.clientId)) {
+        // Deleted while the request was on the wire: it reached the server
+        // anyway, so take it back. If that fails the message is shown as
+        // sent — never hidden while the other side can read it.
+        try {
+          final gone = await repo.deleteMessage(msg.id);
+          _insert(msg);
+          _replace(gone);
+        } catch (_) {
+          _insert(msg);
+        }
+        return;
+      }
       await seedSentImage(ref.read(chatMediaCacheProvider), entry, msg);
       await seedSentDocument(ref.read(chatDocumentStoreProvider), entry, msg);
       await ref.read(outboxProvider).remove(entry.clientId);
       _insert(msg);
     } catch (_) {
-      _setStatus(entry.clientId, MessageStatus.failed);
+      if (!_discardedInFlight.remove(entry.clientId)) {
+        _setStatus(entry.clientId, MessageStatus.failed);
+      }
     } finally {
+      _delivering.remove(entry.clientId);
       progress.clear(entry.clientId);
     }
   }
 
-  /// Tap-to-retry on a failed bubble.
-  Future<void> retry(String clientId) async {
+  /// Tap-to-retry on a failed bubble. False when there is nothing left to
+  /// send: the attachment's durable copy is gone from this phone (its outbox
+  /// entry was dropped by [_deliver], or the file has vanished since). The
+  /// bubble stays failed and the caller says why.
+  Future<bool> retry(String clientId) async {
     final entry = ref
         .read(outboxProvider)
         .pending(conversationId: arg)
         .where((e) => e.clientId == clientId)
         .firstOrNull;
-    if (entry == null) return;
+    if (entry == null) {
+      // Not queued. Still shown as failed: it can never be sent. Otherwise
+      // a drain delivered it in the meantime.
+      return !(state.value ?? []).any(
+        (m) => m.clientId == clientId && m.status == MessageStatus.failed,
+      );
+    }
+    if (outboxEntryFileMissing(entry)) {
+      await ref.read(outboxProvider).remove(entry.clientId);
+      _setStatus(entry.clientId, MessageStatus.failed);
+      return false;
+    }
     _setStatus(clientId, MessageStatus.sending);
     await _deliver(entry);
+    return true;
   }
 
-  /// Discard a failed message entirely.
+  /// Discard an unsent (failed or still queued) message entirely: out of
+  /// the outbox, so no later drain sends it, and off the thread.
   Future<void> discard(String clientId) async {
+    if (_delivering.contains(clientId)) _discardedInFlight.add(clientId);
     await ref.read(outboxProvider).remove(clientId);
     final current = state.value ?? [];
     state = AsyncData([...current.where((m) => m.clientId != clientId)]);
@@ -1231,13 +1280,18 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
 
   /// Load the next older page (cursor = oldest fetched message).
   Future<void> loadOlder() async {
-    if (!hasMore || loadingOlder) return;
+    if (loadingOlder) return;
+    olderLoadError = null;
+    if (!hasMore) return;
     final current = state.value ?? [];
     final oldest = current
         .where((m) => m.status == MessageStatus.sent)
         .lastOrNull;
     if (oldest == null) return;
     loadingOlder = true;
+    // Tell listeners now, not when the page lands: the thread swaps its
+    // Retry row for the spinner row the moment Retry is tapped.
+    state = AsyncData([...current]);
     try {
       final older = await ref
           .read(chatRepositoryProvider)
@@ -1248,8 +1302,9 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
         ...current,
         ...older.where((m) => !ids.contains(m.id)),
       ]);
-    } catch (_) {
-      // Scroll again to retry.
+    } catch (e) {
+      // Kept for the thread's Retry row; history has NOT run out.
+      olderLoadError = e;
     } finally {
       loadingOlder = false;
       // Nudge listeners so the spinner row rebuilds even on failure.
@@ -1261,34 +1316,44 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
       (state.value ?? const <Message>[]).where((m) => m.id == id).firstOrNull;
 
   /// Pull older pages until [messageId] is loaded (tap on a quote, the pin
-  /// banner, a starred row). False when history ran out without it.
+  /// banner, a starred row). False when history ran out without it; throws
+  /// when a page could not be fetched (that is not "gone").
   Future<bool> ensureLoaded(String messageId) async {
     for (var page = 0; page < _maxJumpPages; page++) {
       if (messageById(messageId) != null) return true;
       if (!hasMore) return false;
       final before = (state.value ?? const <Message>[]).length;
       await loadOlder();
+      _throwIfOlderLoadFailed();
       if ((state.value ?? const <Message>[]).length == before && !hasMore) return false;
     }
     return messageById(messageId) != null;
   }
 
   /// Keep pulling older pages while [more] says so (in-chat search: until a
-  /// hit appears or history runs out). Returns false when exhausted.
+  /// hit appears or history runs out). Returns false when exhausted; throws
+  /// when a page could not be fetched.
   Future<bool> loadOlderWhile(bool Function(List<Message> loaded) more) async {
     for (var page = 0; page < _maxJumpPages; page++) {
       final loaded = state.value ?? const <Message>[];
       if (!more(loaded)) return true;
       if (!hasMore) return false;
       await loadOlder();
+      _throwIfOlderLoadFailed();
     }
     return false;
+  }
+
+  void _throwIfOlderLoadFailed() {
+    final err = olderLoadError;
+    if (err != null) Error.throwWithStackTrace(err, StackTrace.current);
   }
 
   /// Jump to a calendar day (batch 4): the newest message on or before the
   /// end of [day] (UTC), fetched with `before_date`, then the gap between it
   /// and what is loaded is filled so the thread stays continuous. Returns
-  /// that message's id, or null when nothing is that old.
+  /// that message's id, or null when nothing is that old. Throws when the
+  /// fetch fails, so a failure is never reported as an empty day.
   Future<String?> jumpToDate(DateTime day) async {
     final endOfDay = DateTime.utc(day.year, day.month, day.day, 23, 59, 59, 999);
     final loaded = state.value ?? const <Message>[];
@@ -1332,8 +1397,6 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
       hasMore = page.length >= AppConstants.messagesPageSize;
       state = AsyncData(merged);
       return target.id;
-    } catch (_) {
-      return null;
     } finally {
       loadingOlder = false;
       state = AsyncData([...(state.value ?? [])]);
@@ -1342,9 +1405,18 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
 
   /// Star / unstar for me (batch 4). Optimistic with rollback, one request
   /// in flight per message like [react].
+  ///
+  /// A message this thread has not loaded (an older item starred from the
+  /// media gallery or viewer) goes straight to the server; a failure throws.
+  /// A loaded message that cannot be starred throws too — a silent return
+  /// here was reported to the user as "Starred".
   Future<void> star(String messageId, bool starred) async {
     final msg = messageById(messageId);
-    if (msg == null || !msg.canStar) return;
+    if (msg == null) {
+      await ref.read(chatRepositoryProvider).setStarred(messageId, starred);
+      return;
+    }
+    if (!msg.canStar) throw ApiException('message_not_starrable', status: 409);
     if (msg.starred == starred && !_starInFlight.contains(messageId)) return;
     _patchStarred(messageId, starred);
     _starWanted[messageId] = starred;
@@ -1393,7 +1465,14 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
 
   /// Delete for everyone: sender within 48 h, group admin any time
   /// (server-enforced). Applies the tombstone.
+  ///
+  /// An unsent message of mine has nothing on the server to delete: it is
+  /// discarded from the outbox instead.
   Future<void> delete(String messageId) async {
+    if (_unsentClientIds([messageId]).isNotEmpty) {
+      await discard(messageId);
+      return;
+    }
     _replace(await ref.read(chatRepositoryProvider).deleteMessage(messageId));
     await ref.read(chatMediaCacheProvider).evict(messageId);
     await ref.read(chatDocumentStoreProvider).evict(messageId);
@@ -1488,8 +1567,34 @@ class MessagesNotifier extends FamilyAsyncNotifier<List<Message>, String> {
     ]);
   }
 
+  /// Of [ids], the ones that are client ids of my unsent messages: still in
+  /// the outbox, or a pending / failed row of this thread.
+  Set<String> _unsentClientIds(Iterable<String> ids) {
+    final unsent = <String>{
+      for (final e in ref.read(outboxProvider).pending(conversationId: arg)) e.clientId,
+      for (final m in state.value ?? const <Message>[])
+        if (m.status != MessageStatus.sent && m.clientId != null) m.clientId!,
+    };
+    return {
+      for (final id in ids)
+        if (unsent.contains(id)) id,
+    };
+  }
+
   /// "Delete for me": drop the rows locally after the server hides them.
-  Future<void> hide(List<String> messageIds) async {
+  /// Unsent messages are discarded from the outbox — the server knows
+  /// nothing of a client id, and an entry left queued would be sent by the
+  /// next drain after the user was told it was deleted.
+  Future<void> hide(List<String> allIds) async {
+    final unsent = _unsentClientIds(allIds);
+    for (final clientId in unsent) {
+      await discard(clientId);
+    }
+    final messageIds = [
+      for (final id in allIds)
+        if (!unsent.contains(id)) id,
+    ];
+    if (messageIds.isEmpty) return;
     await ref.read(chatRepositoryProvider).hideMessages(messageIds);
     final media = ref.read(chatMediaCacheProvider);
     final documents = ref.read(chatDocumentStoreProvider);
@@ -1561,6 +1666,8 @@ final outboxDrainerProvider = Provider<void>((ref) {
         await outbox.remove(e.clientId);
         continue;
       }
+      // Discarded since this pass began: it must not be sent.
+      if (!outbox.pending().any((x) => x.clientId == e.clientId)) continue;
       try {
         final msg = await deliverOutboxEntry(repo, e);
         await seedSentImage(ref.read(chatMediaCacheProvider), e, msg);

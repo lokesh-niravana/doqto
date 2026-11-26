@@ -13,6 +13,7 @@ import '../../../state/auth_state.dart';
 import '../../../state/org_state.dart';
 import '../../widgets/fade_slide_in.dart';
 import '../../widgets/primary_button.dart';
+import '../../widgets/confirm_sign_out.dart';
 
 class PendingVerificationScreen extends ConsumerStatefulWidget {
   const PendingVerificationScreen({super.key});
@@ -51,7 +52,9 @@ class _PendingVerificationScreenState
   }
 
   Future<void> _signOut() async {
-    await ref.read(authProvider.notifier).signOut();
+    final auth = ref.read(authProvider.notifier);
+    if (!await confirmSignOut(context)) return;
+    await auth.signOut();
   }
 
   @override
@@ -60,8 +63,16 @@ class _PendingVerificationScreenState
     final suspended = org?.status == OrgStatus.suspended;
 
     return Scaffold(
+      // The reviewer's notes are free text of any length, and the text size is
+      // the user's: fill the screen as before, scroll when it does not fit
+      // (same pattern as the PIN gate).
       body: SafeArea(
-        child: Padding(
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: IntrinsicHeight(
+                child: Padding(
           padding: const EdgeInsets.all(AppSpacing.xl),
           child: Column(
             children: [
@@ -147,6 +158,10 @@ class _PendingVerificationScreenState
                 ),
               ),
             ],
+          ),
+                ),
+              ),
+            ),
           ),
         ),
       ),

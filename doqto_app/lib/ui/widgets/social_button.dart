@@ -35,17 +35,6 @@ class SocialButton extends StatelessWidget {
         onPressed: onPressed,
       );
 
-  /// Facebook: `Continue with Facebook` + the white f on brand blue.
-  factory SocialButton.facebook({
-    required String label,
-    required VoidCallback? onPressed,
-  }) =>
-      SocialButton(
-        label: label,
-        mark: const _FacebookMark(),
-        onPressed: onPressed,
-      );
-
   /// Apple: required by App Store guideline 4.8 wherever a third-party social
   /// login is offered.
   factory SocialButton.apple({
@@ -64,8 +53,12 @@ class SocialButton extends StatelessWidget {
       onTap: onPressed,
       enabled: onPressed != null,
       child: Container(
-        height: 48,
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+        // A minimum, not a fixed height: the label grows with text size.
+        constraints: const BoxConstraints(minHeight: 48),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.sm,
+        ),
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: AppRadii.rMd,
@@ -153,39 +146,16 @@ class _GoogleGPainter extends CustomPainter {
   bool shouldRepaint(covariant _GoogleGPainter oldDelegate) => false;
 }
 
-class _FacebookMark extends StatelessWidget {
-  const _FacebookMark();
-
-  static const _blue = Color(0xFF1877F2);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(color: _blue, shape: BoxShape.circle),
-      alignment: Alignment.center,
-      child: Text(
-        'f',
-        style: AppText.button.copyWith(
-          color: AppColors.white,
-          fontSize: 15,
-          fontWeight: FontWeight.w800,
-          height: 1.1,
-        ),
-      ),
-    );
-  }
-}
-
-
 /// The Apple logo, drawn rather than shipped as an asset so it inherits the
 /// text colour and needs no licence-bearing image file.
 class _AppleMark extends StatelessWidget {
   const _AppleMark();
 
   @override
-  Widget build(BuildContext context) => Icon(
+  Widget build(BuildContext context) => const Icon(
         Icons.apple,
         size: 22,
-        color: AppColors.textPrimary,
+        // Apple's guidelines: the logo is black or white, never tinted.
+        color: Color(0xFF000000),
       );
 }

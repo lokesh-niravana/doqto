@@ -33,6 +33,7 @@ class DeviceIntegrityBanner extends ConsumerWidget {
             tone: BannerTone.warn,
             icon: Icons.warning_amber_rounded,
             text: Strings.deviceModifiedBanner,
+            maxLines: 4,
           ),
         ),
         Expanded(

@@ -15,6 +15,11 @@ import '../../../state/media_settings_state.dart';
 import '../../widgets/app_pressable.dart';
 import '../../widgets/settings_rows.dart';
 
+const _resetUsageTitle = 'Reset statistics?';
+const _resetUsageBody =
+    'The sent and received totals go back to zero. This cannot be undone.';
+const _resetUsageAction = 'Reset';
+
 /// Storage and data (batch 5 G): upload quality, auto-download per media
 /// type, a door to Manage storage, and the network counters. Everything on
 /// this screen lives in the encrypted chat cache box.
@@ -41,7 +46,12 @@ class StorageScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text(Strings.storageTitle)),
       body: ListView(
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        // Explicit padding drops the automatic safe-area inset; add it back so
+        // the last row clears the home indicator.
+        padding: EdgeInsets.only(
+          top: AppSpacing.lg,
+          bottom: AppSpacing.lg + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           SettingsSection(
             title: Strings.storageManage,
@@ -50,7 +60,8 @@ class StorageScreen extends ConsumerWidget {
                 key: const ValueKey('storage-manage'),
                 onTap: () => context.push(AppRoutes.storageManage),
                 child: ListTile(
-                  contentPadding: EdgeInsets.zero,
+                  // The card has no padding of its own.
+                  contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
                   leading: const Icon(Icons.folder_outlined, color: AppColors.medBlue),
                   title: Text(Strings.storageManage, style: AppText.bodyPrimary),
                   trailing: Icon(Icons.chevron_right, color: AppColors.textMuted),
@@ -101,9 +112,31 @@ class StorageScreen extends ConsumerWidget {
               _UsageRow(label: Strings.storageReceived, value: NetworkUsage.format(usage.bytesReceived), keyName: 'storage-received'),
               AppPressable(
                 key: const ValueKey('storage-reset-usage'),
-                onTap: usage.reset,
+                onTap: () async {
+                  // The counters cannot be brought back, so ask first.
+                  final ok = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text(_resetUsageTitle),
+                      content: const Text(_resetUsageBody),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(ctx).pop(false),
+                          child: const Text(Strings.cancel),
+                        ),
+                        TextButton(
+                          key: const ValueKey('storage-reset-confirm'),
+                          onPressed: () => Navigator.of(ctx).pop(true),
+                          style: TextButton.styleFrom(foregroundColor: AppColors.red),
+                          child: const Text(_resetUsageAction),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (ok == true) usage.reset();
+                },
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.md),
                   child: Text(Strings.storageResetUsage, style: AppText.bodyPrimary.copyWith(color: AppColors.red)),
                 ),
               ),
@@ -124,7 +157,8 @@ class _UsageRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+      // The card has no padding of its own: keep the row off its edge.
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.md),
       child: Row(
         children: [
           Expanded(child: Text(label, style: AppText.bodyPrimary)),

@@ -8,6 +8,7 @@ import 'package:doqto_app/data/api/api_client.dart';
 import 'package:doqto_app/data/models/notification_settings.dart';
 import 'package:doqto_app/data/repositories/settings_repository.dart';
 import 'package:doqto_app/ui/screens/settings/notifications_screen.dart';
+import 'package:doqto_app/ui/widgets/primary_button.dart';
 
 import '../support/fake_socket.dart';
 
@@ -25,10 +26,14 @@ class _Repo extends SettingsRepository {
   );
   final patches = <Map<String, dynamic>>[];
   bool fail = false;
+  bool failLoad = false;
   int resets = 0;
 
   @override
-  Future<NotificationSettings> getNotifications() async => server;
+  Future<NotificationSettings> getNotifications() async {
+    if (failLoad) throw Exception('offline');
+    return server;
+  }
 
   @override
   Future<NotificationSettings> patchNotifications(
@@ -71,6 +76,16 @@ Future<void> pumpScreen(WidgetTester tester) async {
 void main() {
   setUp(() {
     repo = _Repo();
+  });
+
+  testWidgets('a failed load says so in words and retries', (tester) async {
+    repo.failLoad = true;
+    await pumpScreen(tester);
+    expect(find.byKey(const ValueKey('notifications-load-failed')), findsOneWidget);
+    repo.failLoad = false;
+    await tester.tap(find.byType(AppButton));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('notifications-load-failed')), findsNothing);
   });
 
   testWidgets('rows render the server values', (tester) async {

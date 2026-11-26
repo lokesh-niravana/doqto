@@ -81,7 +81,15 @@ class NotificationService {
     _initialized = true;
     await _plugin.initialize(
       settings: const InitializationSettings(
-        iOS: DarwinInitializationSettings(),
+        // No permission prompt here: init runs at cold launch, before the
+        // person has signed in or seen anything. iOS asks once, in context,
+        // when the signed-in account registers for pushes
+        // (FirebasePushTokenProvider.getToken).
+        iOS: DarwinInitializationSettings(
+          requestAlertPermission: false,
+          requestBadgePermission: false,
+          requestSoundPermission: false,
+        ),
         android: AndroidInitializationSettings('@mipmap/ic_launcher'),
       ),
       onDidReceiveNotificationResponse: (resp) {
@@ -89,11 +97,6 @@ class NotificationService {
         if (payload != null && payload.isNotEmpty) onTap(payload);
       },
     );
-    // iOS runtime permission (no-op elsewhere).
-    await _plugin
-        .resolvePlatformSpecificImplementation<
-            IOSFlutterLocalNotificationsPlugin>()
-        ?.requestPermissions(alert: true, badge: true, sound: true);
     await ensureChannels();
   }
 

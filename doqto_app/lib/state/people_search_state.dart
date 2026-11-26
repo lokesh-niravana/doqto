@@ -22,23 +22,31 @@ class PeopleSearchResults extends PeopleSearchState {
   final bool hasMore;
   final bool loadingMore;
 
+  /// Why the next page failed, while the rows already loaded stay on
+  /// screen. The footer shows it with a Retry; scrolling does not refire.
+  final Object? moreError;
+
   const PeopleSearchResults(
     this.query,
     this.people, {
     this.hasMore = false,
     this.loadingMore = false,
+    this.moreError,
   });
 
+  /// [moreError] is not carried over: each copy states it afresh.
   PeopleSearchResults copyWith({
     List<PersonCard>? people,
     bool? hasMore,
     bool? loadingMore,
+    Object? moreError,
   }) =>
       PeopleSearchResults(
         query,
         people ?? this.people,
         hasMore: hasMore ?? this.hasMore,
         loadingMore: loadingMore ?? this.loadingMore,
+        moreError: moreError,
       );
 }
 
@@ -92,11 +100,13 @@ class PeopleSearchNotifier extends Notifier<PeopleSearchState> {
   }
 
   /// Appends the next page. No-op while a page is in flight, at the end of the
-  /// list, or once the query has moved on.
-  Future<void> loadMore() async {
+  /// list, or once the query has moved on. After a failed page it waits for
+  /// the footer's Retry ([retry] true) instead of refiring on every scroll.
+  Future<void> loadMore({bool retry = false}) async {
     final current = state;
     if (current is! PeopleSearchResults) return;
     if (current.loadingMore || !current.hasMore || _cursor == null) return;
+    if (current.moreError != null && !retry) return;
 
     final token = _token;
     final cursor = _cursor;
@@ -113,10 +123,10 @@ class PeopleSearchNotifier extends Notifier<PeopleSearchState> {
         hasMore: page.nextCursor != null,
         loadingMore: false,
       );
-    } catch (_) {
+    } catch (e) {
       if (token != _token) return;
-      // Keep what is already on screen; scrolling again retries.
-      state = current.copyWith(loadingMore: false);
+      // Keep what is already on screen, and say the next page failed.
+      state = current.copyWith(loadingMore: false, moreError: e);
     }
   }
 

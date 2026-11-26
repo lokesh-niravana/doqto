@@ -5,7 +5,7 @@ import Footer from "@/components/layout/Footer";
 export const metadata: Metadata = {
   title: "Privacy Policy | Doqto",
   description:
-    "Privacy Policy for Doqto — learn how we protect your data with HIPAA-compliant practices, E2E encryption, and strict data handling policies.",
+    "Privacy Policy for Doqto — learn how we protect your data with HIPAA-compliant practices, encryption in transit and at rest, and strict data handling policies.",
 };
 
 export default function PrivacyPage() {
@@ -69,8 +69,8 @@ export default function PrivacyPage() {
             </h3>
             <ul className="list-disc list-inside text-ink-soft space-y-2 ml-4">
               <li>
-                Message timestamps and delivery status (not message content —
-                content is end-to-end encrypted)
+                Message timestamps and delivery status (message content is
+                stored separately, encrypted at rest)
               </li>
               <li>Participant identifiers for message routing</li>
               <li>File transfer metadata (file size, type, timestamp)</li>
@@ -121,8 +121,8 @@ export default function PrivacyPage() {
                 Covered Entities
               </li>
               <li>
-                PHI is protected by end-to-end encryption — we cannot access
-                message content
+                PHI is encrypted in transit and at rest, and access to message
+                content is restricted and audited
               </li>
               <li>
                 We implement administrative, physical, and technical safeguards
@@ -142,17 +142,21 @@ export default function PrivacyPage() {
           {/* 5 */}
           <section className="mb-10">
             <h2 className="text-xl font-semibold text-ink mb-4">
-              <span className="text-primary mr-2">5.</span>End-to-End Encryption
+              <span className="text-primary mr-2">5.</span>Encryption
             </h2>
             <p className="text-ink-soft leading-relaxed">
-              All messages and file transfers on Doqto are protected with
-              AES-256 end-to-end encryption. This means that only the sender and
-              intended recipients can read message content. Doqto servers
-              cannot decrypt your messages. Encryption keys are generated and
-              managed on your device and are never transmitted to or stored on
-              our servers. Even in the event of a server breach, your message
-              content remains unreadable to any unauthorized party, including
-              Doqto.
+              All messages and file transfers on Doqto are encrypted in transit
+              with TLS and encrypted at rest with AES-256. Message text,
+              captions and voice-note transcripts are encrypted before they are
+              written to our database, using a separate data key for each
+              organisation; those keys are protected by a managed key service
+              and can be rotated. Messages are not end-to-end encrypted: our
+              servers process message content in order to deliver it, and data
+              stored on your device is encrypted there as well. Access to
+              message content is limited to the conversation&apos;s
+              participants, and, where an organisation has enabled it, to that
+              organisation&apos;s administrators through an access request that
+              is approved and recorded in an audit log.
             </p>
           </section>
 
@@ -262,8 +266,8 @@ export default function PrivacyPage() {
             </h2>
             <p className="text-ink-soft leading-relaxed">
               We implement comprehensive security measures to protect your data,
-              including AES-256 end-to-end encryption, TLS 1.3 for data in
-              transit, encrypted data at rest, regular security audits and
+              including TLS for data in transit, AES-256 encryption of data at
+              rest, regular security audits and
               penetration testing, role-based access controls, multi-factor
               authentication, continuous monitoring and intrusion detection, and
               employee security training. For more details, see our{" "}

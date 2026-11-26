@@ -83,8 +83,8 @@ export default function HIPAAPage() {
                 push notifications never contain message content; voice-note
                 transcription runs on the phone itself, never on a third-party
                 speech service; the apps contain no analytics or
-                crash-reporting SDKs; screenshots are blocked on Android and
-                detected and audited on iOS.
+                crash-reporting SDKs; screenshots are blocked where the device
+                allows it and otherwise detected and audited.
               </li>
               <li>
                 <span className="text-ink">Retention and deletion:</span>{" "}

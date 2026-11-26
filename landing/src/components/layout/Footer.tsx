@@ -32,7 +32,7 @@ export default function Footer() {
               <span className="font-display text-2xl text-ink">Doqto</span>
             </div>
             <p className="text-sm leading-relaxed max-w-xs">
-              HIPAA-compliant healthcare messaging with end-to-end encryption.
+              HIPAA-compliant healthcare messaging, encrypted in transit and at rest.
               Built for teams that care.
             </p>
             <a

@@ -37,9 +37,9 @@ export const STATS = [
 
 export const FEATURES = [
   {
-    title: "E2E Encryption",
+    title: "Encryption",
     description:
-      "AES-256-GCM field-level encryption with zero-knowledge architecture. Your messages are encrypted before they leave your device.",
+      "TLS in transit and AES-256-GCM field-level encryption at rest, with a separate key for every organisation.",
     icon: "Shield",
   },
   {
@@ -82,9 +82,9 @@ export const SECURITY_FEATURES = [
     icon: "Globe",
   },
   {
-    title: "Zero-Knowledge Architecture",
+    title: "Audited Access",
     description:
-      "We can't read your messages. Encryption keys never leave your device. True end-to-end privacy.",
+      "Message content is limited to a conversation's participants. Any administrative access needs approval and is written to an audit log.",
     icon: "EyeOff",
   },
   {

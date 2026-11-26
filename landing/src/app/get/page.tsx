@@ -1,21 +1,29 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 
 // The link doctors share from "Invite a colleague" in the app. Android goes
-// straight to the Play Store; everyone else sees the choices below.
+// straight to the Play Store. An iPhone or iPad never sees another
+// platform's store: it goes to the App Store once the listing is live, and
+// until then gets plain instructions.
 const PLAY_URL = "https://play.google.com/store/apps/details?id=com.doqto.app";
 // Set once the App Store listing is live, and iPhones redirect too.
 const APP_STORE_URL: string | null = null;
 
 export default function GetTheApp() {
+  const [isApple, setIsApple] = useState(false);
+
   useEffect(() => {
     const ua = navigator.userAgent;
+    // iPadOS reports itself as a Mac; the touch points give it away.
+    const apple =
+      /iphone|ipad|ipod/i.test(ua) ||
+      (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
     if (/android/i.test(ua)) window.location.replace(PLAY_URL);
-    else if (APP_STORE_URL && /iphone|ipad|ipod/i.test(ua))
-      window.location.replace(APP_STORE_URL);
+    else if (apple && APP_STORE_URL) window.location.replace(APP_STORE_URL);
+    else setIsApple(apple);
   }, []);
 
   return (
@@ -31,21 +39,27 @@ export default function GetTheApp() {
             connected to the colleague who invited you.
           </p>
           <div className="flex flex-col items-center gap-3">
-            <a
-              href={PLAY_URL}
-              className="inline-block rounded-full bg-primary text-white font-semibold px-8 py-3"
-            >
-              Get it on Google Play
-            </a>
-            {APP_STORE_URL ? (
+            {!isApple && (
+              <a
+                href={PLAY_URL}
+                className="inline-block rounded-full bg-primary text-white font-semibold px-8 py-3"
+              >
+                Get it on Google Play
+              </a>
+            )}
+            {APP_STORE_URL && (
               <a
                 href={APP_STORE_URL}
                 className="inline-block rounded-full bg-ink text-white font-semibold px-8 py-3"
               >
                 Download on the App Store
               </a>
-            ) : (
-              <p className="text-ink-soft text-sm">iPhone app coming soon.</p>
+            )}
+            {isApple && !APP_STORE_URL && (
+              <p className="text-ink-soft text-sm">
+                Open Doqto on your iPhone and sign in to connect with the
+                colleague who invited you.
+              </p>
             )}
           </div>
         </div>

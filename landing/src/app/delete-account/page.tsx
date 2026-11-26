@@ -83,9 +83,14 @@ export default function DeleteAccountPage() {
             </h2>
             <p className="text-ink-soft leading-relaxed">
               Doqto is a HIPAA-regulated service. Security audit records (for
-              example, the timestamp of the deletion itself) contain no
-              identifying information and are retained for six years as
-              required by 45 CFR §164.316(b)(2). Nothing else is kept.
+              example, the timestamp of the deletion itself) are retained for
+              six years as required by 45 CFR §164.316(b)(2); they are linked
+              to an anonymised account record that no longer holds your name,
+              phone number, email or NPI. If your organisation has placed
+              conversations under a legal hold, your messages in those
+              conversations are hidden from other participants but preserved
+              until the hold is lifted, and are then erased. Nothing else is
+              kept.
             </p>
           </section>
 

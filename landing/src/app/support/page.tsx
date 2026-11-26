@@ -37,9 +37,9 @@ const faqs: { q: string; a: React.ReactNode }[] = [
     a: (
       <>
         Open <span className="text-ink">Settings</span> in the app and make
-        sure notifications are on, then check iOS or Android Settings for
-        Doqto. Focus modes and battery savers on Android can delay messages;
-        allowing Doqto to run in the background fixes that.
+        sure notifications are on, then check your phone&apos;s Settings for
+        Doqto. Focus modes and battery savers can delay messages; allowing
+        Doqto to run in the background fixes that.
       </>
     ),
   },

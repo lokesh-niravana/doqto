@@ -198,7 +198,7 @@ export default function BAAPage() {
             </h3>
             <ul className="list-disc list-inside text-ink-soft space-y-2 ml-4">
               <li>
-                AES-256 end-to-end encryption for all communications and file
+                AES-256 encryption at rest for all communications and file
                 transfers
               </li>
               <li>TLS 1.3 encryption for data in transit</li>

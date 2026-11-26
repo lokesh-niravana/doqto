@@ -10,7 +10,7 @@ import { ArrowRight, Check } from "lucide-react";
 gsap.registerPlugin(ScrollTrigger);
 
 const HERO_STATS = [
-  { value: "AES-256", label: "End-to-end encrypted" },
+  { value: "AES-256", label: "Encrypted at rest" },
   { value: "HIPAA", label: "Compliant from day one" },
   { value: "BAA", label: "Ready for your org" },
 ] as const;

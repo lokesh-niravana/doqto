@@ -5,7 +5,7 @@ import Footer from "@/components/layout/Footer";
 export const metadata: Metadata = {
   title: "Terms of Service | Doqto",
   description:
-    "Terms of Service for Doqto — HIPAA-compliant healthcare messaging platform with E2E encryption.",
+    "Terms of Service for Doqto — HIPAA-compliant healthcare messaging platform, encrypted in transit and at rest.",
 };
 
 export default function TermsPage() {
@@ -49,7 +49,7 @@ export default function TermsPage() {
             </p>
             <ul className="list-disc list-inside text-ink-soft space-y-2 ml-4">
               <li>
-                End-to-end encrypted messaging for secure clinical
+                Messaging encrypted in transit and at rest for secure clinical
                 communications
               </li>
               <li>Organization and department management tools</li>
@@ -199,7 +199,8 @@ export default function TermsPage() {
             </h2>
             <p className="text-ink-soft leading-relaxed">
               Doqto employs industry-leading security measures, including
-              AES-256 end-to-end encryption for all messages and file transfers.
+              TLS encryption in transit and AES-256 encryption at rest for all
+              messages and file transfers.
               While we take every reasonable precaution to protect your data, no
               method of electronic transmission or storage is 100% secure. You
               acknowledge that you use the Service at your own risk and that we

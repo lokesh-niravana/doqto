@@ -21,7 +21,7 @@ const instrument = Instrument_Sans({
 export const metadata: Metadata = {
   title: "Doqto — Secure Healthcare Messaging",
   description:
-    "HIPAA-compliant messaging platform with E2E encryption, voice messaging, and organization management. Built for healthcare teams.",
+    "HIPAA-compliant messaging platform, encrypted in transit and at rest, with voice messaging and organization management. Built for healthcare teams.",
   keywords: [
     "HIPAA compliant messaging",
     "healthcare communication",
@@ -41,14 +41,14 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Doqto — Secure Healthcare Messaging",
     description:
-      "HIPAA-compliant messaging with E2E encryption. Built for healthcare teams.",
+      "HIPAA-compliant messaging, encrypted in transit and at rest. Built for healthcare teams.",
     type: "website",
     siteName: "Doqto",
   },
   twitter: {
     card: "summary_large_image",
     title: "Doqto — Secure Healthcare Messaging",
-    description: "HIPAA-compliant messaging with E2E encryption.",
+    description: "HIPAA-compliant messaging, encrypted in transit and at rest.",
   },
   robots: {
     index: true,

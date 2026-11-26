@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Literal
@@ -17,7 +18,7 @@ from app.core.constants import (
     REPORTS_PAGE_SIZE,
 )
 from app.core.dependencies import require_super_admin
-from app.core.enums import AuditAction, OrgStatus, ReportStatus
+from app.core.enums import AuditAction, OrgStatus, ReportStatus, UserRole, WsEventServer
 from app.core.rate_limit import enforce_rate_limit
 from app.core.routes import ApiRoutes
 from app.db.postgres import get_db
@@ -33,6 +34,14 @@ from app.services.audit_service import AuditService
 from app.services.admin_auth_service import AdminAuthError, AdminAuthService
 from app.api.v1.orgs import effective_policies, publish_org_updated
 from app.services.org_service import OrgError, OrgService
+from app.api.ws_manager import ws_manager
+from app.schemas.message import MessageOut
+from app.schemas.moderation import UserModerationOut, UserSuspendIn
+from app.services.file_service import FileService
+from app.services.message_service import MessageError, MessageService
+from app.services.session_service import SessionService
+
+logger = logging.getLogger("doqto.admin")
 
 router = APIRouter()
 
@@ -187,6 +196,132 @@ async def set_report_status(
         await db.commit()
         await db.refresh(report)
     return ReportOut.model_validate(report)
+
+
+# --- Moderation actions (App Store 1.2: act on a report) --------------------- #
+
+
+async def _moderation_target(user_id: uuid.UUID, db: AsyncSession) -> User:
+    target = await db.get(User, user_id)
+    if target is None or target.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="user_not_found")
+    return target
+
+
+def _moderation_out(target: User) -> UserModerationOut:
+    return UserModerationOut(
+        id=target.id,
+        suspended_at=target.suspended_at,
+        suspended_reason=target.suspended_reason,
+    )
+
+
+@router.post(ApiRoutes.ADMIN_USER_SUSPEND, response_model=UserModerationOut)
+async def suspend_user(
+    user_id: uuid.UUID,
+    body: UserSuspendIn,
+    request: Request,
+    admin: User = Depends(require_super_admin),
+    redis: Redis = Depends(get_redis),
+    db: AsyncSession = Depends(get_db),
+) -> UserModerationOut:
+    """Lock an account: every device is signed out, and sign-in, the API and
+    the socket answer `account_suspended` until it is lifted. Nothing is
+    erased. Suspending an already-suspended account is a no-op."""
+    target = await _moderation_target(user_id, db)
+    if target.role == UserRole.SUPER_ADMIN:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="cannot_suspend_super_admin")
+    if target.suspended_at is not None:
+        return _moderation_out(target)
+    target.suspended_at = datetime.now(tz=timezone.utc)
+    target.suspended_reason = body.reason
+    revoked = await SessionService.revoke_others(
+        user_id=target.id, keep_jti=None, redis=redis, db=db
+    )
+    await AuditService.log_request(
+        request,
+        user_id=admin.id,
+        action=AuditAction.USER_SUSPENDED,
+        resource_type="user",
+        resource_id=target.id,
+        db=db,
+        metadata={
+            "admin_id": str(admin.id),
+            "reason": body.reason,
+            "sessions_revoked": len(revoked),
+        },
+    )
+    out = _moderation_out(target)
+    await db.commit()
+    # Open apps hear it right away and return to sign-in.
+    await SessionService.publish_revoked(target.id, [r.id for r in revoked])
+    return out
+
+
+@router.post(ApiRoutes.ADMIN_USER_UNSUSPEND, response_model=UserModerationOut)
+async def unsuspend_user(
+    user_id: uuid.UUID,
+    request: Request,
+    admin: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+) -> UserModerationOut:
+    """Lift a suspension. The user signs in again normally (their sessions
+    were revoked when it was applied). A no-op when not suspended."""
+    target = await _moderation_target(user_id, db)
+    if target.suspended_at is None:
+        return _moderation_out(target)
+    previous_reason = target.suspended_reason
+    target.suspended_at = None
+    target.suspended_reason = None
+    await AuditService.log_request(
+        request,
+        user_id=admin.id,
+        action=AuditAction.USER_UNSUSPENDED,
+        resource_type="user",
+        resource_id=target.id,
+        db=db,
+        metadata={"admin_id": str(admin.id), "reason": previous_reason},
+    )
+    out = _moderation_out(target)
+    await db.commit()
+    return out
+
+
+@router.post(ApiRoutes.ADMIN_MESSAGE_REMOVE, response_model=MessageOut)
+async def remove_message(
+    message_id: uuid.UUID,
+    admin: User = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+) -> MessageOut:
+    """Remove a reported message for everyone: the same tombstone, realtime
+    event and legal-hold behaviour as the sender's own delete, at any age.
+    The response is the tombstone — never the body. Idempotent."""
+    try:
+        msg, s3_keys, removed = await MessageService.remove_message_as_operator(
+            message_id=message_id, admin_id=admin.id, db=db
+        )
+    except MessageError as e:
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if str(e) == "message_not_found"
+            else status.HTTP_409_CONFLICT
+        )
+        raise HTTPException(code, detail=str(e)) from e
+    out = (await MessageService.outs_for([msg], db=db))[0]
+    if not removed:
+        return out
+    recipients = await MessageService.member_ids(conversation_id=msg.conversation_id, db=db)
+    await db.commit()
+    await ws_manager.publish_to_users(
+        recipients, WsEventServer.MESSAGE_DELETED, out.model_dump(mode="json")
+    )
+    for s3_key in s3_keys:
+        # Best-effort, as in the sender's delete: the row is already shredded.
+        try:
+            await FileService.delete_object(key=s3_key)
+        except Exception:
+            logger.warning("s3 delete failed for %s", s3_key)
+    return out
 
 
 # --- Audit read (batch 7) ------------------------------------------------------ #

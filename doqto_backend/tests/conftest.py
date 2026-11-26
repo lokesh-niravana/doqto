@@ -313,6 +313,12 @@ class FakeS3:
         self.objects.pop(key, None)
         self.sizes.pop(key, None)
 
+    async def delete_prefix(self, *, prefix):
+        keys = [k for k in self.objects if k.startswith(prefix)]
+        for k in keys:
+            await self.delete_object(key=k)
+        return len(keys)
+
     async def presigned_url(self, *, key, expires_in=300):
         return f"https://s3.test/{key}?get"
 
@@ -360,6 +366,7 @@ def fake_s3(monkeypatch):
         "upload_bytes",
         "copy_object",
         "delete_object",
+        "delete_prefix",
         "presigned_url",
         "presigned_put",
         "create_multipart_upload",

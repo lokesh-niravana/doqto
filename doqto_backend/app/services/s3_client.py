@@ -111,6 +111,28 @@ class RealS3Client:
         _get_client().delete_object(Bucket=settings.AWS_S3_BUCKET_NAME, Key=key)
         log.info("[S3] deleted %s", key)
 
+    async def delete_prefix(self, *, prefix: str) -> int:
+        """Remove every object under a prefix (a deleted account's exports).
+        Returns how many were removed."""
+        client = _get_client()
+        bucket = settings.AWS_S3_BUCKET_NAME
+        removed = 0
+        token = None
+        while True:
+            kwargs = {"Bucket": bucket, "Prefix": prefix}
+            if token:
+                kwargs["ContinuationToken"] = token
+            page = client.list_objects_v2(**kwargs)
+            keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            if keys:
+                client.delete_objects(Bucket=bucket, Delete={"Objects": keys, "Quiet": True})
+                removed += len(keys)
+            if not page.get("IsTruncated"):
+                break
+            token = page.get("NextContinuationToken")
+        log.info("[S3] deleted %d objects under %s", removed, prefix)
+        return removed
+
     async def presigned_url(self, *, key: str, expires_in: int = PRESIGNED_URL_TTL_SECONDS) -> str:
         url = _get_client().generate_presigned_url(
             "get_object",

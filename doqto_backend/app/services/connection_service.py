@@ -7,6 +7,7 @@ are maintained on every edge change. Quotas and cooldowns gate invitations.
 """
 from __future__ import annotations
 
+import logging
 import math
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -37,6 +38,8 @@ from app.services.notification_service import (
 )
 from app.api.ws_manager import ws_manager
 from app.core.enums import WsEventServer
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectionError(Exception):
@@ -629,4 +632,9 @@ class ConnectionService:
             metadata={"reason": reason},
         )
         await db.commit()
+        # One line per report for a CloudWatch metric filter / alarm that pages
+        # support. Ids and the reason code only — never details, names or content.
+        logger.warning(
+            "report_filed id=%s subject_type=%s reason=%s", report.id, subject_type, reason
+        )
         return report

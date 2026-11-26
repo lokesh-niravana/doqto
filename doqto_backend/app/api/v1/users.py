@@ -4,6 +4,7 @@ import logging
 import uuid
 
 from fastapi import (
+    BackgroundTasks,
     APIRouter,
     Depends,
     File,
@@ -69,6 +70,7 @@ from app.services.account_deletion_service import AccountDeletionService
 from app.services.auth_service import AuthError, AuthService, PhoneTaken, WrongAccount
 from app.services.audit_service import AuditService
 from app.services.file_service import FileService, avatar_response
+from app.services.firebase_identity import delete_firebase_user
 from app.services.notification_settings_service import NotificationSettingsService
 from app.services.presence_service import PresenceService
 from app.services.push_service import PushService
@@ -199,6 +201,7 @@ async def me(user: User = Depends(get_current_user)) -> UserOut:
 @router.delete("/me", response_model=OkResponse, status_code=status.HTTP_200_OK)
 async def delete_me(
     request: Request,
+    background: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     stripe: StripeGateway | None = Depends(get_optional_stripe),
@@ -208,13 +211,29 @@ async def delete_me(
     Irreversible. Scrubs identity, destroys authored content and the social
     graph, and leaves an audit tombstone (HIPAA retention).
     """
-    await AccountDeletionService.delete_account(
+    firebase_uid = user.firebase_uid
+    user_id = user.id  # read before the commit expires the instance
+    multipart_aborts: list[tuple[str, str]] = []
+    object_keys = await AccountDeletionService.delete_account(
         user=user,
         db=db,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
         stripe=stripe,
+        multipart_aborts=multipart_aborts,
     )
+    # Commit before touching S3: files are only removed once the rows that
+    # pointed at them are durably gone.
+    await db.commit()
+    # Both clean-ups run after the response is sent. The account is already
+    # deleted; an account with many attachments or a slow Google token
+    # endpoint must not push the reply past the app's timeout and make a
+    # completed deletion look like a failure.
+    background.add_task(
+        AccountDeletionService.delete_objects, object_keys, user_id, multipart_aborts
+    )
+    # The sign-in identity (phone, email, provider links) held by Firebase.
+    background.add_task(delete_firebase_user, firebase_uid)
     return OkResponse()
 
 
@@ -401,10 +420,20 @@ async def upload_avatar(
     ext = AVATAR_ALLOWED_EXT[file.content_type]
     key = f"avatars/{user.id}/{uuid.uuid4()}.{ext}"
     await FileService.upload_bytes(key=key, data=data, content_type=file.content_type)
+    previous = user.avatar_url
     user.avatar_url = key
     await db.flush()
     await db.refresh(user)
     await _commit_and_publish_profile_updated(user, db)
+    # The replaced photo is no longer referenced anywhere: remove it rather
+    # than keep every photo the person ever set. After the commit, best effort.
+    if previous and previous != key:
+        try:
+            await FileService.delete_object(key=previous)
+        except Exception:
+            logging.getLogger("doqto.users").exception(
+                "avatar: could not delete replaced photo %s", previous
+            )
     return await build_user_out(user)
 
 

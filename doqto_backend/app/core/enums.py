@@ -346,6 +346,10 @@ class AuditAction(StrEnum):
     MESSAGE_UNPINNED = "message_unpinned"
     STARRED_MESSAGES_READ = "starred_messages_read"
     REPORT_STATUS_CHANGED = "report_status_changed"
+    # Operator moderation (super admin acting on a report) — backend-only.
+    USER_SUSPENDED = "user_suspended"
+    USER_UNSUSPENDED = "user_unsuspended"
+    MESSAGE_REMOVED_BY_ADMIN = "message_removed_by_admin"
     LINK_PREVIEW_FETCHED = "link_preview_fetched"
     # Media (batch 5) — backend-only.
     FILE_EXPORTED = "file_exported"

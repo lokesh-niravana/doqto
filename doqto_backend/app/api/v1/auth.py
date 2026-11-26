@@ -22,7 +22,7 @@ from app.schemas.common import OkResponse
 from app.schemas.settings import PinStatusOut, PinVerifyIn
 from app.schemas.user import UserOut, build_user_out, pin_clears_at
 from app.services.audit_service import AuditService, request_meta
-from app.services.auth_service import AuthError, AuthService, RateLimited
+from app.services.auth_service import AccountSuspended, AuthError, AuthService, RateLimited
 from app.services.invite_service import InviteService
 from app.services.session_service import PinError, PinService
 
@@ -52,6 +52,8 @@ async def sign_in_with_firebase(
         )
     except RateLimited as e:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e)) from e
+    except AccountSuspended as e:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(e)) from e
     except AuthError as e:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
 
@@ -64,6 +66,8 @@ async def refresh(
 ) -> TokenPair:
     try:
         return await AuthService.refresh(refresh_token=body.refresh_token, redis=redis, db=db)
+    except AccountSuspended as e:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(e)) from e
     except AuthError as e:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
 

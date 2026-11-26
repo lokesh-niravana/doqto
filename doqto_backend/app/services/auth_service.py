@@ -34,6 +34,13 @@ class AuthError(Exception):
     pass
 
 
+class AccountSuspended(AuthError):
+    """Caller should surface 403 account_suspended, not 401."""
+
+    def __init__(self) -> None:
+        super().__init__("account_suspended")
+
+
 class RateLimited(AuthError):
     """Caller should surface 429, not 401."""
 
@@ -101,6 +108,9 @@ class AuthService:
         # must never come back to life, even if the provider account still exists.
         if user.deleted_at is not None:
             raise AuthError("account_deleted")
+        # Suspended by an operator: no new session until it is lifted.
+        if user.suspended_at is not None:
+            raise AccountSuspended()
 
         is_registered = bool(user.full_name and user.npi_number.isdigit())
         user.last_seen_at = datetime.now(tz=timezone.utc)
@@ -250,6 +260,12 @@ class AuthService:
         user_id = payload.get("sub")
         if not jti or not user_id or not await redis.exists(refresh_session_key(jti)):
             raise AuthError("session_revoked")
+        if db is not None:
+            # Suspension revokes the sessions it can find; a pair without a
+            # sessions row (legacy, admin panel) is stopped here instead.
+            owner = await db.get(User, uuid.UUID(user_id))
+            if owner is not None and owner.suspended_at is not None:
+                raise AccountSuspended()
 
         access, new_jti = create_token(user_id, JwtTokenType.ACCESS)
         refresh, _ = create_token(user_id, JwtTokenType.REFRESH, jti=new_jti)

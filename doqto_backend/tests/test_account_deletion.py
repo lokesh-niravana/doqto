@@ -5,13 +5,16 @@ audit trail survives (HIPAA §164.316(b)(2), six-year retention).
 """
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timedelta, timezone
+
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 
 from app.core.enums import AuditAction
-from app.models import AuditLog, Connection, Message, User
+from app.models import AuditLog, Connection, Message, MessageEdit, User
 from app.services.account_deletion_service import AccountDeletionService
 from app.services.stripe_client import Subscription
 from tests.helpers import (
@@ -208,3 +211,122 @@ async def test_deletion_works_without_stripe_configured(client, db):
     r = await client.delete("/api/v1/users/me", headers=await auth_headers(user.id))
 
     assert r.status_code == 200, r.text
+
+
+async def test_deletion_returns_stored_files_and_drops_edit_history(db):
+    """The files behind attachments and the avatar must actually be removed —
+    nulling the keys alone orphans them, because the purge job finds objects
+    through those columns. Earlier versions of edited messages go too."""
+    org = await create_org(db)
+    alice = await create_user(db, full_name="Dr Alice")
+    bob = await create_user(db, full_name="Dr Bob")
+    await add_org_member(db, org, alice)
+    await add_org_member(db, org, bob)
+    conv = await create_conversation(db, org, [alice, bob])
+    photo = Message(
+        conversation_id=conv.id,
+        sender_id=alice.id,
+        type="image",
+        seq=1,
+        s3_key="files/org/msg/photo.jpg",
+        thumb_key="files/org/msg/photo_thumb.jpg",
+    )
+    text = Message(
+        conversation_id=conv.id,
+        sender_id=alice.id,
+        type="text",
+        seq=2,
+        content_encrypted=b"second version",
+    )
+    db.add_all([photo, text])
+    await db.flush()
+    db.add(MessageEdit(message_id=text.id, content_encrypted=b"first version"))
+    alice.avatar_url = "avatars/alice.jpg"
+    alice.status_text = "On call"
+    alice.pin_hash = "hash"
+    alice.stripe_customer_id = "cus_gone"
+    await db.commit()
+
+    keys = await AccountDeletionService.delete_account(user=alice, db=db)
+    await db.commit()
+
+    assert sorted(keys) == [
+        "avatars/alice.jpg",
+        "files/org/msg/photo.jpg",
+        "files/org/msg/photo_thumb.jpg",
+    ]
+    assert await db.scalar(select(MessageEdit).where(MessageEdit.message_id == text.id)) is None
+    assert alice.status_text is None and alice.pin_hash is None
+    assert alice.stripe_customer_id is None
+
+
+async def test_deletion_removes_export_files_through_the_endpoint(client, db, fake_s3):
+    """An account export holds name, phone, email and NPI under the user's
+    id. Deleting the account must remove it, not leave it in the bucket."""
+    alice = await create_user(db, full_name="Dr Alice")
+    other = await create_user(db, full_name="Dr Other")
+    await db.commit()
+    mine = f"exports/{alice.id}/abc.json"
+    theirs = f"exports/{other.id}/def.json"
+    fake_s3.put(mine, b"{}")
+    fake_s3.put(theirs, b"{}")
+
+    r = await client.delete("/api/v1/users/me", headers=await auth_headers(alice.id))
+    assert r.status_code == 200, r.text
+
+    assert mine not in fake_s3.objects
+    assert theirs in fake_s3.objects, "only the deleted account's exports go"
+
+
+async def test_deletion_removes_every_photo_and_aborts_unfinished_uploads(client, db, fake_s3):
+    """Replaced profile photos and the parts of an upload still in progress
+    are files of the deleted person too; neither may stay in the bucket."""
+    from app.models import UploadIntent
+
+    org = await create_org(db)
+    alice = await create_user(db, full_name="Dr Alice")
+    bob = await create_user(db, full_name="Dr Bob")
+    await add_org_member(db, org, alice)
+    await add_org_member(db, org, bob)
+    conv = await create_conversation(db, org, [alice, bob])
+    await db.commit()
+    headers = await auth_headers(alice.id)
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+
+    for _ in range(2):
+        r = await client.post(
+            "/api/v1/users/me/avatar",
+            files={"file": ("me.png", png, "image/png")},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+    # Replacing a photo removes the old one straight away.
+    assert len([k for k in fake_s3.objects if k.startswith(f"avatars/{alice.id}/")]) == 1
+    # A photo left over from before that rule existed.
+    fake_s3.put(f"avatars/{alice.id}/old.png", png)
+
+    upload_id = await fake_s3.create_multipart_upload(
+        key=f"files/{org.id}/m/video.mp4", content_type="video/mp4"
+    )
+    db.add(
+        UploadIntent(
+            conversation_id=conv.id,
+            user_id=alice.id,
+            message_id=uuid.uuid4(),
+            type="video",
+            s3_key=f"files/{org.id}/m/video.mp4",
+            upload_id=upload_id,
+            part_count=3,
+            content_type="video/mp4",
+            file_name="video.mp4",
+            size_bytes=30_000_000,
+            expires_at=datetime.now(tz=timezone.utc) + timedelta(hours=1),
+        )
+    )
+    await db.commit()
+
+    r = await client.delete("/api/v1/users/me", headers=headers)
+    assert r.status_code == 200, r.text
+
+    assert not [k for k in fake_s3.objects if k.startswith(f"avatars/{alice.id}/")]
+    assert upload_id in fake_s3.aborted

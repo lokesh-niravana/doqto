@@ -837,6 +837,65 @@ class MessageService:
             raise MessageError("message_not_deletable")
         if not by_admin and MessageService._age_sec(msg) > MESSAGE_DELETE_WINDOW_SEC:
             raise MessageError("delete_window_closed")
+        keys, held = await MessageService._tombstone(msg=msg, conv=conv, db=db)
+        await AuditService.log(
+            db,
+            user_id=user_id,
+            action=AuditAction.MESSAGE_DELETED,
+            resource_type="message",
+            resource_id=msg.id,
+            metadata=(
+                {**({"by_admin": True, "sender_id": str(msg.sender_id)} if by_admin else {}),
+                 **({"legal_hold": True} if held else {})}
+                or None
+            ),
+        )
+        await db.flush()
+        return msg, keys, by_admin
+
+    @staticmethod
+    async def remove_message_as_operator(
+        *, message_id: uuid.UUID, admin_id: uuid.UUID, db: AsyncSession
+    ) -> tuple[Message, list[str], bool]:
+        """Super-admin moderation: the same tombstone as delete_message, for
+        any message at any age, by someone who is not a member. Legal hold is
+        respected exactly as there. Idempotent: an already-deleted message is
+        returned untouched. Returns (message, S3 keys to delete after commit,
+        removed_now)."""
+        msg = await db.scalar(select(Message).where(Message.id == message_id))
+        if msg is None or msg.is_deleted:
+            raise MessageError("message_not_found")
+        if msg.deleted_at is not None:
+            return msg, [], False
+        if msg.type == MessageType.SYSTEM:
+            raise MessageError("message_not_deletable")
+        conv = await db.get(Conversation, msg.conversation_id)
+        if conv is None:
+            raise MessageError("message_not_found")
+        keys, held = await MessageService._tombstone(msg=msg, conv=conv, db=db)
+        await AuditService.log(
+            db,
+            user_id=admin_id,
+            action=AuditAction.MESSAGE_REMOVED_BY_ADMIN,
+            resource_type="message",
+            resource_id=msg.id,
+            metadata={
+                "admin_id": str(admin_id),
+                "sender_id": str(msg.sender_id),
+                "conversation_id": str(msg.conversation_id),
+                **({"legal_hold": True} if held else {}),
+            },
+        )
+        await db.flush()
+        return msg, keys, True
+
+    @staticmethod
+    async def _tombstone(
+        *, msg: Message, conv: Conversation, db: AsyncSession
+    ) -> tuple[list[str], bool]:
+        """The delete-for-everyone core shared by the sender/group-admin path
+        and operator removal. No permission checks and no audit row — callers
+        own both. Returns (S3 keys to delete after commit, under legal hold)."""
         from app.services.compliance_service import RetentionService
 
         # Legal hold (batch 7): the message becomes a tombstone for every
@@ -865,20 +924,7 @@ class MessageService:
             conv.pinned_message_id = None
             conv.pinned_until = None
             conv.pinned_by = None
-        await AuditService.log(
-            db,
-            user_id=user_id,
-            action=AuditAction.MESSAGE_DELETED,
-            resource_type="message",
-            resource_id=msg.id,
-            metadata=(
-                {**({"by_admin": True, "sender_id": str(msg.sender_id)} if by_admin else {}),
-                 **({"legal_hold": True} if held else {})}
-                or None
-            ),
-        )
-        await db.flush()
-        return msg, keys, by_admin
+        return keys, held
 
     @staticmethod
     async def _is_member(

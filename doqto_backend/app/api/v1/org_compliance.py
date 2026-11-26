@@ -27,7 +27,9 @@ from app.core.enums import AuditAction, ReportStatus, WsEventServer
 from app.core.rate_limit import enforce_rate_limit
 from app.core.routes import ApiRoutes
 from app.db.postgres import get_db
-from app.models import AccessRequest, OrgMember, Organization
+from sqlalchemy import select
+
+from app.models import AccessRequest, Message, OrgMember, Organization
 from app.schemas.compliance import (
     AccessRequestCreateIn,
     AccessRequestOut,
@@ -390,7 +392,20 @@ async def list_org_reports(
     rows = await OrgReportService.list(
         org_id=org_id, db=db, status_filter=status_filter, cursor=cursor, limit=limit
     )
-    return [ReportOut.model_validate(r) for r in rows]
+    # Message reports carry the id of their conversation (an id, never a body).
+    message_ids = [r.subject_id for r in rows if r.subject_type == "message"]
+    conversation_of: dict[uuid.UUID, uuid.UUID] = {}
+    if message_ids:
+        found = await db.execute(
+            select(Message.id, Message.conversation_id).where(Message.id.in_(message_ids))
+        )
+        conversation_of = {mid: cid for mid, cid in found.all()}
+    out = []
+    for r in rows:
+        item = ReportOut.model_validate(r)
+        item.conversation_id = conversation_of.get(r.subject_id)
+        out.append(item)
+    return out
 
 
 @router.patch(ApiRoutes.ORGS_REPORT_DETAIL, response_model=ReportOut)

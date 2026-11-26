@@ -245,6 +245,8 @@ INVITATION_MESSAGE_MAX_LEN = 300
 # People/network read limits.
 NETWORK_PAGE_SIZE = 30
 REPORT_DETAILS_MAX_LEN = 1000
+# Operator's note when suspending an account (users.suspended_reason).
+USER_SUSPEND_REASON_MAX_LEN = 255
 
 # --- Message-request tier (M4) --------------------------------------------- #
 # The initiator may send exactly ONE opening message, capped at this length,
@@ -380,7 +382,7 @@ RATE_LIMIT_STATUS_WRITES_PER_MINUTE = 30
 RATE_LIMIT_PHONE_CHANGES_PER_HOUR = 5
 # Legal / help links served by GET /app/legal so the app never hard-codes them.
 LEGAL_URLS = {
-    "help": "https://doqto.ai/help",
+    "help": "https://doqto.ai/support",
     "contact": "mailto:support@doqto.ai",
     "terms": "https://doqto.ai/terms",
     "privacy": "https://doqto.ai/privacy",

@@ -126,6 +126,9 @@ class ReportOut(ORMModel):
     details: str | None = None
     status: ReportStatus
     context_message_ids: list[uuid.UUID] | None = None
+    # For a message report: the conversation it was sent in, so an org admin
+    # can ask for audited access to it without ever handling a raw id.
+    conversation_id: uuid.UUID | None = None
     resolved_by: uuid.UUID | None = None
     resolved_at: datetime | None = None
     created_at: datetime

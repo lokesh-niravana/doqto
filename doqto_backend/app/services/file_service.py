@@ -91,6 +91,10 @@ class FileService:
     async def delete_object(*, key: str) -> None:
         await _s3_instance.delete_object(key=key)
 
+    @staticmethod
+    async def delete_prefix(*, prefix: str) -> int:
+        return await _s3_instance.delete_prefix(prefix=prefix)
+
     # --- Presigned uploads (batch 5) ---------------------------------------- #
 
     @staticmethod

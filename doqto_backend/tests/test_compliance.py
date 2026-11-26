@@ -543,6 +543,11 @@ async def test_org_reports_scoped_and_patchable(client, chat, db):
     rows = r.json()
     assert sorted(x["reason"] for x in rows) == ["harassment", "spam"]
     assert all("content" not in x for x in rows)
+    # A message report names its conversation, so the admin can request
+    # audited access from the report; a user report has none.
+    by_reason = {x["reason"]: x for x in rows}
+    assert by_reason["spam"]["conversation_id"] == str(chat.conv.id)
+    assert by_reason["harassment"]["conversation_id"] is None
     rid = next(x["id"] for x in rows if x["reason"] == "spam")
     r = await client.patch(f"{ORGS}/{chat.org.id}/reports/{rid}", json={"status": "actioned"}, headers=admin_h)
     assert r.status_code == 200 and r.json()["resolved_by"] == str(admin.id)

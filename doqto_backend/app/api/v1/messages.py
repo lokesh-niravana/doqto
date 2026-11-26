@@ -709,9 +709,15 @@ async def list_message_edits(
     """Every previous version, oldest first — visible to all members."""
     await enforce_rate_limit(user.id, "list_message_edits", RATE_LIMIT_READS_PER_MINUTE)
     msg = await db.scalar(select(Message).where(Message.id == message_id))
-    if msg is None:
+    # A deleted message has no readable history either (its edits can outlive
+    # it only under a legal hold, which is not a reason to keep serving them).
+    if msg is None or msg.is_deleted:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="message_not_found")
     await _assert_conv_member(msg.conversation_id, user.id, db)
+    # A tombstone (deleted for everyone, or removed by an operator) keeps its
+    # edit rows only under a legal hold; members must not read them back.
+    if msg.deleted_at is not None:
+        return []
     return [
         MessageEditOut(
             content=crypto.decrypt(e.content_encrypted, e.key_version), replaced_at=e.replaced_at

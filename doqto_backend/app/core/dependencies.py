@@ -67,6 +67,10 @@ async def _user_from_token(
     # resolve. Refuse it here rather than at each call site.
     if user.deleted_at is not None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="account_deleted")
+    # Suspended by an operator: the row is intact but the account is locked.
+    # 403, not 401 — the app must show "suspended", not silently re-login.
+    if user.suspended_at is not None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="account_suspended")
     if not allow_pin_pending and await pin_pending(user, jti, db):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="pin_required")
     return user

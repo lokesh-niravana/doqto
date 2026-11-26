@@ -91,6 +91,11 @@ class User(Base):
     # Set by AccountDeletionService. The row survives as a scrubbed tombstone
     # (audit rows FK to it, HIPAA retention); this makes the account unusable.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Moderation (0036): set by a super admin acting on a report. While set the
+    # account cannot sign in, call the API or hold a socket; nothing is erased,
+    # and clearing both columns restores access.
+    suspended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    suspended_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

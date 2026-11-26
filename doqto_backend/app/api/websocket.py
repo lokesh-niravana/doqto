@@ -60,6 +60,12 @@ async def _authorize(token: str) -> tuple[uuid.UUID, frozenset[uuid.UUID]]:
         user = await db.scalar(select(User).where(User.id == user_id))
         if user is None:
             raise TokenError("user_not_found")
+        # Same gates as the HTTP path (_user_from_token): a deleted or
+        # suspended account gets no socket.
+        if user.deleted_at is not None:
+            raise TokenError("account_deleted")
+        if user.suspended_at is not None:
+            raise TokenError("account_suspended")
         # A device that still owes its two-step PIN gets no socket (batch 6).
         # Revocation reaches an open socket as a `session_revoked` event; the
         # Redis gate applies on the next HTTP call / reconnect.
@@ -71,6 +77,16 @@ async def _authorize(token: str) -> tuple[uuid.UUID, frozenset[uuid.UUID]]:
         )
         org_ids = frozenset(rows.scalars().all())
     return user_id, org_ids
+
+
+async def _account_locked(user_id: uuid.UUID, db) -> bool:
+    """True once the account behind an open socket was suspended or deleted."""
+    row = (
+        await db.execute(
+            select(User.suspended_at, User.deleted_at).where(User.id == user_id)
+        )
+    ).first()
+    return row is None or row.suspended_at is not None or row.deleted_at is not None
 
 
 async def _run_socket(websocket: WebSocket) -> None:
@@ -120,7 +136,18 @@ async def _run_socket(websocket: WebSocket) -> None:
                     presence_key(user_id), PRESENCE_ONLINE_TTL_SECONDS, PresenceStatus.ONLINE.value
                 )
                 async with SessionLocal() as db:
-                    await PresenceService.touch_last_seen(user_id, db)
+                    locked = await _account_locked(user_id, db)
+                    if not locked:
+                        await PresenceService.touch_last_seen(user_id, db)
+                if locked:
+                    # Suspended or deleted while connected: the session_revoked
+                    # event asks the app to leave; this makes sure the socket
+                    # goes even if the client ignores it.
+                    try:
+                        await websocket.close(code=4403)
+                    except Exception:
+                        pass  # socket already dead
+                    break
                 # Direct ack (no fanout) — the client's liveness signal.
                 await websocket.send_json(
                     {"type": WsEventServer.HEARTBEAT_ACK.value, "data": {}}

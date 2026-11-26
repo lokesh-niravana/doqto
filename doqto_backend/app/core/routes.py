@@ -163,6 +163,9 @@ class ApiRoutes:
     ADMIN_REJECT_ORG = "/orgs/{org_id}/reject"
     ADMIN_REPORTS = "/reports"  # GET moderation queue (super-admin)
     ADMIN_REPORT_DETAIL = "/reports/{report_id}"  # PATCH status
+    ADMIN_USER_SUSPEND = "/users/{user_id}/suspend"  # POST {reason}
+    ADMIN_USER_UNSUSPEND = "/users/{user_id}/unsuspend"  # POST
+    ADMIN_MESSAGE_REMOVE = "/messages/{message_id}/remove"  # POST tombstone for everyone
     ADMIN_AUDIT = "/audit"  # GET ?user_id=&action=&from=&to=&cursor= (batch 7)
 
     # WebSocket
